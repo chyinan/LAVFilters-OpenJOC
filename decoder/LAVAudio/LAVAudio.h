@@ -17,6 +17,12 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/*
+ * OpenJOC downstream modification (openjoc-0.10.0, 2026-08-22):
+ * declare the guarded decoder bridge/status interface and isolated
+ * side-by-side registry, log, and COM identity.
+ */
+
 #pragma once
 
 #include "LAVAudioSettings.h"
@@ -24,6 +30,7 @@
 #include "Media.h"
 #include "BitstreamParser.h"
 #include "PostProcessor.h"
+#include "OpenJocDecoder.h"
 
 #include "ISpecifyPropertyPages2.h"
 #include "BaseTrayIcon.h"
@@ -53,9 +60,15 @@
 #define AV_CODEC_ID_PCM_UxxLE (AVCodecID)0x19004
 #define AV_CODEC_ID_PCM_QTRAW (AVCodecID)0x19005
 
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+#define LAVC_AUDIO_REGISTRY_KEY L"Software\\LAV\\Audio\\OpenJOC"
+#define LAVC_AUDIO_REGISTRY_KEY_FORMATS L"Software\\LAV\\Audio\\OpenJOC\\Formats"
+#define LAVC_AUDIO_LOG_FILE L"LAVAudio-OpenJOC.txt"
+#else
 #define LAVC_AUDIO_REGISTRY_KEY L"Software\\LAV\\Audio"
 #define LAVC_AUDIO_REGISTRY_KEY_FORMATS L"Software\\LAV\\Audio\\Formats"
 #define LAVC_AUDIO_LOG_FILE L"LAVAudio.txt"
+#endif
 
 struct WAVEFORMATEX_HDMV_LPCM;
 
@@ -78,11 +91,16 @@ struct BufferDetails
     }
 };
 
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+class __declspec(uuid("27247580-C701-40CD-886D-E618FC8C9FFF")) CLAVAudio
+#else
 class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
+#endif
     : public CTransformFilter
     , public ISpecifyPropertyPages2
     , public ILAVAudioSettings
     , public ILAVAudioStatus
+    , public ILAVOpenJocStatus
 {
   public:
     CLAVAudio(LPUNKNOWN pUnk, HRESULT *phr);
@@ -150,6 +168,10 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     STDMETHODIMP DisableVolumeStats();
     STDMETHODIMP GetChannelVolumeAverage(WORD nChannel, float *pfDb);
 
+    // ILAVOpenJocStatus
+    STDMETHODIMP_(BOOL) IsOpenJocAvailable();
+    STDMETHODIMP_(LAVOpenJocAdmissionState) GetOpenJocAdmissionState();
+
     // CTransformFilter
     HRESULT CheckInputType(const CMediaType *mtIn);
     HRESULT CheckTransform(const CMediaType *mtIn, const CMediaType *mtOut);
@@ -203,6 +225,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     HRESULT ProcessBuffer(IMediaSample *pMediaSample, BOOL bEOF = FALSE);
     HRESULT Decode(const BYTE *p, int buffsize, int &consumed, HRESULT *hrDeliver, IMediaSample *pMediaSample);
     HRESULT DecodeReceive(HRESULT *hrDeliver);
+    HRESULT DecodeOpenJoc(HRESULT *hrDeliver);
     HRESULT PostProcess(BufferDetails *buffer);
     HRESULT GetDeliveryBuffer(IMediaSample **pSample, BYTE **pData);
 
@@ -359,6 +382,8 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
 
     AVPacket *m_pDecodePacket = nullptr;
     AVPacket *m_pBitstreamPacket = nullptr;
+
+    LAVOpenJocDecoder m_openJoc;
 
     // TrueHD Bitstreaming
     struct

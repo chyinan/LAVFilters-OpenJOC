@@ -1,0 +1,548 @@
+/*
+ * SPDX-FileCopyrightText: 2026 OpenJOC contributors
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+// pattern: Imperative Shell
+
+#include "stdafx.h"
+#include "OpenJocDecoder.h"
+
+#include <limits>
+#include <deque>
+#include <string>
+
+#if defined(LAV_ENABLE_OPENJOC)
+#include "openjoc.h"
+#endif
+
+namespace
+{
+constexpr std::int64_t kNoPts = std::numeric_limits<std::int64_t>::lowest();
+
+#if defined(LAV_ENABLE_OPENJOC)
+template <typename Function>
+bool LoadOpenJocSymbol(HMODULE module, const char *name, Function &function)
+{
+    function = reinterpret_cast<Function>(GetProcAddress(module, name));
+    return function != nullptr;
+}
+
+HMODULE LoadOpenJocModule()
+{
+    HMODULE filter_module = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(&LoadOpenJocModule), &filter_module) != 0)
+    {
+        wchar_t module_path[MAX_PATH] = {};
+        const DWORD length = GetModuleFileNameW(filter_module, module_path, ARRAYSIZE(module_path));
+        if (length > 0 && length < ARRAYSIZE(module_path))
+        {
+            std::wstring path(module_path, length);
+            const std::size_t separator = path.find_last_of(L"\\/");
+            if (separator != std::wstring::npos)
+            {
+                path.resize(separator + 1);
+                path += L"openjoc_capi.dll";
+                if (HMODULE module = LoadLibraryW(path.c_str()))
+                    return module;
+            }
+        }
+    }
+
+    return LoadLibraryW(L"openjoc_capi.dll");
+}
+#endif
+} // namespace
+
+struct LAVOpenJocDecoder::Impl
+{
+    LAVOpenJocAdmission admission;
+    std::int64_t admission_pts_samples = kNoPts;
+    std::size_t classifier_input_bytes = 0;
+    std::size_t stream_input_bytes = 0;
+    std::string last_error;
+    bool available = false;
+
+#if defined(LAV_ENABLE_OPENJOC)
+    struct Api
+    {
+        HMODULE module = nullptr;
+
+        std::uint32_t (*get_abi_version)() = nullptr;
+        openjoc_status (*decoder_config_init)(openjoc_decoder_config *) = nullptr;
+        openjoc_status (*stream_decoder_create)(const openjoc_decoder_config *, openjoc_stream_decoder **) = nullptr;
+        void (*stream_decoder_destroy)(openjoc_stream_decoder *) = nullptr;
+        openjoc_status (*stream_decoder_send_chunk)(openjoc_stream_decoder *, const std::uint8_t *, std::size_t,
+                                                    std::int64_t, std::uint32_t) = nullptr;
+        openjoc_status (*stream_decoder_receive_frame)(openjoc_stream_decoder *, openjoc_pcm_frame *) = nullptr;
+        openjoc_status (*stream_decoder_drain)(openjoc_stream_decoder *) = nullptr;
+        openjoc_status (*stream_decoder_reset)(openjoc_stream_decoder *) = nullptr;
+        const char *(*stream_decoder_last_error)(const openjoc_stream_decoder *) = nullptr;
+        openjoc_status (*pcm_frame_init)(openjoc_pcm_frame *) = nullptr;
+        openjoc_status (*classifier_create)(openjoc_classifier **) = nullptr;
+        void (*classifier_destroy)(openjoc_classifier *) = nullptr;
+        openjoc_status (*classifier_send_chunk)(openjoc_classifier *, const std::uint8_t *, std::size_t,
+                                                 openjoc_classification *) = nullptr;
+        openjoc_status (*classifier_finish)(openjoc_classifier *, openjoc_classification *) = nullptr;
+        openjoc_status (*classifier_reset)(openjoc_classifier *) = nullptr;
+        const char *(*classifier_last_error)(const openjoc_classifier *) = nullptr;
+
+        bool Load()
+        {
+            module = LoadOpenJocModule();
+            if (!module)
+                return false;
+
+            if (!LoadOpenJocSymbol(module, "openjoc_get_abi_version", get_abi_version) ||
+                !LoadOpenJocSymbol(module, "openjoc_decoder_config_init", decoder_config_init) ||
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_create", stream_decoder_create) ||
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_destroy", stream_decoder_destroy) ||
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_send_chunk", stream_decoder_send_chunk) ||
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_receive_frame", stream_decoder_receive_frame) ||
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_drain", stream_decoder_drain) ||
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_reset", stream_decoder_reset) ||
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_last_error", stream_decoder_last_error) ||
+                !LoadOpenJocSymbol(module, "openjoc_pcm_frame_init", pcm_frame_init) ||
+                !LoadOpenJocSymbol(module, "openjoc_classifier_create", classifier_create) ||
+                !LoadOpenJocSymbol(module, "openjoc_classifier_destroy", classifier_destroy) ||
+                !LoadOpenJocSymbol(module, "openjoc_classifier_send_chunk", classifier_send_chunk) ||
+                !LoadOpenJocSymbol(module, "openjoc_classifier_finish", classifier_finish) ||
+                !LoadOpenJocSymbol(module, "openjoc_classifier_reset", classifier_reset) ||
+                !LoadOpenJocSymbol(module, "openjoc_classifier_last_error", classifier_last_error))
+            {
+                FreeLibrary(module);
+                module = nullptr;
+                return false;
+            }
+
+            const std::uint32_t abi_version = get_abi_version();
+            if ((abi_version >> 16) != OPENJOC_ABI_VERSION_MAJOR ||
+                (abi_version & 0xffffu) < OPENJOC_ABI_VERSION_MINOR)
+            {
+                FreeLibrary(module);
+                module = nullptr;
+                return false;
+            }
+
+            return true;
+        }
+
+        void Unload()
+        {
+            if (module)
+            {
+                FreeLibrary(module);
+                module = nullptr;
+            }
+        }
+    } api;
+
+    openjoc_classifier *classifier = nullptr;
+    openjoc_stream_decoder *decoder = nullptr;
+    std::deque<LAVOpenJocFrame> pending_frames;
+#endif
+
+    ~Impl()
+    {
+#if defined(LAV_ENABLE_OPENJOC)
+        if (decoder)
+            api.stream_decoder_destroy(decoder);
+        if (classifier)
+            api.classifier_destroy(classifier);
+        api.Unload();
+#endif
+    }
+
+    void SetError(const char *message)
+    {
+        last_error = message ? message : "OpenJOC returned an unknown error";
+    }
+
+#if defined(LAV_ENABLE_OPENJOC)
+    void SetApiError(const char *message)
+    {
+        SetError(message);
+    }
+
+    void SetClassifierError()
+    {
+        SetError(api.classifier_last_error && classifier ? api.classifier_last_error(classifier) : nullptr);
+    }
+
+    void SetDecoderError()
+    {
+        SetError(api.stream_decoder_last_error && decoder ? api.stream_decoder_last_error(decoder) : nullptr);
+    }
+
+    bool CreateClassifier()
+    {
+        if (!api.classifier_create || api.classifier_create(&classifier) != OPENJOC_STATUS_OK || !classifier)
+        {
+            SetApiError("failed to create OpenJOC classifier");
+            return false;
+        }
+        return true;
+    }
+
+    bool CreateDecoder()
+    {
+        if (decoder)
+            return true;
+
+        openjoc_decoder_config config{};
+        if (api.decoder_config_init(&config) != OPENJOC_STATUS_OK)
+        {
+            SetApiError("failed to initialize OpenJOC decoder configuration");
+            return false;
+        }
+        config.render_mode = OPENJOC_RENDER_STEREO;
+
+        const openjoc_status status = api.stream_decoder_create(&config, &decoder);
+        if (status != OPENJOC_STATUS_OK || !decoder)
+        {
+            SetDecoderError();
+            return false;
+        }
+        return true;
+    }
+
+    static LAVOpenJocClassification ToClassification(const openjoc_classification classification)
+    {
+        switch (classification)
+        {
+        case OPENJOC_CLASSIFICATION_CONFIRMED_JOC:
+            return LAVOpenJocClassification::ConfirmedJoc;
+        case OPENJOC_CLASSIFICATION_CONFIRMED_NON_JOC:
+            return LAVOpenJocClassification::ConfirmedNonJoc;
+        case OPENJOC_CLASSIFICATION_INVALID_OR_UNSUPPORTED:
+            return LAVOpenJocClassification::InvalidOrUnsupported;
+        default:
+            return LAVOpenJocClassification::Unknown;
+        }
+    }
+
+    LAVOpenJocClassification Classify(const unsigned char *data, const std::size_t data_size, const bool end_of_stream)
+    {
+        openjoc_classification classification = OPENJOC_CLASSIFICATION_UNKNOWN;
+        const openjoc_status status = end_of_stream
+                                          ? api.classifier_finish(classifier, &classification)
+                                          : api.classifier_send_chunk(classifier, data, data_size, &classification);
+        if (status != OPENJOC_STATUS_OK)
+        {
+            SetClassifierError();
+            return LAVOpenJocClassification::InvalidOrUnsupported;
+        }
+
+        if (!end_of_stream)
+            classifier_input_bytes += data_size;
+        return ToClassification(classification);
+    }
+
+    bool FeedDecoder(const unsigned char *data, const std::size_t data_size, const std::int64_t pts_samples)
+    {
+        if (data_size == 0)
+            return true;
+        if (!data || !CreateDecoder())
+            return false;
+
+        const unsigned char *next = data;
+        std::size_t remaining = data_size;
+        bool first_chunk = true;
+        const std::int64_t stream_anchor_pts = stream_input_bytes == 0 ? pts_samples : kNoPts;
+        constexpr std::size_t kDecoderInputChunkBytes = 6144;
+        while (remaining > 0)
+        {
+            const std::size_t chunk_size = remaining > kDecoderInputChunkBytes ? kDecoderInputChunkBytes : remaining;
+            const openjoc_status status = api.stream_decoder_send_chunk(
+                decoder, next, chunk_size, first_chunk ? stream_anchor_pts : kNoPts, 0);
+            if (status == OPENJOC_STATUS_OUTPUT_PENDING)
+            {
+                if (!CollectFrames())
+                    return false;
+                continue;
+            }
+            if (status != OPENJOC_STATUS_OK && status != OPENJOC_STATUS_NEED_MORE_INPUT &&
+                status != OPENJOC_STATUS_FRAME_AVAILABLE)
+            {
+                SetDecoderError();
+                return false;
+            }
+            stream_input_bytes += chunk_size;
+            next += chunk_size;
+            remaining -= chunk_size;
+            first_chunk = false;
+            if (status == OPENJOC_STATUS_FRAME_AVAILABLE && !CollectFrames())
+                return false;
+        }
+        return true;
+    }
+
+    bool CollectFrames()
+    {
+        for (;;)
+        {
+            openjoc_pcm_frame pcm{};
+            if (api.pcm_frame_init(&pcm) != OPENJOC_STATUS_OK)
+            {
+                SetDecoderError();
+                return false;
+            }
+
+            const openjoc_status status = api.stream_decoder_receive_frame(decoder, &pcm);
+            if (status == OPENJOC_STATUS_NEED_MORE_INPUT || status == OPENJOC_STATUS_END_OF_STREAM)
+                return true;
+            if (status != OPENJOC_STATUS_FRAME_AVAILABLE || !pcm.data || pcm.channel_count == 0 ||
+                pcm.sample_count > ((std::numeric_limits<std::size_t>::max)() / pcm.channel_count) ||
+                pcm.data_len != pcm.sample_count * pcm.channel_count)
+            {
+                SetDecoderError();
+                return false;
+            }
+
+            LAVOpenJocFrame frame;
+            frame.samples.assign(pcm.data, pcm.data + pcm.data_len);
+            frame.sample_rate = pcm.sample_rate;
+            frame.channel_count = pcm.channel_count;
+            frame.sample_count = pcm.sample_count;
+            frame.pts_samples = pcm.pts_samples;
+            pending_frames.push_back(std::move(frame));
+        }
+    }
+
+    bool FinishDecoder()
+    {
+        if (!CreateDecoder())
+            return false;
+
+        for (;;)
+        {
+            const openjoc_status status = api.stream_decoder_drain(decoder);
+            if (status == OPENJOC_STATUS_OUTPUT_PENDING || status == OPENJOC_STATUS_FRAME_AVAILABLE)
+            {
+                if (!CollectFrames())
+                    return false;
+                continue;
+            }
+            if (status != OPENJOC_STATUS_OK && status != OPENJOC_STATUS_NEED_MORE_INPUT &&
+                status != OPENJOC_STATUS_END_OF_STREAM)
+            {
+                SetDecoderError();
+                return false;
+            }
+            return CollectFrames();
+        }
+    }
+#endif
+};
+
+LAVOpenJocDecoder::LAVOpenJocDecoder() : m_impl(std::make_unique<Impl>())
+{
+#if defined(LAV_ENABLE_OPENJOC)
+    if (m_impl->api.Load() && m_impl->CreateClassifier())
+        m_impl->available = true;
+#endif
+}
+
+LAVOpenJocDecoder::~LAVOpenJocDecoder() = default;
+
+bool LAVOpenJocDecoder::IsAvailable() const
+{
+    return m_impl->available;
+}
+
+LAVOpenJocState LAVOpenJocDecoder::State() const
+{
+    return m_impl->admission.state();
+}
+
+LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, const std::size_t data_size,
+                                                   const std::int64_t pts_samples, const bool end_of_stream)
+{
+    if (!m_impl->available)
+    {
+        m_impl->admission.resolve(LAVOpenJocClassification::InvalidOrUnsupported, data_size);
+        return LAVOpenJocProcessResult::UseStockEac3;
+    }
+
+    if (data_size > 0 && !data)
+    {
+        m_impl->SetError("invalid null OpenJOC input buffer");
+        m_impl->admission.resolve(LAVOpenJocClassification::InvalidOrUnsupported, data_size);
+        return LAVOpenJocProcessResult::UseStockEac3;
+    }
+
+    if (m_impl->admission.state() == LAVOpenJocState::Undecided)
+    {
+#if defined(LAV_ENABLE_OPENJOC)
+        if (m_impl->admission.classified_bytes() == 0 && data_size > 0)
+            m_impl->admission_pts_samples = pts_samples;
+
+        LAVOpenJocClassification classification = LAVOpenJocClassification::Unknown;
+        const std::size_t classified_bytes = m_impl->admission.classified_bytes();
+        const std::size_t classification_offset =
+            m_impl->admission.classification_offset(data_size);
+        const std::size_t classification_budget =
+            classified_bytes < LAVOpenJocAdmission::MaxRetainedBytes
+                ? LAVOpenJocAdmission::MaxRetainedBytes - classified_bytes
+                : 0;
+        const std::size_t classification_input_size =
+            data_size > classification_offset
+                ? ((data_size - classification_offset) < classification_budget
+                       ? data_size - classification_offset
+                       : classification_budget)
+                : 0;
+
+        if (classification_input_size > 0)
+        {
+            classification = m_impl->Classify(data + classification_offset, classification_input_size, false);
+            m_impl->admission.note_classified(classification_offset + classification_input_size);
+        }
+        if (end_of_stream)
+        {
+            classification = m_impl->Classify(nullptr, 0, true);
+        }
+
+        LAVOpenJocAdmissionAction action = m_impl->admission.resolve(
+            classification, m_impl->admission.classified_bytes());
+        if (action.kind == LAVOpenJocActionKind::UseStockEac3)
+            return LAVOpenJocProcessResult::UseStockEac3;
+        if (action.kind == LAVOpenJocActionKind::NoAction)
+        {
+            if (end_of_stream)
+            {
+                m_impl->admission.resolve(LAVOpenJocClassification::InvalidOrUnsupported,
+                                           m_impl->admission.classified_bytes());
+                return LAVOpenJocProcessResult::UseStockEac3;
+            }
+            return LAVOpenJocProcessResult::Waiting;
+        }
+
+        if (!m_impl->FeedDecoder(data, data_size, m_impl->admission_pts_samples))
+            return LAVOpenJocProcessResult::Error;
+#else
+        return LAVOpenJocProcessResult::UseStockEac3;
+#endif
+    }
+    else if (m_impl->admission.state() == LAVOpenJocState::StockEac3)
+    {
+        return LAVOpenJocProcessResult::UseStockEac3;
+    }
+    else
+    {
+#if defined(LAV_ENABLE_OPENJOC)
+        if (!m_impl->FeedDecoder(data, data_size, pts_samples))
+            return LAVOpenJocProcessResult::Error;
+#endif
+    }
+
+#if defined(LAV_ENABLE_OPENJOC)
+    if (end_of_stream && !m_impl->FinishDecoder())
+        return LAVOpenJocProcessResult::Error;
+#else
+    (void)end_of_stream;
+#endif
+
+    return LAVOpenJocProcessResult::OpenJoc;
+}
+
+bool LAVOpenJocDecoder::ReceiveFrame(LAVOpenJocFrame &frame)
+{
+#if defined(LAV_ENABLE_OPENJOC)
+    if (!m_impl->pending_frames.empty())
+    {
+        frame = std::move(m_impl->pending_frames.front());
+        m_impl->pending_frames.pop_front();
+        return true;
+    }
+
+    if (!m_impl->decoder)
+        return false;
+
+    openjoc_pcm_frame pcm{};
+    if (m_impl->api.pcm_frame_init(&pcm) != OPENJOC_STATUS_OK)
+    {
+        m_impl->SetDecoderError();
+        return false;
+    }
+
+    const openjoc_status status = m_impl->api.stream_decoder_receive_frame(m_impl->decoder, &pcm);
+    if (status == OPENJOC_STATUS_NEED_MORE_INPUT || status == OPENJOC_STATUS_END_OF_STREAM)
+        return false;
+    if (status != OPENJOC_STATUS_FRAME_AVAILABLE || !pcm.data || pcm.channel_count == 0 ||
+        pcm.sample_count > ((std::numeric_limits<std::size_t>::max)() / pcm.channel_count) ||
+        pcm.data_len != pcm.sample_count * pcm.channel_count)
+    {
+        m_impl->SetDecoderError();
+        return false;
+    }
+
+    frame.samples.assign(pcm.data, pcm.data + pcm.data_len);
+    frame.sample_rate = pcm.sample_rate;
+    frame.channel_count = pcm.channel_count;
+    frame.sample_count = pcm.sample_count;
+    frame.pts_samples = pcm.pts_samples;
+    return true;
+#else
+    (void)frame;
+    return false;
+#endif
+}
+
+bool LAVOpenJocDecoder::Drain()
+{
+#if defined(LAV_ENABLE_OPENJOC)
+    return m_impl->available && m_impl->FinishDecoder();
+#else
+    return false;
+#endif
+}
+
+void LAVOpenJocDecoder::Reset()
+{
+#if defined(LAV_ENABLE_OPENJOC)
+    m_impl->pending_frames.clear();
+    if (m_impl->decoder)
+    {
+        if (m_impl->api.stream_decoder_reset(m_impl->decoder) != OPENJOC_STATUS_OK)
+        {
+            m_impl->api.stream_decoder_destroy(m_impl->decoder);
+            m_impl->decoder = nullptr;
+        }
+    }
+    if (m_impl->classifier)
+    {
+        if (m_impl->api.classifier_reset(m_impl->classifier) != OPENJOC_STATUS_OK)
+        {
+            m_impl->api.classifier_destroy(m_impl->classifier);
+            m_impl->classifier = nullptr;
+            m_impl->available = m_impl->CreateClassifier();
+        }
+    }
+#endif
+    m_impl->admission.reset();
+    m_impl->admission_pts_samples = kNoPts;
+    m_impl->classifier_input_bytes = 0;
+    m_impl->stream_input_bytes = 0;
+    m_impl->last_error.clear();
+}
+
+bool LAVOpenJocDecoder::HasError() const
+{
+    return !m_impl->last_error.empty();
+}
+
+const char *LAVOpenJocDecoder::LastError() const
+{
+    return m_impl->last_error.c_str();
+}
+
+std::size_t LAVOpenJocDecoder::ClassifierInputBytes() const
+{
+    return m_impl->classifier_input_bytes;
+}
+
+std::size_t LAVOpenJocDecoder::StreamInputBytes() const
+{
+    return m_impl->stream_input_bytes;
+}

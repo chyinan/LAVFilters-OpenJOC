@@ -17,6 +17,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/*
+ * OpenJOC downstream modification (openjoc-0.10.0, 2026-08-22):
+ * add the read-only OpenJOC availability/admission status interface.
+ */
+
 #pragma once
 
 // {4158A22B-6553-45D0-8069-24716F8FF171}
@@ -24,6 +29,22 @@ DEFINE_GUID(IID_ILAVAudioSettings, 0x4158a22b, 0x6553, 0x45d0, 0x80, 0x69, 0x24,
 
 // {A668B8F2-BA87-4F63-9D41-768F7DE9C50E}
 DEFINE_GUID(IID_ILAVAudioStatus, 0xa668b8f2, 0xba87, 0x4f63, 0x9d, 0x41, 0x76, 0x8f, 0x7d, 0xe9, 0xc5, 0xe);
+
+// {7C0EED4F-59D9-4D3A-9B26-1B6C2C4A8A5D}
+DEFINE_GUID(IID_ILAVOpenJocStatus, 0x7c0eed4f, 0x59d9, 0x4d3a, 0x9b, 0x26, 0x1b, 0x6c, 0x2c, 0x4a, 0x8a, 0x5d);
+
+typedef enum LAVOpenJocAdmissionState
+{
+    LAVOpenJocAdmissionUndecided = 0,
+    LAVOpenJocAdmissionStockEac3 = 1,
+    LAVOpenJocAdmissionOpenJoc = 2,
+} LAVOpenJocAdmissionState;
+
+interface __declspec(uuid("7C0EED4F-59D9-4D3A-9B26-1B6C2C4A8A5D")) ILAVOpenJocStatus : public IUnknown
+{
+    STDMETHOD_(BOOL, IsOpenJocAvailable)() = 0;
+    STDMETHOD_(LAVOpenJocAdmissionState, GetOpenJocAdmissionState)() = 0;
+};
 
 // Codecs supported in the LAV Audio configuration
 // Codecs not listed here cannot be turned off. You can request codecs to be added to this list, if you wish.

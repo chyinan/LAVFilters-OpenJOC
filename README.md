@@ -1,3 +1,22 @@
+# LAV Filters — OpenJOC integration
+
+This repository is a downstream fork of [Nevcairiel/LAVFilters](https://github.com/Nevcairiel/LAVFilters).
+
+- Upstream base: LAV Filters 0.83 (`fefb6987994ed56e4525e8a125f5fbb53707bc52`)
+- Purpose: optional OpenJOC E-AC-3 JOC decoding in the LAV Audio Decoder
+- Ordinary E-AC-3: stock LAV/FFmpeg decoding
+- Confirmed JOC: OpenJOC admission and decoding
+- E-AC-3 passthrough: existing LAV bitstream path takes precedence
+- OpenJOC DirectShow output in this integration: stereo float PCM
+- OpenJOC project: [chyinan/OpenJOC](https://github.com/chyinan/OpenJOC)
+- Downstream integration tag: `openjoc-0.10.0`
+
+This downstream project is not endorsed by Nevcairiel, FFmpeg, PotPlayer,
+Dolby, Microsoft, or SADIE. See `docs/openjoc/` and the upstream `COPYING`
+file for provenance and applicable license information.
+
+---
+
 LAV Filters - ffmpeg based DirectShow Splitter and Decoders
 =============================
 

@@ -17,6 +17,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/*
+ * OpenJOC downstream modification (openjoc-0.10.0, 2026-08-22):
+ * show the side-by-side OpenJOC filter identity in the settings UI.
+ */
+
 #include "stdafx.h"
 #include "AudioSettingsProp.h"
 #include "Media.h"
@@ -147,7 +152,7 @@ HRESULT CLAVAudioSettingsProp::OnActivate()
     }
     ASSERT(m_pAudioSettings != nullptr);
 
-    const WCHAR *version = TEXT(LAV_AUDIO) L" " TEXT(LAV_VERSION_STR);
+    const WCHAR *version = LAV_AUDIO_DISPLAY_NAME L" " TEXT(LAV_VERSION_STR);
     SendDlgItemMessage(m_Dlg, IDC_LAVAUDIO_FOOTER, WM_SETTEXT, 0, (LPARAM)version);
 
     hr = LoadData();

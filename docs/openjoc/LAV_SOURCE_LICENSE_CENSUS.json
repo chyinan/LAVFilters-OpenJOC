@@ -1,0 +1,685 @@
+{
+  "schema_version": 1,
+  "copyright": "2026 OpenJOC contributors",
+  "license": "GPL-2.0-or-later",
+  "release": "openjoc-0.10.0",
+  "census_date": "2026-08-22",
+  "lav_upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+  "microsoft_sample_revision": "d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c",
+  "mpc_hc_evidence_revision": "dcbf6bf36a37438f8eb25536aafe419c835fcd1c",
+  "scope": {
+    "projects": [
+      "decoder/LAVAudio/LAVAudio.vcxproj",
+      "common/DSUtilLite/DSUtilLite.vcxproj",
+      "common/baseclasses/baseclasses.vcxproj"
+    ],
+    "compiled_input_count": 60,
+    "method": "All ClCompile Include entries in the three projects"
+  },
+  "compiled_inputs": [
+    {
+      "source_path": "decoder/LAVAudio/Bitstream.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/BitstreamMAT.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/BitstreamParser.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/dllmain.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "modified for openjoc-0.10.0; dated notice present",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/LAVAudio.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "modified for openjoc-0.10.0; dated notice present",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/AudioSettingsProp.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "modified for openjoc-0.10.0; dated notice present",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/Media.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/OpenJocAdmission.cpp",
+      "origin": "OpenJOC downstream integration",
+      "upstream_revision": "not-applicable (new downstream file)",
+      "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
+      "lav_modification_state": "not-applicable",
+      "openjoc_modification_state": "new for openjoc-0.10.0",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/OpenJocDecoder.cpp",
+      "origin": "OpenJOC downstream integration",
+      "upstream_revision": "not-applicable (new downstream file)",
+      "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
+      "lav_modification_state": "not-applicable",
+      "openjoc_modification_state": "new for openjoc-0.10.0",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/parser/dts.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/PostProcessor.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/stdafx.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/BaseDSPropPage.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/CueSheet.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/DSMResourceBag.cpp",
+      "origin": "LAV Filters upstream; introduced by Hendrik Leppkes",
+      "upstream_revision": "52d9d76c503fcea5e4a1431127fe2f916ba830db",
+      "original_license_evidence": "LAV-authored file introduced inside the GPL-2.0-or-later project; commit author/history plus LAV COPYING and upstream GPLv2+ declaration",
+      "lav_modification_state": "created upstream; later upstream maintenance",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/MediaSampleSideData.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/PopupMenu.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/BaseTrayIcon.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/ByteParser.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/DeCSS/CSSauth.cpp",
+      "origin": "MPC-HC src/DeCSS/CSSauth.cpp; imported into LAV by Hendrik Leppkes",
+      "upstream_revision": "MPC-HC dcbf6bf36a37438f8eb25536aafe419c835fcd1c; LAV import bd86f1cf3f935fc92ece8bc0c5ff3a9b651d18dd",
+      "original_license_evidence": "MPC-HC COPYING.txt at the source-era revision is GNU GPL version 3; exact named source exists in that revision and LAV import/history preserves the implementation",
+      "lav_modification_state": "imported and later reformatted upstream",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-3.0-only",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/DeCSS/CSSscramble.cpp",
+      "origin": "MPC-HC src/DeCSS/CSSscramble.cpp; imported into LAV by Hendrik Leppkes",
+      "upstream_revision": "MPC-HC dcbf6bf36a37438f8eb25536aafe419c835fcd1c; LAV import bd86f1cf3f935fc92ece8bc0c5ff3a9b651d18dd",
+      "original_license_evidence": "MPC-HC COPYING.txt at the source-era revision is GNU GPL version 3; exact named source exists in that revision and LAV import/history preserves the implementation",
+      "lav_modification_state": "imported and later reformatted upstream",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-3.0-only",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/DeCSS/DeCSSInputPin.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/DShowUtil.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/filterreg.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/FontInstaller.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/H264Nalu.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/locale.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/registry.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/DSUtilLite/stdafx.cpp",
+      "origin": "LAV Filters upstream",
+      "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
+      "original_license_evidence": "explicit per-file GPL v2-or-later notice",
+      "lav_modification_state": "upstream compilation unit",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/amextra.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/amfilter.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "modified in LAV lineage relative to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT AND GPL-2.0-or-later",
+      "confidence": "medium-high"
+    },
+    {
+      "source_path": "common/baseclasses/amvideo.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "modified in LAV lineage relative to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT AND GPL-2.0-or-later",
+      "confidence": "medium-high"
+    },
+    {
+      "source_path": "common/baseclasses/arithutil.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/combase.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/cprop.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/ctlutil.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/ddmm.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/dllentry.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/dllsetup.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "modified in LAV lineage relative to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT AND GPL-2.0-or-later",
+      "confidence": "medium-high"
+    },
+    {
+      "source_path": "common/baseclasses/mtype.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/outputq.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/perflog.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/pstream.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/pullpin.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/refclock.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/renbase.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/schedule.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/seekpt.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/source.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/strmctl.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/sysclock.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/transfrm.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/transip.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/videoctl.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/vtrans.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/winctrl.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "modified in LAV lineage relative to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT AND GPL-2.0-or-later",
+      "confidence": "medium-high"
+    },
+    {
+      "source_path": "common/baseclasses/winutil.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "identical after whitespace normalization to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT",
+      "confidence": "high"
+    },
+    {
+      "source_path": "common/baseclasses/wxdebug.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "modified in LAV lineage relative to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT AND GPL-2.0-or-later",
+      "confidence": "medium-high"
+    },
+    {
+      "source_path": "common/baseclasses/wxlist.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "modified in LAV lineage relative to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT AND GPL-2.0-or-later",
+      "confidence": "medium-high"
+    },
+    {
+      "source_path": "common/baseclasses/wxutil.cpp",
+      "origin": "Microsoft DirectShow Base Classes sample; imported in LAV initial history",
+      "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
+      "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
+      "lav_modification_state": "modified in LAV lineage relative to the current Microsoft sample",
+      "openjoc_modification_state": "unmodified",
+      "resulting_classification": "MIT AND GPL-2.0-or-later",
+      "confidence": "medium-high"
+    }
+  ],
+  "modified_upstream_files": [
+    {
+      "file": "common/includes/common_defines.h",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
+      "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
+      "file": "decoder/LAVAudio/AudioSettingsProp.cpp",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
+      "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
+      "file": "decoder/LAVAudio/LAVAudio.cpp",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
+      "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
+      "file": "decoder/LAVAudio/LAVAudio.h",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
+      "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
+      "file": "decoder/LAVAudio/LAVAudio.vcxproj",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
+      "original_license": "GPL-2.0-or-later project metadata",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
+      "file": "decoder/LAVAudio/dllmain.cpp",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
+      "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
+      "file": "include/LAVAudioSettings.h",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
+      "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    }
+  ],
+  "conclusion": {
+    "unresolved_compiled_inputs": [],
+    "gpl_2_0_only_component_present": false,
+    "effective_combined_distribution_license": "GPL-3.0-only",
+    "known_license_incompatibility": false
+  }
+}

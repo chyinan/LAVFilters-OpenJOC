@@ -1,4 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- OpenJOC downstream modification (openjoc-0.10.0, 2026-08-22):
+     conditionally compile the OpenJOC GPL-2.0-or-later integration glue and
+     its include path without changing the default upstream build. -->
 <Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -22,6 +25,10 @@
     <ProjectGuid>{12154C64-9136-4C21-92FA-665008C6FD27}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>LAVAudio</RootNamespace>
+  </PropertyGroup>
+  <PropertyGroup>
+    <OpenJocDefines Condition="'$(EnableOpenJOC)'=='true'">;LAV_ENABLE_OPENJOC</OpenJocDefines>
+    <OpenJocIdentityDefines Condition="'$(EnableOpenJOC)'=='true' and '$(EnableOpenJOCSideBySide)'=='true'">;LAV_OPENJOC_SIDE_BY_SIDE</OpenJocIdentityDefines>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <Import Project="$(SolutionDir)common\platform.props" />
@@ -55,7 +62,8 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;LAVAUDIO_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;LAVAUDIO_EXPORTS;$(OpenJocDefines);$(OpenJocIdentityDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories Condition="'$(EnableOpenJOC)'=='true'">$(OpenJocIncludeDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>advapi32.lib;ole32.lib;winmm.lib;user32.lib;oleaut32.lib;shell32.lib;Shlwapi.lib;Comctl32.lib;version.lib;avformat-lav.lib;avutil-lav.lib;avcodec-lav.lib;swresample-lav.lib</AdditionalDependencies>
@@ -67,7 +75,8 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;LAVAUDIO_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;LAVAUDIO_EXPORTS;$(OpenJocDefines);$(OpenJocIdentityDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories Condition="'$(EnableOpenJOC)'=='true'">$(OpenJocIncludeDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>advapi32.lib;ole32.lib;winmm.lib;user32.lib;oleaut32.lib;shell32.lib;Shlwapi.lib;Comctl32.lib;version.lib;avformat-lav.lib;avutil-lav.lib;avcodec-lav.lib;swresample-lav.lib</AdditionalDependencies>
@@ -90,6 +99,10 @@
     <ClCompile Include="LAVAudio.cpp" />
     <ClCompile Include="AudioSettingsProp.cpp" />
     <ClCompile Include="Media.cpp" />
+    <ClCompile Include="OpenJocAdmission.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="OpenJocDecoder.cpp" />
     <ClCompile Include="parser\dts.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -104,6 +117,8 @@
     <ClInclude Include="LAVAudio.h" />
     <ClInclude Include="AudioSettingsProp.h" />
     <ClInclude Include="Media.h" />
+    <ClInclude Include="OpenJocAdmission.h" />
+    <ClInclude Include="OpenJocDecoder.h" />
     <ClInclude Include="parser\dts.h" />
     <ClInclude Include="parser\parser.h" />
     <ClInclude Include="PostProcessor.h" />

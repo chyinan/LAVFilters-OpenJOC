@@ -17,6 +17,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/*
+ * OpenJOC downstream modification (openjoc-0.10.0, 2026-08-22):
+ * add a compile-time side-by-side display name for the OpenJOC-enabled filter.
+ */
+
 #pragma once
 
 // Set minimal target OS (7+)
@@ -33,5 +38,10 @@
 #define VC_EXTRALEAN
 
 #define LAV_AUDIO "LAV Audio Decoder"
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+#define LAV_AUDIO_DISPLAY_NAME L"LAV Audio Decoder (OpenJOC)"
+#else
+#define LAV_AUDIO_DISPLAY_NAME L"LAV Audio Decoder"
+#endif
 #define LAV_VIDEO "LAV Video Decoder"
 #define LAV_SPLITTER "LAV Splitter"

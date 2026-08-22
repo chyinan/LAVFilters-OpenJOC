@@ -17,6 +17,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/*
+ * OpenJOC downstream modification (openjoc-0.10.0, 2026-08-22):
+ * register the isolated side-by-side OpenJOC CLSID, display name, and merit.
+ */
+
 // Based on the SampleParser Template by GDCL
 // --------------------------------------------------------------------------------
 // Copyright (c) GDCL 2004. All Rights Reserved.
@@ -45,9 +50,15 @@ const AMOVIESETUP_PIN sudpPinsAudioDec[] = {{L"Input", FALSE, FALSE, FALSE, FALS
                                             {L"Output", FALSE, TRUE, FALSE, FALSE, &CLSID_NULL, nullptr,
                                              CLAVAudio::sudPinTypesOutCount, CLAVAudio::sudPinTypesOut}};
 
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+constexpr DWORD LAV_AUDIO_FILTER_MERIT = MERIT_PREFERRED + 4;
+#else
+constexpr DWORD LAV_AUDIO_FILTER_MERIT = MERIT_PREFERRED + 3;
+#endif
+
 const AMOVIESETUP_FILTER sudFilterReg = {&__uuidof(CLAVAudio), // filter clsid
-                                         L"LAV Audio Decoder", // filter name
-                                         MERIT_PREFERRED + 3,  // merit
+                                         LAV_AUDIO_DISPLAY_NAME, // filter name
+                                         LAV_AUDIO_FILTER_MERIT, // merit
                                          countof(sudpPinsAudioDec), sudpPinsAudioDec, CLSID_LegacyAmFilterCategory};
 
 // --- COM factory table and registration code --------------

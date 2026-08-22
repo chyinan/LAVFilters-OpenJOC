@@ -17,6 +17,12 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/*
+ * OpenJOC downstream modification (openjoc-0.10.0, 2026-08-22):
+ * integrate guarded JOC admission/C-ABI decoding, lifecycle reset, status,
+ * and side-by-side tray identity while retaining the stock E-AC-3 path.
+ */
+
 #include "stdafx.h"
 #include "LAVAudio.h"
 #include "PostProcessor.h"
@@ -121,7 +127,7 @@ STDMETHODIMP CLAVAudio::CreateTrayIcon()
         return E_UNEXPECTED;
     if (CBaseTrayIcon::ProcessBlackList())
         return S_FALSE;
-    m_pTrayIcon = new CBaseTrayIcon(this, TEXT(LAV_AUDIO), IDI_ICON1);
+    m_pTrayIcon = new CBaseTrayIcon(this, LAV_AUDIO_DISPLAY_NAME, IDI_ICON1);
     return S_OK;
 }
 
@@ -415,6 +421,8 @@ HRESULT CLAVAudio::SaveSettings()
 
 void CLAVAudio::ffmpeg_shutdown()
 {
+    m_openJoc.Reset();
+
     m_pAVCodec = nullptr;
     if (m_pAVCtx)
     {
@@ -456,7 +464,7 @@ STDMETHODIMP CLAVAudio::NonDelegatingQueryInterface(REFIID riid, void **ppv)
     *ppv = nullptr;
 
     return QI(ISpecifyPropertyPages) QI(ISpecifyPropertyPages2) QI2(ILAVAudioSettings)
-        QI2(ILAVAudioStatus) __super::NonDelegatingQueryInterface(riid, ppv);
+        QI2(ILAVAudioStatus) QI2(ILAVOpenJocStatus) __super::NonDelegatingQueryInterface(riid, ppv);
 }
 
 // ISpecifyPropertyPages2
@@ -1000,6 +1008,25 @@ HRESULT CLAVAudio::GetChannelVolumeAverage(WORD nChannel, float *pfDb)
     }
     *pfDb = m_faVolume[nChannel].Average();
     return S_OK;
+}
+
+BOOL CLAVAudio::IsOpenJocAvailable()
+{
+    return m_openJoc.IsAvailable() ? TRUE : FALSE;
+}
+
+LAVOpenJocAdmissionState CLAVAudio::GetOpenJocAdmissionState()
+{
+    switch (m_openJoc.State())
+    {
+    case LAVOpenJocState::StockEac3:
+        return LAVOpenJocAdmissionStockEac3;
+    case LAVOpenJocState::OpenJoc:
+        return LAVOpenJocAdmissionOpenJoc;
+    case LAVOpenJocState::Undecided:
+    default:
+        return LAVOpenJocAdmissionUndecided;
+    }
 }
 
 // CTransformFilter
@@ -1735,6 +1762,7 @@ HRESULT CLAVAudio::PerformFlush()
     CAutoLock cAutoLock(&m_csReceive);
 
     m_buff.Clear();
+    m_openJoc.Reset();
     FlushOutput(FALSE);
     FlushDecoder();
 
@@ -1788,6 +1816,8 @@ HRESULT CLAVAudio::NewSegment(REFERENCE_TIME tStart, REFERENCE_TIME tStop, doubl
 
 HRESULT CLAVAudio::FlushDecoder()
 {
+    m_openJoc.Reset();
+
     if (m_bJustFlushed)
         return S_OK;
 
@@ -1829,6 +1859,7 @@ HRESULT CLAVAudio::Receive(IMediaSample *pIn)
         DeleteMediaType(pmt);
         pmt = nullptr;
         m_buff.Clear();
+        m_openJoc.Reset();
 
         m_bQueueResync = TRUE;
     }
@@ -1836,6 +1867,7 @@ HRESULT CLAVAudio::Receive(IMediaSample *pIn)
     if (m_bBitStreamingSettingsChanged)
     {
         m_bBitStreamingSettingsChanged = FALSE;
+        m_openJoc.Reset();
         UpdateBitstreamContext();
     }
 
@@ -2107,6 +2139,48 @@ HRESULT CLAVAudio::ProcessBuffer(IMediaSample *pMediaSample, BOOL bEOF)
         }
     }
 
+    const bool openjoc_candidate = m_nCodecId == AV_CODEC_ID_EAC3 && !m_avBSContext && m_openJoc.IsAvailable() &&
+                                   m_pInput->CurrentMediaType().subtype != MEDIASUBTYPE_DOLBY_AC3_SPDIF;
+
+    if (openjoc_candidate)
+    {
+        const int openjoc_buffer_size = bEOF ? m_buff.GetCount() : buffer_size;
+        const BYTE *openjoc_data = bEOF ? m_buff.Ptr() : p;
+        const std::int64_t openjoc_pts =
+            bEOF || m_rtStartInput == AV_NOPTS_VALUE
+                ? AV_NOPTS_VALUE
+                : av_rescale_q(m_rtStartInput, AVRational{1, 10000000}, AVRational{1, 48000});
+        const LAVOpenJocProcessResult openjoc_result =
+            m_openJoc.Process(openjoc_data, openjoc_buffer_size, openjoc_pts, bEOF != FALSE);
+
+        if (openjoc_result == LAVOpenJocProcessResult::Error)
+        {
+            DbgLog((LOG_ERROR, 10, L"::ProcessBuffer(): OpenJOC failed: %S", m_openJoc.LastError()));
+            return E_FAIL;
+        }
+        if (openjoc_result == LAVOpenJocProcessResult::Waiting)
+            return S_FALSE;
+        if (openjoc_result == LAVOpenJocProcessResult::OpenJoc)
+        {
+            DbgLog((LOG_TRACE, 10,
+                    L"::ProcessBuffer(): OpenJOC selected; retained=%d, classifier-fed=%I64u, decoder-fed=%I64u",
+                    openjoc_buffer_size, static_cast<unsigned long long>(m_openJoc.ClassifierInputBytes()),
+                    static_cast<unsigned long long>(m_openJoc.StreamInputBytes())));
+            hr2 = DecodeOpenJoc(&hr);
+            if (FAILED(hr2))
+                return hr2;
+
+            if (bEOF)
+                m_buff.Clear();
+            else
+            {
+                consumed = buffer_size;
+                m_buff.Consume(consumed_header + min(consumed, buffer_size));
+            }
+            return hr;
+        }
+    }
+
     // If a bitstreaming context exists, we should bitstream
     if (m_avBSContext)
     {
@@ -2164,6 +2238,60 @@ HRESULT CLAVAudio::ProcessBuffer(IMediaSample *pMediaSample, BOOL bEOF)
     m_buff.Consume(consumed);
 
     return hr;
+}
+
+HRESULT CLAVAudio::DecodeOpenJoc(HRESULT *hrDeliver)
+{
+    if (!hrDeliver)
+        return E_POINTER;
+
+    *hrDeliver = S_OK;
+    LAVOpenJocFrame frame;
+    while (m_openJoc.ReceiveFrame(frame))
+    {
+        const bool element_count_overflow =
+            frame.channel_count == 0 || frame.sample_count > (SIZE_MAX / frame.channel_count);
+        const std::size_t element_count = element_count_overflow ? 0 : frame.sample_count * frame.channel_count;
+        const bool byte_count_overflow = frame.samples.size() > (DWORD_MAX / sizeof(float));
+        if (frame.sample_rate == 0 || frame.channel_count == 0 || frame.channel_count > 8 ||
+            frame.sample_count == 0 || element_count_overflow || frame.samples.size() != element_count ||
+            frame.sample_count > UINT_MAX || byte_count_overflow)
+        {
+            DbgLog((LOG_ERROR, 10, L"::DecodeOpenJoc(): invalid PCM frame dimensions"));
+            return E_FAIL;
+        }
+
+        BufferDetails out;
+        out.sfFormat = SampleFormat_FP32;
+        out.wBitsPerSample = 0;
+        out.dwSamplesPerSec = frame.sample_rate;
+        out.nSamples = static_cast<unsigned>(frame.sample_count);
+        if (frame.channel_count == 2)
+            av_channel_layout_from_mask(&out.layout, AV_CH_LAYOUT_STEREO);
+        else
+            av_channel_layout_default(&out.layout, frame.channel_count);
+        out.rtStart = frame.pts_samples == AV_NOPTS_VALUE
+                          ? AV_NOPTS_VALUE
+                          : av_rescale_q(frame.pts_samples, AVRational{1, 48000}, AVRational{1, 10000000});
+        out.bBuffer->Allocate(static_cast<DWORD>(frame.samples.size() * sizeof(float)));
+        out.bBuffer->Append(reinterpret_cast<const BYTE *>(frame.samples.data()),
+                            static_cast<DWORD>(frame.samples.size() * sizeof(float)));
+
+        m_DecodeFormat = out.sfFormat;
+        av_channel_layout_copy(&m_DecodeLayout, &out.layout);
+        if (SUCCEEDED(PostProcess(&out)))
+        {
+            *hrDeliver = QueueOutput(out);
+            if (FAILED(*hrDeliver))
+                return S_FALSE;
+        }
+        else
+        {
+            return E_FAIL;
+        }
+    }
+
+    return m_openJoc.HasError() ? E_FAIL : S_OK;
 }
 
 static DWORD get_lav_channel_layout(AVChannelLayout *layout)
