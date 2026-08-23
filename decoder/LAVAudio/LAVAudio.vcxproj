@@ -103,6 +103,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="OpenJocDecoder.cpp" />
+    <ClCompile Include="OpenJocOutput.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="parser\dts.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -113,12 +116,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\LAVAudioSettings.h" />
+    <ClInclude Include="..\..\include\LAVOpenJocSettings.h" />
     <ClInclude Include="BitstreamParser.h" />
     <ClInclude Include="LAVAudio.h" />
     <ClInclude Include="AudioSettingsProp.h" />
     <ClInclude Include="Media.h" />
     <ClInclude Include="OpenJocAdmission.h" />
     <ClInclude Include="OpenJocDecoder.h" />
+    <ClInclude Include="OpenJocOutput.h" />
     <ClInclude Include="parser\dts.h" />
     <ClInclude Include="parser\parser.h" />
     <ClInclude Include="PostProcessor.h" />
