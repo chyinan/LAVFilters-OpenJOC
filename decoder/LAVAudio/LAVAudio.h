@@ -23,6 +23,8 @@
  * side-by-side registry, log, and COM identity.
  */
 
+// pattern: Imperative Shell
+
 #pragma once
 
 #include "LAVAudioSettings.h"

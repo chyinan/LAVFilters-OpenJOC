@@ -23,6 +23,8 @@
  * and side-by-side tray identity while retaining the stock E-AC-3 path.
  */
 
+// pattern: Imperative Shell
+
 #include "stdafx.h"
 #include "LAVAudio.h"
 #include "PostProcessor.h"
@@ -2249,36 +2251,34 @@ HRESULT CLAVAudio::DecodeOpenJoc(HRESULT *hrDeliver)
     LAVOpenJocFrame frame;
     while (m_openJoc.ReceiveFrame(frame))
     {
-        const bool element_count_overflow =
-            frame.channel_count == 0 || frame.sample_count > (SIZE_MAX / frame.channel_count);
-        const std::size_t element_count = element_count_overflow ? 0 : frame.sample_count * frame.channel_count;
-        const bool byte_count_overflow = frame.samples.size() > (DWORD_MAX / sizeof(float));
-        if (frame.sample_rate == 0 || frame.channel_count == 0 || frame.channel_count > 8 ||
-            frame.sample_count == 0 || element_count_overflow || frame.samples.size() != element_count ||
-            frame.sample_count > UINT_MAX || byte_count_overflow)
+        const LAVOpenJocOutputContract *contract = m_openJoc.OutputContract();
+        BufferDetails out;
+        std::uint32_t prepared_samples = 0;
+        std::uint32_t prepared_bytes = 0;
+        if (!PrepareLAVOpenJocFrameHandoff(
+                contract, frame.output_contract, frame.sample_rate, frame.channel_count, frame.sample_count,
+                frame.samples.size(), &out.layout, &prepared_samples, &prepared_bytes))
         {
-            DbgLog((LOG_ERROR, 10, L"::DecodeOpenJoc(): invalid PCM frame dimensions"));
+            DbgLog((LOG_ERROR, 10, L"::DecodeOpenJoc(): invalid PCM frame contract"));
             return E_FAIL;
         }
 
-        BufferDetails out;
         out.sfFormat = SampleFormat_FP32;
         out.wBitsPerSample = 0;
-        out.dwSamplesPerSec = frame.sample_rate;
-        out.nSamples = static_cast<unsigned>(frame.sample_count);
-        if (frame.channel_count == 2)
-            av_channel_layout_from_mask(&out.layout, AV_CH_LAYOUT_STEREO);
-        else
-            av_channel_layout_default(&out.layout, frame.channel_count);
+        out.dwSamplesPerSec = 48000;
+        out.nSamples = prepared_samples;
         out.rtStart = frame.pts_samples == AV_NOPTS_VALUE
                           ? AV_NOPTS_VALUE
                           : av_rescale_q(frame.pts_samples, AVRational{1, 48000}, AVRational{1, 10000000});
-        out.bBuffer->Allocate(static_cast<DWORD>(frame.samples.size() * sizeof(float)));
-        out.bBuffer->Append(reinterpret_cast<const BYTE *>(frame.samples.data()),
-                            static_cast<DWORD>(frame.samples.size() * sizeof(float)));
+        if (FAILED(out.bBuffer->Allocate(prepared_bytes)) ||
+            FAILED(out.bBuffer->Append(reinterpret_cast<const BYTE *>(frame.samples.data()), prepared_bytes)))
+        {
+            return E_OUTOFMEMORY;
+        }
 
         m_DecodeFormat = out.sfFormat;
-        av_channel_layout_copy(&m_DecodeLayout, &out.layout);
+        if (av_channel_layout_copy(&m_DecodeLayout, &out.layout) < 0)
+            return E_OUTOFMEMORY;
         if (SUCCEEDED(PostProcess(&out)))
         {
             *hrDeliver = QueueOutput(out);

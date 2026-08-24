@@ -9,11 +9,17 @@
 #include "OpenJocOutput.h"
 
 #include <array>
+#include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
+#include <string>
 #include <type_traits>
 
 namespace
@@ -183,6 +189,26 @@ std::uint32_t popcount(std::uint64_t value)
     return count;
 }
 
+const char *ffmpeg_label_for(const AVChannel channel)
+{
+    switch (channel)
+    {
+    case AV_CHAN_FRONT_LEFT: return "FL";
+    case AV_CHAN_FRONT_RIGHT: return "FR";
+    case AV_CHAN_FRONT_CENTER: return "FC";
+    case AV_CHAN_LOW_FREQUENCY: return "LFE";
+    case AV_CHAN_BACK_LEFT: return "BL";
+    case AV_CHAN_BACK_RIGHT: return "BR";
+    case AV_CHAN_SIDE_LEFT: return "SL";
+    case AV_CHAN_SIDE_RIGHT: return "SR";
+    case AV_CHAN_TOP_FRONT_LEFT: return "TFL";
+    case AV_CHAN_TOP_FRONT_RIGHT: return "TFR";
+    case AV_CHAN_TOP_BACK_LEFT: return "TBL";
+    case AV_CHAN_TOP_BACK_RIGHT: return "TBR";
+    default: return nullptr;
+    }
+}
+
 void test_schema_and_wire_values_are_fixed()
 {
     assert(LAV_OPENJOC_OUTPUT_POLICY_SCHEMA_VERSION == 1);
@@ -279,6 +305,204 @@ void test_unknown_and_unrepresentable_policy_values_are_rejected()
         assert(FindLAVOpenJocOutputContract(static_cast<LAVOpenJocOutputPolicy>(value)) == nullptr);
     }
 }
+
+void test_every_contract_builds_the_exact_native_ffmpeg_layout()
+{
+    for (const ExpectedContract &expected : kExpectedContracts)
+    {
+        const LAVOpenJocOutputContract &contract = *FindLAVOpenJocOutputContract(expected.policy);
+        AVChannelLayout actual{};
+        assert(BuildOpenJocAvChannelLayout(contract, &actual));
+        assert(av_channel_layout_check(&actual) == 1);
+        assert(actual.order == AV_CHANNEL_ORDER_NATIVE);
+        assert(actual.nb_channels == static_cast<int>(contract.channel_count));
+        assert(actual.u.mask == contract.ffmpeg_channel_mask);
+        for (std::uint32_t index = 0; index < contract.channel_count; ++index)
+            assert(av_channel_layout_channel_from_index(&actual, index) == contract.ordered_channels[index]);
+
+        AVChannelLayout parsed{};
+        assert(av_channel_layout_from_string(&parsed, contract.ffmpeg_standard_layout_name) == 0);
+        assert(av_channel_layout_compare(&actual, &parsed) == 0);
+        av_channel_layout_uninit(&parsed);
+        av_channel_layout_uninit(&actual);
+    }
+}
+
+void test_openjoc_5_1_is_ffmpeg_5_1_side_not_back()
+{
+    const LAVOpenJocOutputContract &contract =
+        *FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Layout51);
+    AVChannelLayout actual{};
+    AVChannelLayout side{};
+    AVChannelLayout back{};
+    assert(BuildOpenJocAvChannelLayout(contract, &actual));
+    assert(av_channel_layout_from_string(&side, "5.1(side)") == 0);
+    assert(av_channel_layout_from_string(&back, "5.1") == 0);
+    assert(av_channel_layout_compare(&actual, &side) == 0);
+    assert(av_channel_layout_compare(&actual, &back) == 1);
+    av_channel_layout_uninit(&back);
+    av_channel_layout_uninit(&side);
+    av_channel_layout_uninit(&actual);
+}
+
+void test_invalid_contracts_leave_no_partial_ffmpeg_layout()
+{
+    const LAVOpenJocOutputContract &valid =
+        *FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Layout51);
+
+    std::array<LAVOpenJocOutputContract, 4> invalid = {valid, valid, valid, valid};
+    invalid[0].ffmpeg_channel_mask = 0;
+    invalid[0].windows_channel_mask = 0;
+    invalid[1].channel_count += 1;
+    invalid[2].ffmpeg_channel_mask |= (std::uint64_t{1} << 63);
+    invalid[3].windows_channel_mask ^= 1u;
+
+    for (const LAVOpenJocOutputContract &contract : invalid)
+    {
+        AVChannelLayout output{};
+        assert(av_channel_layout_from_mask(&output, AV_CH_LAYOUT_STEREO) == 0);
+        assert(!BuildOpenJocAvChannelLayout(contract, &output));
+        assert(output.order == AV_CHANNEL_ORDER_UNSPEC);
+        assert(output.nb_channels == 0);
+    }
+    assert(!BuildOpenJocAvChannelLayout(valid, nullptr));
+}
+
+void test_frame_metadata_validation_is_exact_and_checked()
+{
+    const LAVOpenJocOutputContract &contract =
+        *FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Layout714);
+    constexpr std::size_t sample_count = 256;
+    const std::size_t data_len = sample_count * contract.channel_count;
+    std::size_t validated_elements = 0;
+    std::size_t validated_bytes = 0;
+    std::array<const char *, kMaximumChannels> ffmpeg_labels{};
+    for (std::uint32_t index = 0; index < contract.channel_count; ++index)
+        ffmpeg_labels[index] = ffmpeg_label_for(contract.ordered_channels[index]);
+
+    assert(ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count,
+        &validated_elements, &validated_bytes));
+    assert(validated_elements == data_len);
+    assert(validated_bytes == data_len * sizeof(float));
+
+    std::array<const char *, kMaximumChannels> swapped_labels{};
+    for (std::uint32_t index = 0; index < contract.channel_count; ++index)
+        swapped_labels[index] = ffmpeg_labels[index];
+    const char *first = swapped_labels[0];
+    swapped_labels[0] = swapped_labels[1];
+    swapped_labels[1] = first;
+
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, 0, 48000, contract.channel_count, sample_count, data_len,
+        contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 44100, contract.channel_count, sample_count, data_len,
+        contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, 0, sample_count, data_len,
+        contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count - 1, sample_count, data_len,
+        contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, 0, 0,
+        contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len - 1,
+        contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        nullptr, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        "7.1.2", ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        contract.ffmpeg_standard_layout_name, nullptr, contract.channel_count, nullptr, nullptr));
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        contract.ffmpeg_standard_layout_name, swapped_labels.data(), contract.channel_count, nullptr, nullptr));
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count - 1, nullptr,
+        nullptr));
+
+    const std::size_t element_overflow_samples =
+        (std::numeric_limits<std::size_t>::max)() / contract.channel_count + 1;
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, element_overflow_samples, 0,
+        contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
+    const std::size_t byte_overflow_samples =
+        (std::numeric_limits<std::size_t>::max)() / (contract.channel_count * sizeof(float)) + 1;
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, byte_overflow_samples,
+        byte_overflow_samples * contract.channel_count, contract.ffmpeg_standard_layout_name,
+        ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
+}
+
+void test_lav_handoff_preparation_preserves_exact_layouts_and_checked_bytes()
+{
+    constexpr std::size_t sample_count = 1024;
+    for (const ExpectedContract &expected : kExpectedContracts)
+    {
+        const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(expected.policy);
+        const std::size_t element_count = sample_count * contract->channel_count;
+        AVChannelLayout layout{};
+        std::uint32_t prepared_samples = 0;
+        std::uint32_t prepared_bytes = 0;
+
+        assert(PrepareLAVOpenJocFrameHandoff(
+            contract, contract, 48000, contract->channel_count, sample_count, element_count, &layout,
+            &prepared_samples, &prepared_bytes));
+        assert(prepared_samples == sample_count);
+        assert(prepared_bytes == element_count * sizeof(float));
+        assert(layout.order == AV_CHANNEL_ORDER_NATIVE);
+        assert(layout.nb_channels == static_cast<int>(contract->channel_count));
+        assert(layout.u.mask == contract->ffmpeg_channel_mask);
+        for (std::uint32_t index = 0; index < contract->channel_count; ++index)
+            assert(av_channel_layout_channel_from_index(&layout, index) == contract->ordered_channels[index]);
+        av_channel_layout_uninit(&layout);
+    }
+}
+
+void test_decode_openjoc_source_cannot_restore_count_default_or_eight_channel_cap()
+{
+    const std::filesystem::path source_path =
+        std::filesystem::path(__FILE__).parent_path() / "LAVAudio.cpp";
+    std::ifstream source_file(source_path, std::ios::binary);
+    assert(source_file);
+    const std::string source{std::istreambuf_iterator<char>(source_file),
+                             std::istreambuf_iterator<char>()};
+    const std::size_t signature = source.find("HRESULT CLAVAudio::DecodeOpenJoc(HRESULT *hrDeliver)");
+    assert(signature != std::string::npos);
+    const std::size_t opening_brace = source.find('{', signature);
+    assert(opening_brace != std::string::npos);
+
+    std::size_t closing_brace = std::string::npos;
+    std::size_t depth = 0;
+    for (std::size_t index = opening_brace; index < source.size(); ++index)
+    {
+        if (source[index] == '{')
+            ++depth;
+        else if (source[index] == '}' && --depth == 0)
+        {
+            closing_brace = index;
+            break;
+        }
+    }
+    assert(closing_brace != std::string::npos);
+
+    std::string body = source.substr(opening_brace, closing_brace - opening_brace + 1);
+    body.erase(std::remove_if(body.begin(), body.end(), [](const unsigned char value) {
+                   return std::isspace(value) != 0;
+               }),
+               body.end());
+    assert(body.find("PrepareLAVOpenJocFrameHandoff") != std::string::npos);
+    assert(body.find("channel_count>8") == std::string::npos);
+    assert(body.find("av_channel_layout_default") == std::string::npos);
+}
 } // namespace
 
 int wmain()
@@ -288,5 +512,11 @@ int wmain()
     test_masks_and_orders_are_exact_native_windows_order();
     test_multichannel_candidates_have_one_logical_lfe();
     test_unknown_and_unrepresentable_policy_values_are_rejected();
+    test_every_contract_builds_the_exact_native_ffmpeg_layout();
+    test_openjoc_5_1_is_ffmpeg_5_1_side_not_back();
+    test_invalid_contracts_leave_no_partial_ffmpeg_layout();
+    test_frame_metadata_validation_is_exact_and_checked();
+    test_lav_handoff_preparation_preserves_exact_layouts_and_checked_bytes();
+    test_decode_openjoc_source_cannot_restore_count_default_or_eight_channel_cap();
     return 0;
 }

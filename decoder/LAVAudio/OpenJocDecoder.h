@@ -8,6 +8,7 @@
 #pragma once
 
 #include "OpenJocAdmission.h"
+#include "OpenJocOutput.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,7 @@ struct LAVOpenJocFrame
     std::uint32_t channel_count = 0;
     std::size_t sample_count = 0;
     std::int64_t pts_samples = INT64_MIN;
+    const LAVOpenJocOutputContract *output_contract = nullptr;
 };
 
 enum class LAVOpenJocProcessResult
@@ -42,6 +44,8 @@ class LAVOpenJocDecoder final
 
     bool IsAvailable() const;
     LAVOpenJocState State() const;
+    bool SetOutputPolicy(LAVOpenJocOutputPolicy policy);
+    const LAVOpenJocOutputContract *OutputContract() const;
     LAVOpenJocProcessResult Process(const unsigned char *data, std::size_t data_size, std::int64_t pts_samples,
                                     bool end_of_stream);
     bool ReceiveFrame(LAVOpenJocFrame &frame);
@@ -52,6 +56,12 @@ class LAVOpenJocDecoder final
     const char *LastError() const;
     std::size_t ClassifierInputBytes() const;
     std::size_t StreamInputBytes() const;
+
+#if defined(LAV_OPENJOC_TESTING)
+    void FailNextClassifierCreateForTesting();
+    void FailNextDecoderCreateForTesting();
+    void FailNextClassifierResetForTesting();
+#endif
 
   private:
     struct Impl;

@@ -8,9 +8,13 @@
 #include "stdafx.h"
 #include "OpenJocDecoder.h"
 
-#include <limits>
+#include <array>
 #include <deque>
+#include <limits>
+#include <new>
+#include <stdexcept>
 #include <string>
+#include <utility>
 
 #if defined(LAV_ENABLE_OPENJOC)
 #include "openjoc.h"
@@ -63,6 +67,14 @@ struct LAVOpenJocDecoder::Impl
     std::size_t stream_input_bytes = 0;
     std::string last_error;
     bool available = false;
+    const LAVOpenJocOutputContract *output_contract =
+        FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Stereo);
+
+#if defined(LAV_OPENJOC_TESTING)
+    bool fail_next_classifier_create = false;
+    bool fail_next_decoder_create = false;
+    bool fail_next_classifier_reset = false;
+#endif
 
 #if defined(LAV_ENABLE_OPENJOC)
     struct Api
@@ -79,6 +91,7 @@ struct LAVOpenJocDecoder::Impl
         openjoc_status (*stream_decoder_drain)(openjoc_stream_decoder *) = nullptr;
         openjoc_status (*stream_decoder_reset)(openjoc_stream_decoder *) = nullptr;
         const char *(*stream_decoder_last_error)(const openjoc_stream_decoder *) = nullptr;
+        const char *(*stream_decoder_get_channel_label)(const openjoc_stream_decoder *, std::size_t) = nullptr;
         openjoc_status (*pcm_frame_init)(openjoc_pcm_frame *) = nullptr;
         openjoc_status (*classifier_create)(openjoc_classifier **) = nullptr;
         void (*classifier_destroy)(openjoc_classifier *) = nullptr;
@@ -103,6 +116,8 @@ struct LAVOpenJocDecoder::Impl
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_drain", stream_decoder_drain) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_reset", stream_decoder_reset) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_last_error", stream_decoder_last_error) ||
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_get_channel_label",
+                                   stream_decoder_get_channel_label) ||
                 !LoadOpenJocSymbol(module, "openjoc_pcm_frame_init", pcm_frame_init) ||
                 !LoadOpenJocSymbol(module, "openjoc_classifier_create", classifier_create) ||
                 !LoadOpenJocSymbol(module, "openjoc_classifier_destroy", classifier_destroy) ||
@@ -175,35 +190,148 @@ struct LAVOpenJocDecoder::Impl
         SetError(api.stream_decoder_last_error && decoder ? api.stream_decoder_last_error(decoder) : nullptr);
     }
 
-    bool CreateClassifier()
+    bool CreateClassifier(openjoc_classifier **output_classifier)
     {
-        if (!api.classifier_create || api.classifier_create(&classifier) != OPENJOC_STATUS_OK || !classifier)
+        if (!output_classifier)
         {
+            SetApiError("invalid OpenJOC classifier output");
+            return false;
+        }
+        *output_classifier = nullptr;
+#if defined(LAV_OPENJOC_TESTING)
+        if (fail_next_classifier_create)
+        {
+            fail_next_classifier_create = false;
+            SetApiError("failed to create OpenJOC classifier (injected)");
+            return false;
+        }
+#endif
+
+        openjoc_classifier *candidate = nullptr;
+        if (!api.classifier_create || api.classifier_create(&candidate) != OPENJOC_STATUS_OK || !candidate)
+        {
+            if (candidate && api.classifier_destroy)
+                api.classifier_destroy(candidate);
             SetApiError("failed to create OpenJOC classifier");
             return false;
         }
+        *output_classifier = candidate;
+        return true;
+    }
+
+    bool CreateDecoderForContract(const LAVOpenJocOutputContract *contract,
+                                  openjoc_stream_decoder **output_decoder)
+    {
+        if (!output_decoder)
+        {
+            SetApiError("invalid OpenJOC decoder output");
+            return false;
+        }
+        *output_decoder = nullptr;
+#if defined(LAV_OPENJOC_TESTING)
+        if (fail_next_decoder_create)
+        {
+            fail_next_decoder_create = false;
+            SetApiError("failed to create OpenJOC decoder (injected)");
+            return false;
+        }
+#endif
+
+        openjoc_decoder_config config{};
+        if (!api.decoder_config_init || api.decoder_config_init(&config) != OPENJOC_STATUS_OK)
+        {
+            SetApiError("failed to initialize OpenJOC decoder configuration");
+            return false;
+        }
+        if (!contract)
+        {
+            SetApiError("invalid OpenJOC output contract");
+            return false;
+        }
+        if (contract->policy == LAVOpenJocOutputPolicy::Stereo)
+        {
+            config.render_mode = OPENJOC_RENDER_STEREO;
+            config.speaker_layout = nullptr;
+        }
+        else
+        {
+            if (!contract->abi_preset_name)
+            {
+                SetApiError("missing OpenJOC speaker preset name");
+                return false;
+            }
+            config.render_mode = OPENJOC_RENDER_SPEAKER;
+            config.speaker_layout = contract->abi_preset_name;
+        }
+
+        openjoc_stream_decoder *candidate = nullptr;
+        if (!api.stream_decoder_create)
+        {
+            SetApiError("missing OpenJOC decoder factory");
+            return false;
+        }
+        const openjoc_status status = api.stream_decoder_create(&config, &candidate);
+        if (status != OPENJOC_STATUS_OK || !candidate)
+        {
+            if (candidate && api.stream_decoder_destroy)
+                api.stream_decoder_destroy(candidate);
+            SetApiError("failed to create OpenJOC decoder");
+            return false;
+        }
+        *output_decoder = candidate;
         return true;
     }
 
     bool CreateDecoder()
     {
-        if (decoder)
-            return true;
+        return decoder || CreateDecoderForContract(output_contract, &decoder);
+    }
 
-        openjoc_decoder_config config{};
-        if (api.decoder_config_init(&config) != OPENJOC_STATUS_OK)
+    bool ValidateAndCopyFrame(const openjoc_pcm_frame &pcm, LAVOpenJocFrame &output)
+    {
+        if (!decoder || !output_contract || !pcm.data || !api.stream_decoder_get_channel_label ||
+            pcm.channel_label_count != output_contract->channel_count)
         {
-            SetApiError("failed to initialize OpenJOC decoder configuration");
+            SetApiError("invalid OpenJOC PCM frame metadata");
             return false;
         }
-        config.render_mode = OPENJOC_RENDER_STEREO;
 
-        const openjoc_status status = api.stream_decoder_create(&config, &decoder);
-        if (status != OPENJOC_STATUS_OK || !decoder)
+        std::array<const char *, 12> labels{};
+        for (std::uint32_t index = 0; index < output_contract->channel_count; ++index)
+            labels[index] = api.stream_decoder_get_channel_label(decoder, index);
+
+        std::size_t element_count = 0;
+        std::size_t byte_count = 0;
+        if (!ValidateLAVOpenJocFrameMetadata(
+                *output_contract, pcm.sample_format, pcm.sample_rate, pcm.channel_count, pcm.sample_count,
+                pcm.data_len, pcm.layout_name, labels.data(), pcm.channel_label_count, &element_count, &byte_count))
         {
-            SetDecoderError();
+            SetApiError("invalid OpenJOC PCM frame contract");
             return false;
         }
+        (void)byte_count;
+
+        LAVOpenJocFrame validated;
+        try
+        {
+            validated.samples.assign(pcm.data, pcm.data + element_count);
+        }
+        catch (const std::bad_alloc &)
+        {
+            SetApiError("failed to allocate OpenJOC PCM frame");
+            return false;
+        }
+        catch (const std::length_error &)
+        {
+            SetApiError("OpenJOC PCM frame exceeds vector capacity");
+            return false;
+        }
+        validated.sample_rate = pcm.sample_rate;
+        validated.channel_count = pcm.channel_count;
+        validated.sample_count = pcm.sample_count;
+        validated.pts_samples = pcm.pts_samples;
+        validated.output_contract = output_contract;
+        output = std::move(validated);
         return true;
     }
 
@@ -292,20 +420,15 @@ struct LAVOpenJocDecoder::Impl
             const openjoc_status status = api.stream_decoder_receive_frame(decoder, &pcm);
             if (status == OPENJOC_STATUS_NEED_MORE_INPUT || status == OPENJOC_STATUS_END_OF_STREAM)
                 return true;
-            if (status != OPENJOC_STATUS_FRAME_AVAILABLE || !pcm.data || pcm.channel_count == 0 ||
-                pcm.sample_count > ((std::numeric_limits<std::size_t>::max)() / pcm.channel_count) ||
-                pcm.data_len != pcm.sample_count * pcm.channel_count)
+            if (status != OPENJOC_STATUS_FRAME_AVAILABLE)
             {
                 SetDecoderError();
                 return false;
             }
 
             LAVOpenJocFrame frame;
-            frame.samples.assign(pcm.data, pcm.data + pcm.data_len);
-            frame.sample_rate = pcm.sample_rate;
-            frame.channel_count = pcm.channel_count;
-            frame.sample_count = pcm.sample_count;
-            frame.pts_samples = pcm.pts_samples;
+            if (!ValidateAndCopyFrame(pcm, frame))
+                return false;
             pending_frames.push_back(std::move(frame));
         }
     }
@@ -339,7 +462,7 @@ struct LAVOpenJocDecoder::Impl
 LAVOpenJocDecoder::LAVOpenJocDecoder() : m_impl(std::make_unique<Impl>())
 {
 #if defined(LAV_ENABLE_OPENJOC)
-    if (m_impl->api.Load() && m_impl->CreateClassifier())
+    if (m_impl->api.Load() && m_impl->CreateClassifier(&m_impl->classifier))
         m_impl->available = true;
 #endif
 }
@@ -354,6 +477,54 @@ bool LAVOpenJocDecoder::IsAvailable() const
 LAVOpenJocState LAVOpenJocDecoder::State() const
 {
     return m_impl->admission.state();
+}
+
+bool LAVOpenJocDecoder::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
+{
+    const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
+    if (!contract)
+        return false;
+    if (contract == m_impl->output_contract)
+        return true;
+
+#if defined(LAV_ENABLE_OPENJOC)
+    m_impl->last_error.clear();
+    openjoc_classifier *next_classifier = nullptr;
+    if (!m_impl->CreateClassifier(&next_classifier))
+        return false;
+
+    openjoc_stream_decoder *next_decoder = nullptr;
+    if (!m_impl->CreateDecoderForContract(contract, &next_decoder))
+    {
+        m_impl->api.classifier_destroy(next_classifier);
+        return false;
+    }
+
+    openjoc_classifier *old_classifier = m_impl->classifier;
+    openjoc_stream_decoder *old_decoder = m_impl->decoder;
+    m_impl->classifier = next_classifier;
+    m_impl->decoder = next_decoder;
+    m_impl->output_contract = contract;
+    m_impl->available = true;
+    if (old_decoder)
+        m_impl->api.stream_decoder_destroy(old_decoder);
+    if (old_classifier)
+        m_impl->api.classifier_destroy(old_classifier);
+    m_impl->pending_frames.clear();
+#else
+    m_impl->output_contract = contract;
+#endif
+    m_impl->admission.reset();
+    m_impl->admission_pts_samples = kNoPts;
+    m_impl->classifier_input_bytes = 0;
+    m_impl->stream_input_bytes = 0;
+    m_impl->last_error.clear();
+    return true;
+}
+
+const LAVOpenJocOutputContract *LAVOpenJocDecoder::OutputContract() const
+{
+    return m_impl->output_contract;
 }
 
 LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, const std::size_t data_size,
@@ -469,20 +640,13 @@ bool LAVOpenJocDecoder::ReceiveFrame(LAVOpenJocFrame &frame)
     const openjoc_status status = m_impl->api.stream_decoder_receive_frame(m_impl->decoder, &pcm);
     if (status == OPENJOC_STATUS_NEED_MORE_INPUT || status == OPENJOC_STATUS_END_OF_STREAM)
         return false;
-    if (status != OPENJOC_STATUS_FRAME_AVAILABLE || !pcm.data || pcm.channel_count == 0 ||
-        pcm.sample_count > ((std::numeric_limits<std::size_t>::max)() / pcm.channel_count) ||
-        pcm.data_len != pcm.sample_count * pcm.channel_count)
+    if (status != OPENJOC_STATUS_FRAME_AVAILABLE)
     {
         m_impl->SetDecoderError();
         return false;
     }
 
-    frame.samples.assign(pcm.data, pcm.data + pcm.data_len);
-    frame.sample_rate = pcm.sample_rate;
-    frame.channel_count = pcm.channel_count;
-    frame.sample_count = pcm.sample_count;
-    frame.pts_samples = pcm.pts_samples;
-    return true;
+    return m_impl->ValidateAndCopyFrame(pcm, frame);
 #else
     (void)frame;
     return false;
@@ -500,6 +664,7 @@ bool LAVOpenJocDecoder::Drain()
 
 void LAVOpenJocDecoder::Reset()
 {
+    m_impl->last_error.clear();
 #if defined(LAV_ENABLE_OPENJOC)
     m_impl->pending_frames.clear();
     if (m_impl->decoder)
@@ -512,11 +677,35 @@ void LAVOpenJocDecoder::Reset()
     }
     if (m_impl->classifier)
     {
+        bool classifier_reset_failed = false;
+#if defined(LAV_OPENJOC_TESTING)
+        if (m_impl->fail_next_classifier_reset)
+        {
+            m_impl->fail_next_classifier_reset = false;
+            m_impl->SetApiError("failed to reset OpenJOC classifier (injected)");
+            classifier_reset_failed = true;
+        }
+        else
+#endif
         if (m_impl->api.classifier_reset(m_impl->classifier) != OPENJOC_STATUS_OK)
+        {
+            m_impl->SetClassifierError();
+            classifier_reset_failed = true;
+        }
+
+        if (classifier_reset_failed)
         {
             m_impl->api.classifier_destroy(m_impl->classifier);
             m_impl->classifier = nullptr;
-            m_impl->available = m_impl->CreateClassifier();
+            if (m_impl->CreateClassifier(&m_impl->classifier))
+            {
+                m_impl->available = true;
+                m_impl->last_error.clear();
+            }
+            else
+            {
+                m_impl->available = false;
+            }
         }
     }
 #endif
@@ -524,7 +713,6 @@ void LAVOpenJocDecoder::Reset()
     m_impl->admission_pts_samples = kNoPts;
     m_impl->classifier_input_bytes = 0;
     m_impl->stream_input_bytes = 0;
-    m_impl->last_error.clear();
 }
 
 bool LAVOpenJocDecoder::HasError() const
@@ -546,3 +734,20 @@ std::size_t LAVOpenJocDecoder::StreamInputBytes() const
 {
     return m_impl->stream_input_bytes;
 }
+
+#if defined(LAV_OPENJOC_TESTING)
+void LAVOpenJocDecoder::FailNextClassifierCreateForTesting()
+{
+    m_impl->fail_next_classifier_create = true;
+}
+
+void LAVOpenJocDecoder::FailNextDecoderCreateForTesting()
+{
+    m_impl->fail_next_decoder_create = true;
+}
+
+void LAVOpenJocDecoder::FailNextClassifierResetForTesting()
+{
+    m_impl->fail_next_classifier_reset = true;
+}
+#endif
