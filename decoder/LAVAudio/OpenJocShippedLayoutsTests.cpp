@@ -7,16 +7,33 @@
 #include "OpenJocOutput.h"
 
 #include <cassert>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <iterator>
 #include <string>
 
-int main()
+int main(const int argc, char **argv)
 {
     std::size_t count = 0;
     const LAVOpenJocOutputPolicy *policies = GetLAVOpenJocShippedOutputPolicies(&count);
     assert(policies != nullptr);
+
+    if (argc == 2 && std::strcmp(argv[1], "--list-shipped") == 0)
+    {
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policies[index]);
+            assert(contract != nullptr);
+            assert(contract->property_page_label != nullptr);
+            std::cout << contract->property_page_label << '\n';
+        }
+        return 0;
+    }
+    if (argc != 1)
+        return 64;
+
     assert(count == 1);
     assert(policies[0] == LAVOpenJocOutputPolicy::Stereo);
     assert(IsLAVOpenJocOutputPolicyShipped(LAVOpenJocOutputPolicy::Stereo));
