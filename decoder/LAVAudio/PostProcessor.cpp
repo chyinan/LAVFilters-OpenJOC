@@ -17,6 +17,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/*
+ * OpenJOC downstream modification (openjoc-0.12.0, 2026-08-25):
+ * preserve OpenJOC-negotiated output channels outside the stock mixer limit.
+ */
+
 // pattern: Imperative Shell
 
 #include "stdafx.h"

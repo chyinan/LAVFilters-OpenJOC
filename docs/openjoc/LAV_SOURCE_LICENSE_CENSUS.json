@@ -2,8 +2,8 @@
   "schema_version": 1,
   "copyright": "2026 OpenJOC contributors",
   "license": "GPL-2.0-or-later",
-  "release": "openjoc-0.10.0",
-  "census_date": "2026-08-22",
+  "release": "openjoc-0.12.0",
+  "census_date": "2026-08-25",
   "lav_upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
   "microsoft_sample_revision": "d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c",
   "mpc_hc_evidence_revision": "dcbf6bf36a37438f8eb25536aafe419c835fcd1c",
@@ -163,7 +163,7 @@
       "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
       "original_license_evidence": "explicit per-file GPL v2-or-later notice",
       "lav_modification_state": "upstream compilation unit",
-      "openjoc_modification_state": "unmodified",
+      "openjoc_modification_state": "modified for openjoc-0.12.0; dated notice present",
       "resulting_classification": "GPL-2.0-or-later",
       "confidence": "high"
     },
@@ -660,6 +660,14 @@
   ],
   "modified_upstream_files": [
     {
+      "file": "common/DSUtilLite/growarray.h",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.12.0 on 2026-08-25",
+      "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
       "file": "common/includes/common_defines.h",
       "upstream_status": "tracked LAV Filters upstream file",
       "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
@@ -671,6 +679,14 @@
       "file": "decoder/LAVAudio/AudioSettingsProp.cpp",
       "upstream_status": "tracked LAV Filters upstream file",
       "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
+      "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
+      "file": "decoder/LAVAudio/AudioSettingsProp.h",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.12.0 on 2026-08-25",
       "original_license": "GPL-2.0-or-later explicit per-file notice",
       "modification_notice_present": true,
       "final_license_classification": "GPL-2.0-or-later"
@@ -692,6 +708,14 @@
       "final_license_classification": "GPL-2.0-or-later"
     },
     {
+      "file": "decoder/LAVAudio/LAVAudio.rc",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.12.0 on 2026-08-25",
+      "original_license": "GPL-2.0-or-later LAVAudio project metadata",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
       "file": "decoder/LAVAudio/LAVAudio.vcxproj",
       "upstream_status": "tracked LAV Filters upstream file",
       "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
@@ -708,10 +732,26 @@
       "final_license_classification": "GPL-2.0-or-later"
     },
     {
+      "file": "decoder/LAVAudio/PostProcessor.cpp",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.12.0 on 2026-08-25",
+      "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
       "file": "decoder/LAVAudio/dllmain.cpp",
       "upstream_status": "tracked LAV Filters upstream file",
       "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
       "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
+      "file": "decoder/LAVAudio/resource.h",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.12.0 on 2026-08-25",
+      "original_license": "GPL-2.0-or-later LAVAudio project metadata",
       "modification_notice_present": true,
       "final_license_classification": "GPL-2.0-or-later"
     },

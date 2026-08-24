@@ -17,6 +17,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/*
+ * OpenJOC downstream modification (openjoc-0.12.0, 2026-08-25):
+ * make buffer growth and byte-size calculations overflow-safe.
+ */
+
 // Class template: Re-sizable array.
 
 // To grow or shrink the array, call SetSize().

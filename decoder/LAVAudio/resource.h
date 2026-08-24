@@ -2,6 +2,9 @@
 // Microsoft Visual C++ generated include file.
 // Used by LAVAudio.rc
 //
+// OpenJOC downstream modification (openjoc-0.12.0, 2026-08-25):
+// add identifiers for explicit OpenJOC output-policy controls.
+//
 #define IDD_PROPPAGE_AUDIO_SETTINGS     9
 #define IDD_PROPPAGE_AUDIO_MIXING       10
 #define IDD_PROPPAGE_FORMATS            11

@@ -5,8 +5,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # LAV source license census
 
-Release: openjoc-0.10.0  
-Census date: 2026-08-22  
+Release: openjoc-0.12.0  
+Census date: 2026-08-25  
 Machine-readable census: `LAV_SOURCE_LICENSE_CENSUS.json`
 
 ## Scope and result
@@ -36,24 +36,31 @@ See `DIRECTSHOW_BASECLASSES_PROVENANCE.md` for the exact evidence chain. The JSO
 
 ## OpenJOC-created LAV files
 
-All 25 OpenJOC-created integration, contract, test, and smoke files carry:
+All 26 OpenJOC-created integration, contract, tool, test, and smoke files carry:
 
 - `SPDX-FileCopyrightText: 2026 OpenJOC contributors`
 - `SPDX-License-Identifier: GPL-2.0-or-later`
 
-They are `AudioStatusCapacityTests.cpp`, `LAVAudioIdentitySmoke.cpp`, `LAVAudioResourceIdentitySmoke.cpp`, `LAVOpenJocDiagnostics.h`, `OpenJocAdmission.cpp/.h`, `OpenJocAdmissionTests.cpp`, `OpenJocDecoder.cpp/.h`, `OpenJocDecoderSmoke.cpp`, `OpenJocDirectShowNegotiationSmoke.cpp`, `OpenJocOutput.cpp/.h`, `OpenJocOutputTests.cpp`, `OpenJocPropertyPageSmoke.cpp`, `OpenJocSettingsSmoke.cpp`, `OpenJocShippedLayouts.cpp/.h`, `OpenJocShippedLayoutsTests.cpp`, `OpenJocStrictNegotiation.cpp/.h`, `OpenJocStrictOutput.cpp/.h`, `OpenJocStrictOutputTests.cpp`, and `include/LAVOpenJocSettings.h`.
+They are `AudioStatusCapacityTests.cpp`, `LAVAudioIdentitySmoke.cpp`, `LAVAudioResourceIdentitySmoke.cpp`, `LAVOpenJocDiagnostics.h`, `OpenJocAdmission.cpp/.h`, `OpenJocAdmissionTests.cpp`, `OpenJocDecoder.cpp/.h`, `OpenJocDecoderSmoke.cpp`, `OpenJocDirectShowNegotiationSmoke.cpp`, `OpenJocOutput.cpp/.h`, `OpenJocOutputTests.cpp`, `OpenJocPolicyControl.cpp`, `OpenJocPropertyPageSmoke.cpp`, `OpenJocSettingsSmoke.cpp`, `OpenJocShippedLayouts.cpp/.h`, `OpenJocShippedLayoutsTests.cpp`, `OpenJocStrictNegotiation.cpp/.h`, `OpenJocStrictOutput.cpp/.h`, `OpenJocStrictOutputTests.cpp`, and `include/LAVOpenJocSettings.h`.
 
 ## Modified upstream census
 
-All eight OpenJOC-modified upstream files preserve their applicable original notices and contain an OpenJOC downstream modification notice naming `openjoc-0.10.0` and 2026-08-22:
+All 13 OpenJOC-modified upstream files preserve their applicable original
+license evidence and contain a dated OpenJOC downstream modification notice
+for the release in which the downstream change was introduced:
 
+- `common/DSUtilLite/growarray.h`
 - `common/includes/common_defines.h`
 - `decoder/LAVAudio/AudioSettingsProp.cpp`
+- `decoder/LAVAudio/AudioSettingsProp.h`
 - `decoder/LAVAudio/LAVAudio.cpp`
 - `decoder/LAVAudio/LAVAudio.h`
+- `decoder/LAVAudio/LAVAudio.rc`
 - `decoder/LAVAudio/LAVAudio.vcxproj`
 - `decoder/LAVAudio/LAVAudio.vcxproj.filters`
+- `decoder/LAVAudio/PostProcessor.cpp`
 - `decoder/LAVAudio/dllmain.cpp`
+- `decoder/LAVAudio/resource.h`
 - `include/LAVAudioSettings.h`
 
 Their machine-readable records appear under `modified_upstream_files` in the JSON census.

@@ -17,6 +17,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+/*
+ * OpenJOC downstream modification (openjoc-0.12.0, 2026-08-25):
+ * expose the bounded multichannel status capacity and OpenJOC settings page.
+ */
+
 #pragma once
 
 // pattern: Imperative Shell

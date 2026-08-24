@@ -1,5 +1,8 @@
 // Microsoft Visual C++ generated resource script.
 //
+// OpenJOC downstream modification (openjoc-0.12.0, 2026-08-25):
+// add controls and sizing for explicit OpenJOC output-policy selection.
+//
 // pattern: Imperative Shell
 #include "resource.h"
 
