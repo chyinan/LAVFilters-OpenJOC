@@ -29,6 +29,7 @@
 
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocSettings.h"
+#include "LAVOpenJocDiagnostics.h"
 #include "FloatingAverage.h"
 #include "Media.h"
 #include "BitstreamParser.h"
@@ -108,6 +109,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     , public ILAVOpenJocStatus
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     , public ILAVOpenJocSettings
+    , public ILAVOpenJocDiagnostics
 #endif
 {
   public:
@@ -184,6 +186,10 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     // ILAVOpenJocSettings
     STDMETHODIMP GetOutputPolicy(LAVOpenJocOutputPolicy *policy);
     STDMETHODIMP SetOutputPolicy(LAVOpenJocOutputPolicy policy);
+
+    // ILAVOpenJocDiagnostics
+    STDMETHODIMP GetOpenJocInputByteCounts(ULONGLONG *classifier_input_bytes,
+                                           ULONGLONG *stream_input_bytes);
 #endif
 
     // CTransformFilter

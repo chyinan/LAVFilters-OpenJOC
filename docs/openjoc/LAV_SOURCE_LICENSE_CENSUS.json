@@ -700,6 +700,14 @@
       "final_license_classification": "GPL-2.0-or-later"
     },
     {
+      "file": "decoder/LAVAudio/LAVAudio.vcxproj.filters",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
+      "original_license": "GPL-2.0-or-later project metadata",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
       "file": "decoder/LAVAudio/dllmain.cpp",
       "upstream_status": "tracked LAV Filters upstream file",
       "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",

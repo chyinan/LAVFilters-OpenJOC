@@ -36,22 +36,23 @@ See `DIRECTSHOW_BASECLASSES_PROVENANCE.md` for the exact evidence chain. The JSO
 
 ## OpenJOC-created LAV files
 
-All 24 OpenJOC-created integration, contract, test, and smoke files carry:
+All 25 OpenJOC-created integration, contract, test, and smoke files carry:
 
 - `SPDX-FileCopyrightText: 2026 OpenJOC contributors`
 - `SPDX-License-Identifier: GPL-2.0-or-later`
 
-They are `AudioStatusCapacityTests.cpp`, `LAVAudioIdentitySmoke.cpp`, `LAVAudioResourceIdentitySmoke.cpp`, `OpenJocAdmission.cpp/.h`, `OpenJocAdmissionTests.cpp`, `OpenJocDecoder.cpp/.h`, `OpenJocDecoderSmoke.cpp`, `OpenJocDirectShowNegotiationSmoke.cpp`, `OpenJocOutput.cpp/.h`, `OpenJocOutputTests.cpp`, `OpenJocPropertyPageSmoke.cpp`, `OpenJocSettingsSmoke.cpp`, `OpenJocShippedLayouts.cpp/.h`, `OpenJocShippedLayoutsTests.cpp`, `OpenJocStrictNegotiation.cpp/.h`, `OpenJocStrictOutput.cpp/.h`, `OpenJocStrictOutputTests.cpp`, and `include/LAVOpenJocSettings.h`.
+They are `AudioStatusCapacityTests.cpp`, `LAVAudioIdentitySmoke.cpp`, `LAVAudioResourceIdentitySmoke.cpp`, `LAVOpenJocDiagnostics.h`, `OpenJocAdmission.cpp/.h`, `OpenJocAdmissionTests.cpp`, `OpenJocDecoder.cpp/.h`, `OpenJocDecoderSmoke.cpp`, `OpenJocDirectShowNegotiationSmoke.cpp`, `OpenJocOutput.cpp/.h`, `OpenJocOutputTests.cpp`, `OpenJocPropertyPageSmoke.cpp`, `OpenJocSettingsSmoke.cpp`, `OpenJocShippedLayouts.cpp/.h`, `OpenJocShippedLayoutsTests.cpp`, `OpenJocStrictNegotiation.cpp/.h`, `OpenJocStrictOutput.cpp/.h`, `OpenJocStrictOutputTests.cpp`, and `include/LAVOpenJocSettings.h`.
 
 ## Modified upstream census
 
-All seven OpenJOC-modified upstream files preserve their original notices and contain an OpenJOC downstream modification notice naming `openjoc-0.10.0` and 2026-08-22:
+All eight OpenJOC-modified upstream files preserve their applicable original notices and contain an OpenJOC downstream modification notice naming `openjoc-0.10.0` and 2026-08-22:
 
 - `common/includes/common_defines.h`
 - `decoder/LAVAudio/AudioSettingsProp.cpp`
 - `decoder/LAVAudio/LAVAudio.cpp`
 - `decoder/LAVAudio/LAVAudio.h`
 - `decoder/LAVAudio/LAVAudio.vcxproj`
+- `decoder/LAVAudio/LAVAudio.vcxproj.filters`
 - `decoder/LAVAudio/dllmain.cpp`
 - `include/LAVAudioSettings.h`
 

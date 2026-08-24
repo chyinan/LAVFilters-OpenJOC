@@ -585,7 +585,7 @@ STDMETHODIMP CLAVAudio::NonDelegatingQueryInterface(REFIID riid, void **ppv)
     return QI(ISpecifyPropertyPages) QI(ISpecifyPropertyPages2) QI2(ILAVAudioSettings)
         QI2(ILAVAudioStatus) QI2(ILAVOpenJocStatus)
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-            QI2(ILAVOpenJocSettings)
+            QI2(ILAVOpenJocSettings) QI2(ILAVOpenJocDiagnostics)
 #endif
                 __super::NonDelegatingQueryInterface(riid, ppv);
 }
@@ -1196,6 +1196,19 @@ LAVOpenJocAdmissionState CLAVAudio::GetOpenJocAdmissionState()
         return LAVOpenJocAdmissionUndecided;
     }
 }
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+HRESULT CLAVAudio::GetOpenJocInputByteCounts(ULONGLONG *classifier_input_bytes,
+                                             ULONGLONG *stream_input_bytes)
+{
+    CheckPointer(classifier_input_bytes, E_POINTER);
+    CheckPointer(stream_input_bytes, E_POINTER);
+    CAutoLock receive_lock(&m_csReceive);
+    *classifier_input_bytes = static_cast<ULONGLONG>(m_openJoc.ClassifierInputBytes());
+    *stream_input_bytes = static_cast<ULONGLONG>(m_openJoc.StreamInputBytes());
+    return S_OK;
+}
+#endif
 
 // CTransformFilter
 HRESULT CLAVAudio::CheckInputType(const CMediaType *mtIn)

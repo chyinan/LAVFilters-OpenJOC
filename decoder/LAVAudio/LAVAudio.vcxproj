@@ -134,6 +134,7 @@
     <ClInclude Include="..\..\include\LAVOpenJocSettings.h" />
     <ClInclude Include="BitstreamParser.h" />
     <ClInclude Include="LAVAudio.h" />
+    <ClInclude Include="LAVOpenJocDiagnostics.h" />
     <ClInclude Include="AudioSettingsProp.h" />
     <ClInclude Include="Media.h" />
     <ClInclude Include="OpenJocAdmission.h" />
