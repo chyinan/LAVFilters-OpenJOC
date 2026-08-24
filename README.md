@@ -7,9 +7,15 @@ This repository is a downstream fork of [Nevcairiel/LAVFilters](https://github.c
 - Ordinary E-AC-3: stock LAV/FFmpeg decoding
 - Confirmed JOC: OpenJOC admission and decoding
 - E-AC-3 passthrough: existing LAV bitstream path takes precedence
-- OpenJOC DirectShow output in this integration: stereo float PCM
+- OpenJOC DirectShow output in this integration: explicit fixed 48 kHz IEEE
+  float PCM policies for Stereo, 5.1, 7.1, 5.1.2, 5.1.4, 7.1.2, and 7.1.4
+- Negotiation: one exact semantic `WAVEFORMATEXTENSIBLE` proposal per selected
+  policy, with no fallback mask or alternate proposal
+- Automatic layout selection: `AUTO_NOT_RELIABLE`; Stereo is the default
+- Scope: no endpoint-name layout inference, Bass Management, physical-subwoofer
+  routing, or physical multichannel hardware verification
 - OpenJOC project: [chyinan/OpenJOC](https://github.com/chyinan/OpenJOC)
-- Downstream integration tag: `openjoc-0.10.0`
+- Downstream integration tag: `openjoc-0.12.0`
 
 This downstream project is not endorsed by Nevcairiel, FFmpeg, PotPlayer,
 Dolby, Microsoft, or SADIE. See `docs/openjoc/` and the upstream `COPYING`
