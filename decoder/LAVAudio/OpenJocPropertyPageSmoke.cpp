@@ -343,6 +343,20 @@ void DisconnectPage(IPropertyPage *page, const bool active)
 
 bool TestSettingsPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND parent)
 {
+    constexpr struct
+    {
+        LAVOpenJocOutputPolicy policy;
+        const wchar_t *label;
+    } expected_policies[] = {
+        {LAVOpenJocOutputPolicy::Stereo, L"Stereo"},
+        {LAVOpenJocOutputPolicy::Layout51, L"5.1"},
+        {LAVOpenJocOutputPolicy::Layout71, L"7.1"},
+        {LAVOpenJocOutputPolicy::Layout512, L"5.1.2"},
+        {LAVOpenJocOutputPolicy::Layout514, L"5.1.4"},
+        {LAVOpenJocOutputPolicy::Layout712, L"7.1.2"},
+        {LAVOpenJocOutputPolicy::Layout714, L"7.1.4"},
+    };
+
     ILAVOpenJocSettings *settings = nullptr;
     ITestRuntimeSettings *runtime = nullptr;
     HRESULT hr = filter->QueryInterface(__uuidof(ILAVOpenJocSettings), reinterpret_cast<void **>(&settings));
@@ -363,13 +377,18 @@ bool TestSettingsPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND p
     const bool active = SUCCEEDED(hr);
 
     HWND combo = SUCCEEDED(hr) ? FindControl(parent, kOpenJocOutputPolicyControl) : nullptr;
-    wchar_t combo_label[32] = {};
-    if (combo)
-        SendMessageW(combo, CB_GETLBTEXT, 0, reinterpret_cast<LPARAM>(combo_label));
-    if (!combo || SendMessageW(combo, CB_GETCOUNT, 0, 0) != 1 ||
-        SendMessageW(combo, CB_GETITEMDATA, 0, 0) != static_cast<LRESULT>(LAVOpenJocOutputPolicy::Stereo) ||
-        SendMessageW(combo, CB_GETCURSEL, 0, 0) != CB_ERR || std::wstring(combo_label) != L"Stereo")
+    if (!combo || SendMessageW(combo, CB_GETCOUNT, 0, 0) != std::size(expected_policies) ||
+        SendMessageW(combo, CB_GETCURSEL, 0, 0) != 6)
         hr = E_UNEXPECTED;
+    for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_policies); ++index)
+    {
+        wchar_t combo_label[32] = {};
+        SendMessageW(combo, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(combo_label));
+        if (SendMessageW(combo, CB_GETITEMDATA, index, 0) !=
+                static_cast<LRESULT>(expected_policies[index].policy) ||
+            std::wstring(combo_label) != expected_policies[index].label)
+            hr = E_UNEXPECTED;
+    }
 
     HWND tray = SUCCEEDED(hr) ? FindControl(parent, kTrayIconControl) : nullptr;
     if (!tray)
@@ -387,7 +406,7 @@ bool TestSettingsPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND p
     if (SUCCEEDED(hr))
         hr = settings->GetOutputPolicy(&policy);
     if (SUCCEEDED(hr) &&
-        (policy != LAVOpenJocOutputPolicy::Layout714 || SendMessageW(combo, CB_GETCURSEL, 0, 0) != CB_ERR))
+        (policy != LAVOpenJocOutputPolicy::Layout714 || SendMessageW(combo, CB_GETCURSEL, 0, 0) != 6))
         hr = E_UNEXPECTED;
 
     if (SUCCEEDED(hr) && SendMessageW(combo, CB_SETCURSEL, 0, 0) != 0)
