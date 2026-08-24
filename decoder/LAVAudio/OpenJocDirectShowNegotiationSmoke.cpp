@@ -183,6 +183,144 @@ ControlledEvidenceState ClassifyControlledEvidence(const EvidenceInputs &inputs)
     return ControlledEvidenceState::ControlledSinkComplete;
 }
 
+enum class NativeProbeState
+{
+    Unverified,
+    ExactRejection,
+    TypeMutation,
+    StreamObserved,
+};
+
+struct NativeTypeAggregateEvidence
+{
+    std::uint32_t observation_count = 0;
+    std::uint32_t successful_observation_count = 0;
+    bool query_failure = false;
+    bool mismatch_observed = false;
+};
+
+NativeTypeAggregateEvidence AccumulateNativeTypeObservation(
+    NativeTypeAggregateEvidence value, const bool executed,
+    const HRESULT output_status, const HRESULT renderer_input_status,
+    const bool output_exact, const bool renderer_input_exact, const bool peer_equal)
+{
+    if (!executed)
+        return value;
+    ++value.observation_count;
+    if (output_status != S_OK || renderer_input_status != S_OK)
+    {
+        value.query_failure = true;
+        return value;
+    }
+    ++value.successful_observation_count;
+    if (!output_exact || !renderer_input_exact || !peer_equal)
+        value.mismatch_observed = true;
+    return value;
+}
+
+struct NativeSeekEpochWitness
+{
+    HRESULT pre_drain_status = E_UNEXPECTED;
+    bool prior_graph_error = false;
+    HRESULT diagnostics_before_status = E_UNEXPECTED;
+    ULONGLONG classifier_bytes_before = 0;
+    ULONGLONG stream_bytes_before = 0;
+    HRESULT diagnostics_after_status = E_UNEXPECTED;
+    ULONGLONG classifier_bytes_after = 0;
+    ULONGLONG stream_bytes_after = 0;
+    HRESULT position_before_run_status = E_UNEXPECTED;
+    LONGLONG position_before_run = 0;
+    HRESULT position_after_completion_status = E_UNEXPECTED;
+    LONGLONG position_after_completion = 0;
+    bool fresh_completion = false;
+    HRESULT renderer_stats_status = E_UNEXPECTED;
+    DWORD renderer_last_buffer_duration = 0;
+    HRESULT renderer_discontinuities_before_status = E_UNEXPECTED;
+    DWORD renderer_discontinuities_before = 0;
+    HRESULT renderer_discontinuities_after_status = E_UNEXPECTED;
+    DWORD renderer_discontinuities_after = 0;
+};
+
+bool NativeSeekEpochWitnessIsComplete(const NativeSeekEpochWitness &value)
+{
+    return value.pre_drain_status == S_OK && !value.prior_graph_error &&
+           value.diagnostics_before_status == S_OK &&
+           value.diagnostics_after_status == S_OK &&
+           value.classifier_bytes_after > value.classifier_bytes_before &&
+           value.stream_bytes_after > value.stream_bytes_before &&
+           value.position_before_run_status == S_OK &&
+           value.position_after_completion_status == S_OK &&
+           value.position_after_completion > value.position_before_run &&
+           value.fresh_completion && value.renderer_stats_status == S_OK &&
+           value.renderer_last_buffer_duration > 0 &&
+           value.renderer_discontinuities_before_status == S_OK &&
+           value.renderer_discontinuities_after_status == S_OK &&
+           value.renderer_discontinuities_after >
+               value.renderer_discontinuities_before;
+}
+
+struct NativeProbeEvidence
+{
+    bool runtime_identity = false;
+    bool fixture_identity = false;
+    bool graph_setup_complete = false;
+    bool connect_attempted = false;
+    HRESULT connect_direct_status = E_UNEXPECTED;
+    NativeTypeAggregateEvidence type_observations;
+    HRESULT pause_call_status = E_UNEXPECTED;
+    HRESULT pause_state_status = E_UNEXPECTED;
+    OAFilterState pause_state = State_Stopped;
+    HRESULT run_call_status = E_UNEXPECTED;
+    HRESULT run_state_status = E_UNEXPECTED;
+    OAFilterState run_state = State_Stopped;
+    HRESULT wait_completion_status = E_UNEXPECTED;
+    long completion_code = 0;
+    HRESULT renderer_stats_status = E_UNEXPECTED;
+    DWORD renderer_last_buffer_duration = 0;
+    HRESULT diagnostics_status = E_UNEXPECTED;
+    ULONGLONG classifier_bytes = 0;
+    ULONGLONG stream_bytes = 0;
+    bool initial_eos_complete = false;
+    bool seek_25_complete = false;
+    bool forward_seek_complete = false;
+    bool backward_seek_complete = false;
+    HRESULT stop_status = E_UNEXPECTED;
+    bool reopen_complete = false;
+};
+
+NativeProbeState ClassifyNativeProbe(const NativeProbeEvidence &value)
+{
+    if (!value.runtime_identity || !value.fixture_identity)
+        return NativeProbeState::Unverified;
+    if (value.connect_attempted &&
+        (value.connect_direct_status == VFW_E_TYPE_NOT_ACCEPTED ||
+         value.connect_direct_status == VFW_E_UNSUPPORTED_AUDIO))
+        return NativeProbeState::ExactRejection;
+    if (!value.connect_attempted || value.connect_direct_status != S_OK)
+        return NativeProbeState::Unverified;
+
+    if (value.type_observations.mismatch_observed)
+        return NativeProbeState::TypeMutation;
+    if (value.type_observations.query_failure ||
+        value.type_observations.observation_count < 2 ||
+        value.type_observations.successful_observation_count !=
+            value.type_observations.observation_count)
+        return NativeProbeState::Unverified;
+
+    if (!value.graph_setup_complete || value.pause_call_status != S_OK ||
+        value.pause_state_status != S_OK ||
+        value.pause_state != State_Paused || value.run_call_status != S_OK ||
+        value.run_state_status != S_OK || value.run_state != State_Running ||
+        value.wait_completion_status != S_OK || value.completion_code != EC_COMPLETE ||
+        value.renderer_stats_status != S_OK || value.renderer_last_buffer_duration == 0 ||
+        value.diagnostics_status != S_OK || value.classifier_bytes == 0 ||
+        value.stream_bytes == 0 || !value.initial_eos_complete || !value.seek_25_complete ||
+        !value.forward_seek_complete || !value.backward_seek_complete ||
+        value.stop_status != S_OK || !value.reopen_complete)
+        return NativeProbeState::Unverified;
+    return NativeProbeState::StreamObserved;
+}
+
 struct Task4TrendEvidence
 {
     double full_slope = 0.0;
@@ -2262,6 +2400,67 @@ bool DrainGraphErrors(IMediaEvent *events, HRESULT *first_error)
         events->FreeEventParams(event_code, parameter1, parameter2);
     }
     return graph_error;
+}
+
+struct NativeEventDrainEvidence
+{
+    HRESULT status = E_UNEXPECTED;
+    HRESULT terminal_status = E_UNEXPECTED;
+    HRESULT free_status = S_OK;
+    std::uint64_t event_count = 0;
+    std::uint64_t completion_count = 0;
+    bool graph_error = false;
+    HRESULT first_error = S_OK;
+};
+
+NativeEventDrainEvidence DrainNativeGraphEvents(IMediaEvent *events)
+{
+    NativeEventDrainEvidence result;
+    if (!events)
+    {
+        result.status = E_POINTER;
+        return result;
+    }
+    for (;;)
+    {
+        long event_code = 0;
+        LONG_PTR parameter1 = 0;
+        LONG_PTR parameter2 = 0;
+        result.terminal_status =
+            events->GetEvent(&event_code, &parameter1, &parameter2, 0);
+        if (result.terminal_status != S_OK)
+            break;
+        ++result.event_count;
+        if (event_code == EC_COMPLETE)
+            ++result.completion_count;
+        if (event_code == EC_USERABORT || event_code == EC_ERRORABORT ||
+            event_code == EC_STREAM_ERROR_STOPPED ||
+            event_code == EC_STREAM_ERROR_STILLPLAYING ||
+            event_code == EC_ERROR_STILLPLAYING || event_code == EC_ERRORABORTEX)
+        {
+            result.graph_error = true;
+            if (SUCCEEDED(result.first_error))
+            {
+                result.first_error = static_cast<HRESULT>(parameter1);
+                if (SUCCEEDED(result.first_error))
+                    result.first_error = E_FAIL;
+            }
+        }
+        const HRESULT free_status =
+            events->FreeEventParams(event_code, parameter1, parameter2);
+        if (FAILED(free_status) && SUCCEEDED(result.free_status))
+            result.free_status = free_status;
+    }
+    if (result.terminal_status == E_ABORT && SUCCEEDED(result.free_status) &&
+        !result.graph_error)
+        result.status = S_OK;
+    else if (result.graph_error)
+        result.status = result.first_error;
+    else if (FAILED(result.free_status))
+        result.status = result.free_status;
+    else
+        result.status = result.terminal_status;
+    return result;
 }
 
 bool WaitForSinkQuiescence(StrictCaptureSink *sink, std::uint64_t *stable_serial)
@@ -5891,7 +6090,153 @@ bool TestPureHelpers()
         return false;
     inputs.samples = 1;
     inputs.bytes = 8;
-    return ClassifyControlledEvidence(inputs) == ControlledEvidenceState::ControlledSinkComplete;
+    if (ClassifyControlledEvidence(inputs) != ControlledEvidenceState::ControlledSinkComplete)
+        return false;
+
+    NativeProbeEvidence probe;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+
+    probe.runtime_identity = probe.fixture_identity = true;
+    probe.connect_direct_status = VFW_E_TYPE_NOT_ACCEPTED;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+    probe.connect_attempted = true;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::ExactRejection)
+        return false;
+    probe.connect_direct_status = VFW_E_UNSUPPORTED_AUDIO;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::ExactRejection)
+        return false;
+    probe.connect_direct_status = E_ACCESSDENIED;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+    probe.connect_direct_status = VFW_E_CANNOT_CONNECT;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+    probe.connect_direct_status = VFW_E_NO_ACCEPTABLE_TYPES;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+    probe.connect_direct_status = HRESULT_FROM_WIN32(ERROR_NOT_READY);
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+
+    probe.connect_direct_status = S_OK;
+    probe.graph_setup_complete = true;
+    NativeTypeAggregateEvidence type_evidence;
+    type_evidence = AccumulateNativeTypeObservation(type_evidence, true, S_OK, S_OK,
+                                                    true, true, true);
+    type_evidence = AccumulateNativeTypeObservation(type_evidence, true, S_OK, S_OK,
+                                                    true, true, true);
+    probe.type_observations = type_evidence;
+    probe.pause_call_status = probe.pause_state_status = probe.run_call_status =
+        probe.run_state_status = probe.wait_completion_status = probe.renderer_stats_status =
+            probe.diagnostics_status = probe.stop_status = S_OK;
+    probe.pause_state = State_Paused;
+    probe.run_state = State_Running;
+    probe.completion_code = EC_COMPLETE;
+    probe.renderer_last_buffer_duration = 1;
+    probe.classifier_bytes = probe.stream_bytes = 1;
+    probe.initial_eos_complete = probe.seek_25_complete = probe.forward_seek_complete =
+        probe.backward_seek_complete = probe.reopen_complete = true;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::StreamObserved)
+        return false;
+
+    probe.runtime_identity = false;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+    probe.runtime_identity = true;
+    probe.fixture_identity = false;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+    probe.fixture_identity = true;
+    probe.reopen_complete = false;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+    probe.reopen_complete = true;
+
+    NativeTypeAggregateEvidence unexecuted;
+    unexecuted = AccumulateNativeTypeObservation(unexecuted, false, E_FAIL, E_FAIL,
+                                                false, false, false);
+    if (unexecuted.observation_count != 0)
+        return false;
+    probe.type_observations = type_evidence;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::StreamObserved)
+        return false;
+
+    NativeTypeAggregateEvidence seek_mutation = type_evidence;
+    seek_mutation = AccumulateNativeTypeObservation(seek_mutation, true, S_OK, S_OK,
+                                                    true, false, false);
+    probe.type_observations = seek_mutation;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::TypeMutation)
+        return false;
+
+    NativeTypeAggregateEvidence reopen_mutation = type_evidence;
+    for (int index = 0; index < 4; ++index)
+    {
+        reopen_mutation = AccumulateNativeTypeObservation(
+            reopen_mutation, true, S_OK, S_OK, true, true, true);
+    }
+    reopen_mutation = AccumulateNativeTypeObservation(reopen_mutation, true, S_OK, S_OK,
+                                                      false, true, false);
+    probe.type_observations = reopen_mutation;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::TypeMutation)
+        return false;
+
+    NativeTypeAggregateEvidence query_failure = type_evidence;
+    query_failure = AccumulateNativeTypeObservation(query_failure, true, E_FAIL, S_OK,
+                                                    false, true, false);
+    probe.type_observations = query_failure;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+    query_failure = type_evidence;
+    query_failure = AccumulateNativeTypeObservation(query_failure, true, S_OK, E_FAIL,
+                                                    true, false, false);
+    probe.type_observations = query_failure;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+    NativeTypeAggregateEvidence mixed_type_evidence = seek_mutation;
+    mixed_type_evidence = AccumulateNativeTypeObservation(
+        mixed_type_evidence, true, E_FAIL, S_OK, false, true, false);
+    probe.type_observations = mixed_type_evidence;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::TypeMutation)
+        return false;
+    probe.type_observations = type_evidence;
+
+    NativeSeekEpochWitness epoch;
+    epoch.pre_drain_status = S_OK;
+    epoch.diagnostics_before_status = epoch.diagnostics_after_status = S_OK;
+    epoch.classifier_bytes_before = epoch.classifier_bytes_after = 10;
+    epoch.stream_bytes_before = epoch.stream_bytes_after = 20;
+    epoch.position_before_run_status = epoch.position_after_completion_status = S_OK;
+    epoch.position_before_run = 25;
+    epoch.position_after_completion = 75;
+    epoch.fresh_completion = true;
+    epoch.renderer_stats_status = S_OK;
+    epoch.renderer_last_buffer_duration = 1;
+    epoch.renderer_discontinuities_before_status =
+        epoch.renderer_discontinuities_after_status = S_OK;
+    epoch.renderer_discontinuities_before = epoch.renderer_discontinuities_after = 4;
+    probe.seek_25_complete = NativeSeekEpochWitnessIsComplete(epoch);
+    if (probe.seek_25_complete ||
+        ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        return false;
+    epoch.classifier_bytes_after = 11;
+    epoch.stream_bytes_after = 21;
+    if (NativeSeekEpochWitnessIsComplete(epoch))
+        return false;
+    epoch.renderer_discontinuities_after = 5;
+    epoch.position_after_completion = epoch.position_before_run;
+    if (NativeSeekEpochWitnessIsComplete(epoch))
+        return false;
+    epoch.position_after_completion = 75;
+    epoch.prior_graph_error = true;
+    if (NativeSeekEpochWitnessIsComplete(epoch))
+        return false;
+    epoch.prior_graph_error = false;
+    probe.seek_25_complete = probe.forward_seek_complete = probe.backward_seek_complete =
+        NativeSeekEpochWitnessIsComplete(epoch);
+    return probe.seek_25_complete &&
+           ClassifyNativeProbe(probe) == NativeProbeState::StreamObserved;
 }
 
 bool TestStrictCaptureSinkPolicy()
@@ -5919,6 +6264,869 @@ bool TestStrictCaptureSinkPolicy()
            rejection->input()->QueryAccept(&fallback) == S_OK &&
            rejection->rejected_stage() == L"QueryAccept" &&
            rejection->rejected_normalized_result() == VFW_E_TYPE_NOT_ACCEPTED;
+}
+
+struct NativeTypeObservation
+{
+    HRESULT output_status = E_UNEXPECTED;
+    HRESULT renderer_input_status = E_UNEXPECTED;
+    CMediaType output_type;
+    CMediaType renderer_input_type;
+    bool output_exact = false;
+    bool renderer_input_exact = false;
+    bool peer_equal = false;
+};
+
+NativeTypeObservation ObserveNativeConnectionTypes(IPin *audio_output, IPin *renderer_input,
+                                                   const CMediaType &requested)
+{
+    NativeTypeObservation result;
+    if (!audio_output || !renderer_input)
+        return result;
+    result.output_status = audio_output->ConnectionMediaType(&result.output_type);
+    result.renderer_input_status =
+        renderer_input->ConnectionMediaType(&result.renderer_input_type);
+    if (result.output_status == S_OK)
+        result.output_exact =
+            openjoc_harness_core::ExactMediaTypeEqual(requested, result.output_type);
+    if (result.renderer_input_status == S_OK)
+        result.renderer_input_exact =
+            openjoc_harness_core::ExactMediaTypeEqual(requested, result.renderer_input_type);
+    if (result.output_status == S_OK && result.renderer_input_status == S_OK)
+        result.peer_equal = openjoc_harness_core::ExactMediaTypeEqual(
+            result.output_type, result.renderer_input_type);
+    return result;
+}
+
+bool NativeTypeObservationIsExact(const NativeTypeObservation &value)
+{
+    return value.output_status == S_OK && value.renderer_input_status == S_OK &&
+           value.output_exact && value.renderer_input_exact && value.peer_equal;
+}
+
+openjoc_harness_core::NativeTypeAggregateEvidence AccumulateObservedNativeType(
+    openjoc_harness_core::NativeTypeAggregateEvidence aggregate,
+    const bool executed, const NativeTypeObservation &observation)
+{
+    return openjoc_harness_core::AccumulateNativeTypeObservation(
+        aggregate, executed, observation.output_status,
+        observation.renderer_input_status, observation.output_exact,
+        observation.renderer_input_exact, observation.peer_equal);
+}
+
+struct NativeRendererGraph
+{
+    ComOwner<IGraphBuilder> graph;
+    ComOwner<IBaseFilter> source;
+    ComOwner<IBaseFilter> audio_filter;
+    ComOwner<IPin> source_output;
+    ComOwner<IPin> audio_input;
+    ComOwner<IPin> audio_output;
+    ComOwner<IBaseFilter> renderer;
+    ComOwner<IPin> renderer_input;
+    ComOwner<IMediaControl> control;
+    ComOwner<IMediaEvent> events;
+    ComOwner<IMediaSeeking> seeking;
+    ComOwner<ILAVOpenJocDiagnostics> diagnostics;
+    CMediaType exact_eac3;
+    HRESULT create_graph_status = E_UNEXPECTED;
+    HRESULT bind_renderer_status = E_UNEXPECTED;
+    HRESULT add_renderer_status = E_UNEXPECTED;
+    HRESULT find_renderer_pin_status = E_UNEXPECTED;
+    bool connect_attempted = false;
+    HRESULT connect_status = E_UNEXPECTED;
+    HRESULT control_status = E_UNEXPECTED;
+    HRESULT events_status = E_UNEXPECTED;
+    HRESULT seeking_status = E_UNEXPECTED;
+    HRESULT diagnostics_interface_status = E_UNEXPECTED;
+    bool graph_exactly_three_filters = false;
+};
+
+struct NativeGraphSetupEvidence
+{
+    HRESULT create_graph_status = E_UNEXPECTED;
+    HRESULT bind_renderer_status = E_UNEXPECTED;
+    HRESULT add_renderer_status = E_UNEXPECTED;
+    HRESULT find_renderer_pin_status = E_UNEXPECTED;
+    bool connect_attempted = false;
+    HRESULT connect_status = E_UNEXPECTED;
+    HRESULT control_status = E_UNEXPECTED;
+    HRESULT events_status = E_UNEXPECTED;
+    HRESULT seeking_status = E_UNEXPECTED;
+    HRESULT diagnostics_interface_status = E_UNEXPECTED;
+    bool graph_exactly_three_filters = false;
+};
+
+NativeGraphSetupEvidence SnapshotNativeGraphSetup(const NativeRendererGraph &value)
+{
+    return {value.create_graph_status,
+            value.bind_renderer_status,
+            value.add_renderer_status,
+            value.find_renderer_pin_status,
+            value.connect_attempted,
+            value.connect_status,
+            value.control_status,
+            value.events_status,
+            value.seeking_status,
+            value.diagnostics_interface_status,
+            value.graph_exactly_three_filters};
+}
+
+void BuildNativeRendererGraph(const PrivateComModule &audio,
+                              const PrivateComModule &splitter,
+                              const FixtureIdentity &fixture,
+                              const LAVOpenJocOutputPolicy policy,
+                              const wchar_t *renderer_moniker,
+                              const CMediaType &requested,
+                              NativeRendererGraph *result)
+{
+    if (!result)
+        return;
+    result->create_graph_status = CreateGraphForFixture(
+        audio, splitter, fixture.final_path, policy, true, result->graph.put(),
+        result->source.put(), result->audio_filter.put(), result->source_output.put(),
+        result->audio_input.put(), result->audio_output.put(), &result->exact_eac3);
+    if (SUCCEEDED(result->create_graph_status))
+        result->bind_renderer_status =
+            BindRendererMoniker(renderer_moniker, result->renderer.put());
+    if (SUCCEEDED(result->bind_renderer_status))
+        result->add_renderer_status =
+            result->graph->AddFilter(result->renderer.get(), L"Named renderer under exact test");
+    if (SUCCEEDED(result->add_renderer_status))
+        result->find_renderer_pin_status =
+            FindSingleOwnedPin(result->renderer.get(), PINDIR_INPUT,
+                               result->renderer_input.put());
+    if (SUCCEEDED(result->find_renderer_pin_status))
+    {
+        result->connect_attempted = true;
+        result->connect_status = result->graph->ConnectDirect(
+            result->audio_output.get(), result->renderer_input.get(), &requested);
+    }
+    if (result->connect_status == S_OK)
+    {
+        result->graph_exactly_three_filters = GraphContainsExactly(result->graph.get(), 3);
+        result->control_status = result->graph->QueryInterface(
+            IID_IMediaControl, reinterpret_cast<void **>(result->control.put()));
+        result->events_status = result->graph->QueryInterface(
+            IID_IMediaEvent, reinterpret_cast<void **>(result->events.put()));
+        result->seeking_status = result->graph->QueryInterface(
+            IID_IMediaSeeking, reinterpret_cast<void **>(result->seeking.put()));
+        result->diagnostics_interface_status = result->audio_filter->QueryInterface(
+            __uuidof(ILAVOpenJocDiagnostics),
+            reinterpret_cast<void **>(result->diagnostics.put()));
+    }
+}
+
+struct NativePlaybackEvidence
+{
+    NativeTypeObservation pre_types;
+    bool stream_attempted = false;
+    HRESULT pause_call_status = E_UNEXPECTED;
+    HRESULT pause_state_status = E_UNEXPECTED;
+    OAFilterState pause_state = State_Stopped;
+    HRESULT run_call_status = E_UNEXPECTED;
+    HRESULT run_state_status = E_UNEXPECTED;
+    OAFilterState run_state = State_Stopped;
+    HRESULT wait_status = E_UNEXPECTED;
+    long completion_code = 0;
+    HRESULT graph_error = S_OK;
+    HRESULT renderer_stats_status = E_NOINTERFACE;
+    DWORD last_buffer_duration = 0;
+    DWORD last_buffer_aux = 0;
+    HRESULT diagnostics_status = E_NOINTERFACE;
+    ULONGLONG classifier_bytes = 0;
+    ULONGLONG stream_bytes = 0;
+    NativeTypeObservation post_types;
+    bool eos_complete = false;
+};
+
+void CaptureNativeRendererWitnesses(IBaseFilter *renderer,
+                                    ILAVOpenJocDiagnostics *diagnostics,
+                                    NativePlaybackEvidence *result)
+{
+    if (!result)
+        return;
+    ComOwner<IAMAudioRendererStats> renderer_stats;
+    if (renderer && renderer->QueryInterface(
+                        IID_IAMAudioRendererStats,
+                        reinterpret_cast<void **>(renderer_stats.put())) == S_OK)
+    {
+        result->renderer_stats_status = renderer_stats->GetStatParam(
+            AM_AUDREND_STAT_PARAM_LAST_BUFFER_DUR, &result->last_buffer_duration,
+            &result->last_buffer_aux);
+    }
+    if (diagnostics)
+    {
+        result->diagnostics_status = diagnostics->GetOpenJocInputByteCounts(
+            &result->classifier_bytes, &result->stream_bytes);
+    }
+}
+
+void RunNativeInitialPlayback(NativeRendererGraph *native,
+                              const CMediaType &requested,
+                              NativePlaybackEvidence *result)
+{
+    if (!native || !result || native->connect_status != S_OK)
+        return;
+    result->pre_types = ObserveNativeConnectionTypes(
+        native->audio_output.get(), native->renderer_input.get(), requested);
+    const bool ready = NativeTypeObservationIsExact(result->pre_types) &&
+                       native->graph_exactly_three_filters &&
+                       native->control_status == S_OK && native->events_status == S_OK;
+    if (ready)
+    {
+        result->stream_attempted = true;
+        result->pause_call_status = native->control->Pause();
+        if (result->pause_call_status == S_OK)
+            result->pause_state_status =
+                native->control->GetState(10000, &result->pause_state);
+        if (result->pause_call_status == S_OK && result->pause_state_status == S_OK &&
+            result->pause_state == State_Paused)
+        {
+            result->run_call_status = native->control->Run();
+            if (result->run_call_status == S_OK)
+                result->run_state_status =
+                    native->control->GetState(10000, &result->run_state);
+        }
+        if (result->run_call_status == S_OK && result->run_state_status == S_OK &&
+            result->run_state == State_Running)
+        {
+            result->wait_status =
+                native->events->WaitForCompletion(60000, &result->completion_code);
+        }
+        if (DrainGraphErrors(native->events.get(), &result->graph_error) &&
+            result->graph_error == S_OK)
+            result->graph_error = E_FAIL;
+    }
+    CaptureNativeRendererWitnesses(native->renderer.get(), native->diagnostics.get(), result);
+    result->post_types = ObserveNativeConnectionTypes(
+        native->audio_output.get(), native->renderer_input.get(), requested);
+    result->eos_complete = result->stream_attempted && result->pause_call_status == S_OK &&
+                           result->pause_state_status == S_OK &&
+                           result->pause_state == State_Paused &&
+                           result->run_call_status == S_OK &&
+                           result->run_state_status == S_OK &&
+                           result->run_state == State_Running && result->wait_status == S_OK &&
+                           result->completion_code == EC_COMPLETE && result->graph_error == S_OK;
+}
+
+struct NativeSeekEvidence
+{
+    const char *label = nullptr;
+    LONGLONG requested_position = 0;
+    LONGLONG actual_position = 0;
+    HRESULT get_capabilities_status = E_UNEXPECTED;
+    DWORD capabilities = 0;
+    HRESULT check_capabilities_status = E_UNEXPECTED;
+    DWORD checked_capabilities = 0;
+    NativeEventDrainEvidence pre_drain;
+    bool set_positions_attempted = false;
+    HRESULT diagnostics_before_status = E_UNEXPECTED;
+    ULONGLONG classifier_bytes_before = 0;
+    ULONGLONG stream_bytes_before = 0;
+    HRESULT renderer_stats_interface_status = E_NOINTERFACE;
+    HRESULT renderer_discontinuities_before_status = E_UNEXPECTED;
+    DWORD renderer_discontinuities_before = 0;
+    DWORD renderer_discontinuities_before_aux = 0;
+    HRESULT set_positions_status = E_UNEXPECTED;
+    HRESULT position_before_run_status = E_UNEXPECTED;
+    LONGLONG position_before_run = 0;
+    HRESULT run_call_status = E_UNEXPECTED;
+    HRESULT run_state_status = E_UNEXPECTED;
+    OAFilterState run_state = State_Stopped;
+    HRESULT wait_status = E_UNEXPECTED;
+    long completion_code = 0;
+    HRESULT position_after_completion_status = E_UNEXPECTED;
+    LONGLONG position_after_completion = 0;
+    HRESULT renderer_discontinuities_after_status = E_UNEXPECTED;
+    DWORD renderer_discontinuities_after = 0;
+    DWORD renderer_discontinuities_after_aux = 0;
+    HRESULT graph_error = S_OK;
+    NativePlaybackEvidence witnesses;
+    NativeTypeObservation post_types;
+    bool complete = false;
+};
+
+void RunNativeSeekEpoch(NativeRendererGraph *native, const CMediaType &requested,
+                        const char *label, const LONGLONG position,
+                        NativeSeekEvidence *result)
+{
+    if (!native || !result || !label)
+        return;
+    result->label = label;
+    result->requested_position = position;
+    result->actual_position = position;
+    if (native->seeking_status != S_OK || !native->seeking || !native->control ||
+        !native->events)
+        return;
+    ComOwner<IAMAudioRendererStats> renderer_stats;
+    if (native->renderer)
+    {
+        result->renderer_stats_interface_status = native->renderer->QueryInterface(
+            IID_IAMAudioRendererStats,
+            reinterpret_cast<void **>(renderer_stats.put()));
+    }
+    result->get_capabilities_status =
+        native->seeking->GetCapabilities(&result->capabilities);
+    result->checked_capabilities =
+        AM_SEEKING_CanSeekAbsolute | AM_SEEKING_CanGetDuration;
+    result->check_capabilities_status =
+        native->seeking->CheckCapabilities(&result->checked_capabilities);
+    const DWORD required_capabilities =
+        AM_SEEKING_CanSeekAbsolute | AM_SEEKING_CanGetDuration;
+    if (result->get_capabilities_status == S_OK &&
+        (result->capabilities & required_capabilities) == required_capabilities &&
+        result->check_capabilities_status == S_OK &&
+        result->checked_capabilities == required_capabilities)
+    {
+        result->pre_drain = DrainNativeGraphEvents(native->events.get());
+        if (result->pre_drain.status == S_OK && native->diagnostics)
+        {
+            result->diagnostics_before_status =
+                native->diagnostics->GetOpenJocInputByteCounts(
+                    &result->classifier_bytes_before, &result->stream_bytes_before);
+            if (result->diagnostics_before_status == S_OK)
+            {
+                result->renderer_discontinuities_before_status = renderer_stats
+                    ? renderer_stats->GetStatParam(
+                          AM_AUDREND_STAT_PARAM_DISCONTINUITIES,
+                          &result->renderer_discontinuities_before,
+                          &result->renderer_discontinuities_before_aux)
+                    : result->renderer_stats_interface_status;
+                result->set_positions_attempted = true;
+                result->set_positions_status = native->seeking->SetPositions(
+                    &result->actual_position, AM_SEEKING_AbsolutePositioning, nullptr,
+                    AM_SEEKING_NoPositioning);
+            }
+        }
+    }
+    if (result->set_positions_status == S_OK &&
+        result->actual_position == result->requested_position)
+    {
+        result->position_before_run_status =
+            native->seeking->GetCurrentPosition(&result->position_before_run);
+        if (result->position_before_run_status == S_OK)
+        {
+            result->run_call_status = native->control->Run();
+            if (result->run_call_status == S_OK)
+                result->run_state_status =
+                    native->control->GetState(10000, &result->run_state);
+            if (result->run_state_status == S_OK && result->run_state == State_Running)
+                result->wait_status =
+                    native->events->WaitForCompletion(60000, &result->completion_code);
+            if (result->wait_status == S_OK && result->completion_code == EC_COMPLETE)
+            {
+                result->position_after_completion_status =
+                    native->seeking->GetCurrentPosition(
+                        &result->position_after_completion);
+                result->renderer_discontinuities_after_status = renderer_stats
+                    ? renderer_stats->GetStatParam(
+                          AM_AUDREND_STAT_PARAM_DISCONTINUITIES,
+                          &result->renderer_discontinuities_after,
+                          &result->renderer_discontinuities_after_aux)
+                    : result->renderer_stats_interface_status;
+            }
+        }
+        if (DrainGraphErrors(native->events.get(), &result->graph_error) &&
+            result->graph_error == S_OK)
+            result->graph_error = E_FAIL;
+    }
+    CaptureNativeRendererWitnesses(native->renderer.get(), native->diagnostics.get(),
+                                   &result->witnesses);
+    result->post_types = ObserveNativeConnectionTypes(
+        native->audio_output.get(), native->renderer_input.get(), requested);
+    openjoc_harness_core::NativeSeekEpochWitness epoch;
+    epoch.pre_drain_status = result->pre_drain.status;
+    epoch.prior_graph_error = result->pre_drain.graph_error;
+    epoch.diagnostics_before_status = result->diagnostics_before_status;
+    epoch.classifier_bytes_before = result->classifier_bytes_before;
+    epoch.stream_bytes_before = result->stream_bytes_before;
+    epoch.diagnostics_after_status = result->witnesses.diagnostics_status;
+    epoch.classifier_bytes_after = result->witnesses.classifier_bytes;
+    epoch.stream_bytes_after = result->witnesses.stream_bytes;
+    epoch.position_before_run_status = result->position_before_run_status;
+    epoch.position_before_run = result->position_before_run;
+    epoch.position_after_completion_status = result->position_after_completion_status;
+    epoch.position_after_completion = result->position_after_completion;
+    epoch.fresh_completion =
+        result->wait_status == S_OK && result->completion_code == EC_COMPLETE;
+    epoch.renderer_stats_status = result->witnesses.renderer_stats_status;
+    epoch.renderer_last_buffer_duration = result->witnesses.last_buffer_duration;
+    epoch.renderer_discontinuities_before_status =
+        result->renderer_discontinuities_before_status;
+    epoch.renderer_discontinuities_before = result->renderer_discontinuities_before;
+    epoch.renderer_discontinuities_after_status =
+        result->renderer_discontinuities_after_status;
+    epoch.renderer_discontinuities_after = result->renderer_discontinuities_after;
+    result->complete = result->get_capabilities_status == S_OK &&
+                       (result->capabilities & required_capabilities) == required_capabilities &&
+                        result->check_capabilities_status == S_OK &&
+                        result->checked_capabilities == required_capabilities &&
+                        result->set_positions_attempted &&
+                        result->set_positions_status == S_OK &&
+                       result->actual_position == result->requested_position &&
+                       result->run_call_status == S_OK && result->run_state_status == S_OK &&
+                        result->run_state == State_Running && result->wait_status == S_OK &&
+                        result->completion_code == EC_COMPLETE && result->graph_error == S_OK &&
+                        openjoc_harness_core::NativeSeekEpochWitnessIsComplete(epoch) &&
+                        NativeTypeObservationIsExact(result->post_types);
+}
+
+void AppendNativeTypeObservation(std::ostringstream &record, const char *label,
+                                 const NativeTypeObservation &value)
+{
+    record << "type_observation\t" << label << "\toutput_hr=0x" << std::hex
+           << std::setw(8) << std::setfill('0')
+           << static_cast<std::uint32_t>(value.output_status)
+           << "\trenderer_input_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(value.renderer_input_status)
+           << "\toutput_exact=" << std::dec << (value.output_exact ? 1 : 0)
+           << "\trenderer_input_exact=" << (value.renderer_input_exact ? 1 : 0)
+           << "\tpeer_equal=" << (value.peer_equal ? 1 : 0)
+           << "\toutput_type=" << SerializeMediaType(value.output_type)
+           << "\trenderer_input_type=" << SerializeMediaType(value.renderer_input_type)
+           << "\n";
+}
+
+void AppendNativeSeekEvidence(std::ostringstream &record, const std::size_t sequence,
+                               const NativeSeekEvidence &value)
+{
+    const ULONGLONG classifier_delta =
+        value.witnesses.classifier_bytes > value.classifier_bytes_before
+            ? value.witnesses.classifier_bytes - value.classifier_bytes_before
+            : 0;
+    const ULONGLONG stream_delta =
+        value.witnesses.stream_bytes > value.stream_bytes_before
+            ? value.witnesses.stream_bytes - value.stream_bytes_before
+            : 0;
+    const DWORD renderer_discontinuities_delta =
+        value.renderer_discontinuities_after > value.renderer_discontinuities_before
+            ? value.renderer_discontinuities_after - value.renderer_discontinuities_before
+            : 0;
+    record << "operation\t" << sequence << "\t" << (value.label ? value.label : "<none>")
+           << "\tget_capabilities_hr=0x" << std::hex << std::setw(8) << std::setfill('0')
+           << static_cast<std::uint32_t>(value.get_capabilities_status)
+           << "\tcapabilities=0x" << std::setw(8) << value.capabilities
+           << "\tcheck_capabilities_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(value.check_capabilities_status)
+           << "\tchecked=0x" << std::setw(8) << value.checked_capabilities
+           << "\tpre_drain_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(value.pre_drain.status)
+           << "\tpre_drain_terminal_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(value.pre_drain.terminal_status)
+           << "\tpre_drain_free_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(value.pre_drain.free_status)
+           << "\tpre_drain_event_count=" << std::dec << value.pre_drain.event_count
+           << "\tpre_drain_completion_count=" << value.pre_drain.completion_count
+           << "\tpre_drain_graph_error=" << (value.pre_drain.graph_error ? 1 : 0)
+           << "\tpre_drain_first_error_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(value.pre_drain.first_error)
+           << "\tdiagnostics_before_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(value.diagnostics_before_status)
+           << "\tclassifier_bytes_before=" << std::dec << value.classifier_bytes_before
+           << "\tstream_bytes_before=" << value.stream_bytes_before
+           << "\trenderer_stats_qi_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(value.renderer_stats_interface_status)
+           << "\trenderer_discontinuities_before_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(
+                  value.renderer_discontinuities_before_status)
+           << "\trenderer_discontinuities_before=" << std::dec
+           << value.renderer_discontinuities_before
+           << "\trenderer_discontinuities_before_aux="
+           << value.renderer_discontinuities_before_aux
+           << "\tset_positions_attempted=" << (value.set_positions_attempted ? 1 : 0)
+           << "\tset_positions_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(value.set_positions_status)
+           << "\trequested=" << std::dec << value.requested_position
+           << "\tactual=" << value.actual_position
+           << "\tposition_before_run_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(value.position_before_run_status)
+           << "\tposition_before_run=" << std::dec << value.position_before_run
+           << "\trun_hr=0x" << std::hex
+           << std::setw(8) << static_cast<std::uint32_t>(value.run_call_status)
+           << "\trun_state_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(value.run_state_status)
+           << "\trun_state=" << std::dec << static_cast<int>(value.run_state)
+           << "\twait_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(value.wait_status)
+           << "\tcompletion_code=" << std::dec << value.completion_code
+           << "\tposition_after_completion_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(value.position_after_completion_status)
+           << "\tposition_after_completion=" << std::dec
+           << value.position_after_completion
+           << "\trenderer_discontinuities_after_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(
+                  value.renderer_discontinuities_after_status)
+           << "\trenderer_discontinuities_after=" << std::dec
+           << value.renderer_discontinuities_after
+           << "\trenderer_discontinuities_after_aux="
+           << value.renderer_discontinuities_after_aux
+           << "\trenderer_discontinuities_delta="
+           << renderer_discontinuities_delta
+           << "\tgraph_error_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(value.graph_error)
+           << "\trenderer_stats_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(value.witnesses.renderer_stats_status)
+           << "\tlast_buffer_duration=" << std::dec
+           << value.witnesses.last_buffer_duration
+           << "\tdiagnostics_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(value.witnesses.diagnostics_status)
+           << "\tclassifier_bytes_after=" << std::dec << value.witnesses.classifier_bytes
+           << "\tclassifier_bytes_delta=" << classifier_delta
+           << "\tstream_bytes_after=" << value.witnesses.stream_bytes
+           << "\tstream_bytes_delta=" << stream_delta
+           << "\tcomplete=" << (value.complete ? 1 : 0) << "\n";
+    AppendNativeTypeObservation(record, value.label ? value.label : "<none>",
+                                value.post_types);
+}
+
+const char *NativeProbeStateText(const openjoc_harness_core::NativeProbeState state)
+{
+    using openjoc_harness_core::NativeProbeState;
+    switch (state)
+    {
+    case NativeProbeState::ExactRejection:
+        return "EXACT_REJECTION";
+    case NativeProbeState::TypeMutation:
+        return "TYPE_MUTATION";
+    case NativeProbeState::StreamObserved:
+        return "STREAM_OBSERVED";
+    default:
+        return "UNVERIFIED";
+    }
+}
+
+HRESULT RunNativeRendererProbe(const std::filesystem::path &runtime_dir,
+                               const std::filesystem::path &manifest_path,
+                               const std::filesystem::path &fixture_path,
+                               const wchar_t *renderer_moniker,
+                               const LAVOpenJocOutputPolicy policy,
+                               const std::filesystem::path &evidence_path)
+{
+    const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
+    if (!contract || !renderer_moniker || !*renderer_moniker || !evidence_path.is_absolute() ||
+        !std::filesystem::is_directory(evidence_path.parent_path()))
+        return E_INVALIDARG;
+
+    std::vector<StagedRecord> records;
+    FixtureIdentity fixture;
+    if (!ReadStagedManifest(runtime_dir, manifest_path, &records) ||
+        !BuildFixtureIdentity(fixture_path, &fixture))
+        return E_INVALIDARG;
+    const StagedRecord *audio_record = FindRecord(records, StagedKind::Module, L"LAVAudio.ax");
+    const StagedRecord *splitter_record =
+        FindRecord(records, StagedKind::Module, L"LAVSplitter.ax");
+    if (!audio_record || !splitter_record)
+        return E_UNEXPECTED;
+
+    const std::wstring runtime_final = FinalPathForFile(runtime_dir);
+    ScopedActivationContext activation(audio_record->final_path, runtime_final);
+    if (!activation.active())
+        return HRESULT_FROM_WIN32(GetLastError());
+    PrivateComModule audio(audio_record->final_path, kTargetLavAudio);
+    PrivateComModule splitter(splitter_record->final_path, kLavSplitterSource);
+    LoadedDependenciesOwner dependencies;
+    if (FAILED(audio.status()) || FAILED(splitter.status()) ||
+        !LoadStagedDependencies(records, dependencies.put()))
+        return E_UNEXPECTED;
+
+    const CMediaType requested = BuildStrictTarget(*contract);
+    std::unique_ptr<NativeRendererGraph> initial(new (std::nothrow) NativeRendererGraph());
+    if (!initial)
+        return E_OUTOFMEMORY;
+    BuildNativeRendererGraph(audio, splitter, fixture, policy, renderer_moniker, requested,
+                             initial.get());
+    const NativeGraphSetupEvidence initial_setup = SnapshotNativeGraphSetup(*initial);
+
+    NativePlaybackEvidence initial_playback;
+    if (initial->connect_status == S_OK)
+        RunNativeInitialPlayback(initial.get(), requested, &initial_playback);
+
+    HRESULT duration_status = E_UNEXPECTED;
+    LONGLONG duration = 0;
+    NativeSeekEvidence seek_25;
+    NativeSeekEvidence seek_forward;
+    NativeSeekEvidence seek_backward;
+    seek_25.label = "seek-25";
+    seek_forward.label = "seek-75-forward";
+    seek_backward.label = "seek-25-backward";
+    if (initial_playback.eos_complete && initial->seeking_status == S_OK)
+    {
+        duration_status = initial->seeking->GetDuration(&duration);
+        if (duration_status == S_OK && duration > 0)
+        {
+            RunNativeSeekEpoch(initial.get(), requested, seek_25.label, duration / 4, &seek_25);
+            if (seek_25.complete)
+                RunNativeSeekEpoch(initial.get(), requested, seek_forward.label,
+                                   duration * 3 / 4, &seek_forward);
+            if (seek_forward.complete)
+                RunNativeSeekEpoch(initial.get(), requested, seek_backward.label,
+                                   duration / 4, &seek_backward);
+        }
+    }
+
+    HRESULT stop_status = E_UNEXPECTED;
+    if (initial->control)
+        stop_status = initial->control->Stop();
+    initial.reset();
+
+    NativeGraphSetupEvidence reopen_setup;
+    NativePlaybackEvidence reopen_playback;
+    HRESULT reopen_stop_status = E_UNEXPECTED;
+    bool reopen_complete = false;
+    if (initial_playback.eos_complete && seek_25.complete && seek_forward.complete &&
+        seek_backward.complete && stop_status == S_OK)
+    {
+        NativeRendererGraph reopen;
+        BuildNativeRendererGraph(audio, splitter, fixture, policy, renderer_moniker, requested,
+                                 &reopen);
+        reopen_setup = SnapshotNativeGraphSetup(reopen);
+        if (reopen.connect_status == S_OK)
+            RunNativeInitialPlayback(&reopen, requested, &reopen_playback);
+        if (reopen.control)
+            reopen_stop_status = reopen.control->Stop();
+        reopen_complete =
+            reopen_setup.create_graph_status == S_OK &&
+            reopen_setup.bind_renderer_status == S_OK &&
+            reopen_setup.add_renderer_status == S_OK &&
+            reopen_setup.find_renderer_pin_status == S_OK &&
+            reopen_setup.connect_attempted && reopen_setup.connect_status == S_OK &&
+            reopen_setup.graph_exactly_three_filters &&
+            NativeTypeObservationIsExact(reopen_playback.pre_types) &&
+            reopen_playback.eos_complete &&
+            reopen_playback.renderer_stats_status == S_OK &&
+            reopen_playback.last_buffer_duration > 0 &&
+            reopen_playback.diagnostics_status == S_OK &&
+            reopen_playback.classifier_bytes > 0 && reopen_playback.stream_bytes > 0 &&
+            NativeTypeObservationIsExact(reopen_playback.post_types) &&
+            reopen_stop_status == S_OK;
+    }
+
+    std::vector<LoadedModule> loaded;
+    const bool runtime_identity =
+        RuntimeIdentityMatches(records) && EnumerateLoadedModules(&loaded);
+    const bool fixture_identity = FixtureIdentityMatches(fixture);
+
+    openjoc_harness_core::NativeTypeAggregateEvidence observed_types;
+    const bool initial_types_executed = initial_setup.connect_status == S_OK;
+    observed_types = AccumulateObservedNativeType(
+        observed_types, initial_types_executed, initial_playback.pre_types);
+    observed_types = AccumulateObservedNativeType(
+        observed_types, initial_types_executed, initial_playback.post_types);
+    observed_types = AccumulateObservedNativeType(
+        observed_types, seek_25.set_positions_attempted, seek_25.post_types);
+    observed_types = AccumulateObservedNativeType(
+        observed_types, seek_forward.set_positions_attempted, seek_forward.post_types);
+    observed_types = AccumulateObservedNativeType(
+        observed_types, seek_backward.set_positions_attempted, seek_backward.post_types);
+    const bool reopen_types_executed = reopen_setup.connect_status == S_OK;
+    observed_types = AccumulateObservedNativeType(
+        observed_types, reopen_types_executed, reopen_playback.pre_types);
+    observed_types = AccumulateObservedNativeType(
+        observed_types, reopen_types_executed, reopen_playback.post_types);
+
+    openjoc_harness_core::NativeProbeEvidence evidence;
+    evidence.runtime_identity = runtime_identity;
+    evidence.fixture_identity = fixture_identity;
+    evidence.graph_setup_complete =
+        initial_setup.create_graph_status == S_OK &&
+        initial_setup.bind_renderer_status == S_OK &&
+        initial_setup.add_renderer_status == S_OK &&
+        initial_setup.find_renderer_pin_status == S_OK &&
+        initial_setup.graph_exactly_three_filters && initial_setup.control_status == S_OK &&
+        initial_setup.events_status == S_OK && initial_setup.seeking_status == S_OK &&
+        initial_setup.diagnostics_interface_status == S_OK;
+    evidence.connect_attempted = initial_setup.connect_attempted;
+    evidence.connect_direct_status = initial_setup.connect_status;
+    evidence.type_observations = observed_types;
+    evidence.pause_call_status = initial_playback.pause_call_status;
+    evidence.pause_state_status = initial_playback.pause_state_status;
+    evidence.pause_state = initial_playback.pause_state;
+    evidence.run_call_status = initial_playback.run_call_status;
+    evidence.run_state_status = initial_playback.run_state_status;
+    evidence.run_state = initial_playback.run_state;
+    evidence.wait_completion_status = initial_playback.wait_status;
+    evidence.completion_code = initial_playback.completion_code;
+    evidence.renderer_stats_status = initial_playback.renderer_stats_status;
+    evidence.renderer_last_buffer_duration = initial_playback.last_buffer_duration;
+    evidence.diagnostics_status = initial_playback.diagnostics_status;
+    evidence.classifier_bytes = initial_playback.classifier_bytes;
+    evidence.stream_bytes = initial_playback.stream_bytes;
+    evidence.initial_eos_complete = initial_playback.eos_complete;
+    evidence.seek_25_complete = seek_25.complete;
+    evidence.forward_seek_complete = seek_forward.complete;
+    evidence.backward_seek_complete = seek_backward.complete;
+    evidence.stop_status = stop_status;
+    evidence.reopen_complete = reopen_complete;
+    const openjoc_harness_core::NativeProbeState probe_state =
+        openjoc_harness_core::ClassifyNativeProbe(evidence);
+    const char *result = NativeProbeStateText(probe_state);
+
+    const std::string moniker_utf8 = WideToUtf8(renderer_moniker);
+    const std::string fixture_utf8 = WideToUtf8(fixture.final_path.native());
+    const std::string requested_text = SerializeMediaType(requested);
+    if (moniker_utf8.empty() || fixture_utf8.empty() || requested_text.empty() ||
+        moniker_utf8.find_first_of("\t\r\n") != std::string::npos)
+        return E_INVALIDARG;
+    std::ostringstream record;
+    record << "NATIVE_RENDERER_PROBE_V1\n"
+           << "result\t" << result << "\n"
+           << "renderer_moniker\t" << moniker_utf8 << "\n"
+           << "fixture_path\t" << fixture_utf8 << "\n"
+           << "fixture_sha256\t" << DigestHex(fixture.sha256) << "\n"
+           << "policy\t" << static_cast<std::uint32_t>(policy) << "\n"
+           << "connect_attempted\t" << (initial_setup.connect_attempted ? 1 : 0) << "\n"
+           << "proposal_count\t" << (initial_setup.connect_attempted ? 1 : 0) << "\n"
+           << "fallback_proposals\t0\n"
+           << "requested_type\t" << requested_text << "\n"
+           << "create_graph_hr\t0x" << std::hex << std::setw(8) << std::setfill('0')
+           << static_cast<std::uint32_t>(initial_setup.create_graph_status) << "\n"
+           << "bind_renderer_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_setup.bind_renderer_status) << "\n"
+           << "add_renderer_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_setup.add_renderer_status) << "\n"
+           << "find_renderer_pin_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_setup.find_renderer_pin_status) << "\n"
+           << "connect_direct_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_setup.connect_status) << "\n"
+           << "control_qi_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_setup.control_status) << "\n"
+           << "events_qi_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_setup.events_status) << "\n"
+           << "seeking_qi_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_setup.seeking_status) << "\n"
+           << "diagnostics_qi_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_setup.diagnostics_interface_status) << "\n"
+           << "graph_exactly_three_filters\t" << std::dec
+           << (initial_setup.graph_exactly_three_filters ? 1 : 0) << "\n"
+           << "graph_setup_complete\t" << (evidence.graph_setup_complete ? 1 : 0) << "\n"
+           << "type_observation_count\t" << observed_types.observation_count << "\n"
+           << "type_successful_observation_count\t"
+           << observed_types.successful_observation_count << "\n"
+           << "type_query_failure\t" << (observed_types.query_failure ? 1 : 0) << "\n"
+           << "type_mismatch_observed\t"
+           << (observed_types.mismatch_observed ? 1 : 0) << "\n"
+           << "pre_output_type_hr\t0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.pre_types.output_status) << "\n"
+           << "pre_renderer_input_type_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(
+                  initial_playback.pre_types.renderer_input_status)
+           << "\n"
+           << "post_output_type_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.post_types.output_status) << "\n"
+           << "post_renderer_input_type_hr\t0x" << std::setw(8)
+           << static_cast<std::uint32_t>(
+                  initial_playback.post_types.renderer_input_status)
+           << "\n"
+           << "operation\t1\tinitial_stream"
+           << "\tstream_attempted=" << std::dec
+           << (initial_playback.stream_attempted ? 1 : 0)
+           << "\tpause_call_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.pause_call_status)
+           << "\tpause_state_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.pause_state_status)
+           << "\tpause_state=" << std::dec << static_cast<int>(initial_playback.pause_state)
+           << "\trun_call_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.run_call_status)
+           << "\trun_state_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.run_state_status)
+           << "\trun_state=" << std::dec << static_cast<int>(initial_playback.run_state)
+           << "\twait_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.wait_status)
+           << "\tcompletion_code=" << std::dec << initial_playback.completion_code
+           << "\tgraph_error_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.graph_error)
+           << "\trenderer_stats_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.renderer_stats_status)
+           << "\tlast_buffer_duration=" << std::dec
+           << initial_playback.last_buffer_duration
+           << "\tdiagnostics_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.diagnostics_status)
+           << "\tclassifier_bytes=" << std::dec << initial_playback.classifier_bytes
+           << "\tstream_bytes=" << initial_playback.stream_bytes
+           << "\teos_complete=" << (initial_playback.eos_complete ? 1 : 0) << "\n"
+           << "duration_hr\t0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(duration_status) << "\n"
+           << "duration\t" << std::dec << duration << "\n";
+    AppendNativeTypeObservation(record, "pre_stream", initial_playback.pre_types);
+    AppendNativeTypeObservation(record, "post_stream", initial_playback.post_types);
+    AppendNativeSeekEvidence(record, 2, seek_25);
+    AppendNativeSeekEvidence(record, 3, seek_forward);
+    AppendNativeSeekEvidence(record, 4, seek_backward);
+    record << "operation\t5\tstop\thr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(stop_status)
+           << "\tcomplete=" << std::dec << (stop_status == S_OK ? 1 : 0) << "\n"
+           << "operation\t6\treopen_connect"
+           << "\tcreate_graph_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_setup.create_graph_status)
+           << "\tbind_renderer_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_setup.bind_renderer_status)
+           << "\tadd_renderer_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_setup.add_renderer_status)
+           << "\tfind_renderer_pin_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_setup.find_renderer_pin_status)
+           << "\tconnect_attempted=" << std::dec
+           << (reopen_setup.connect_attempted ? 1 : 0)
+           << "\tproposal_count=" << (reopen_setup.connect_attempted ? 1 : 0)
+           << "\tconnect_direct_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_setup.connect_status) << "\n"
+           << "operation\t7\treopen_stream"
+           << "\tstream_attempted=" << std::dec
+           << (reopen_playback.stream_attempted ? 1 : 0)
+           << "\tpause_call_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_playback.pause_call_status)
+           << "\tpause_state_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_playback.pause_state_status)
+           << "\trun_call_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_playback.run_call_status)
+           << "\trun_state_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_playback.run_state_status)
+           << "\twait_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_playback.wait_status)
+           << "\tcompletion_code=" << std::dec << reopen_playback.completion_code
+           << "\trenderer_stats_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_playback.renderer_stats_status)
+           << "\tlast_buffer_duration=" << std::dec
+           << reopen_playback.last_buffer_duration
+           << "\tdiagnostics_hr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_playback.diagnostics_status)
+           << "\tclassifier_bytes=" << std::dec << reopen_playback.classifier_bytes
+           << "\tstream_bytes=" << reopen_playback.stream_bytes
+           << "\teos_complete=" << (reopen_playback.eos_complete ? 1 : 0) << "\n";
+    AppendNativeTypeObservation(record, "reopen_pre_stream", reopen_playback.pre_types);
+    AppendNativeTypeObservation(record, "reopen_post_stream", reopen_playback.post_types);
+    record << "operation\t8\treopen_stop\thr=0x" << std::hex << std::setw(8)
+           << static_cast<std::uint32_t>(reopen_stop_status)
+           << "\tcomplete=" << std::dec << (reopen_stop_status == S_OK ? 1 : 0) << "\n"
+           << "reopen_complete\t" << (reopen_complete ? 1 : 0) << "\n"
+           << "runtime_identity\t" << (runtime_identity ? 1 : 0) << "\n"
+           << "fixture_identity\t" << (fixture_identity ? 1 : 0) << "\n"
+           << "private_module\tLAVAudio.ax\t" << DigestHex(audio.sha256()) << "\t"
+           << WideToUtf8(audio.path()) << "\n"
+           << "private_module\tLAVSplitter.ax\t" << DigestHex(splitter.sha256()) << "\t"
+           << WideToUtf8(splitter.path()) << "\n";
+    for (const auto &module : loaded)
+    {
+        if (FindRecord(records, StagedKind::Module, module.basename))
+            record << "process_module\t" << WideToUtf8(module.basename) << "\t"
+                   << DigestHex(module.sha256) << "\t" << WideToUtf8(module.final_path) << "\n";
+    }
+
+    HANDLE output = CreateFileW(evidence_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (output == INVALID_HANDLE_VALUE)
+        return HRESULT_FROM_WIN32(GetLastError());
+    const std::string text = record.str();
+    const bool wrote = WriteAll(output, text) && FlushFileBuffers(output);
+    CloseHandle(output);
+    if (!wrote)
+    {
+        DeleteFileW(evidence_path.c_str());
+        return E_FAIL;
+    }
+    std::wprintf(L"NATIVE_RENDERER_PROBE_COMPLETE result=%hs evidence=\"%ls\"\n", result,
+                 evidence_path.c_str());
+    return strcmp(result, "UNVERIFIED") == 0 ? E_UNEXPECTED : S_OK;
 }
 
 HRESULT RunSelfTest(const std::filesystem::path &runtime_dir,
@@ -5999,6 +7207,28 @@ int wmain(int argc, wchar_t **argv)
         std::wprintf(L"staged manifest generated: %ls\n", argv[3]);
         return 0;
     }
+    if (argc == 8 && wcscmp(argv[1], L"--native-renderer-probe") == 0)
+    {
+        wchar_t *policy_end = nullptr;
+        const unsigned long policy_value = wcstoul(argv[6], &policy_end, 10);
+        if (!policy_end || *policy_end != L'\0' ||
+            policy_value >= LAV_OPENJOC_OUTPUT_CONTRACT_COUNT)
+            return 64;
+        const HRESULT com_status = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (FAILED(com_status))
+            return 1;
+        const HRESULT probe_status = openjoc_harness_shell::RunNativeRendererProbe(
+            argv[2], argv[3], argv[4], argv[5],
+            static_cast<LAVOpenJocOutputPolicy>(policy_value), argv[7]);
+        CoUninitialize();
+        if (FAILED(probe_status))
+        {
+            std::fwprintf(stderr, L"native renderer probe failed: 0x%08lx\n",
+                          static_cast<unsigned long>(probe_status));
+            return 1;
+        }
+        return 0;
+    }
     if (argc == 6 && wcscmp(argv[1], L"--compare-task3-evidence") == 0)
     {
         wchar_t *policy_end = nullptr;
@@ -6072,6 +7302,9 @@ int wmain(int argc, wchar_t **argv)
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --openjoc-lifecycle ...\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --allocator-performance "
                       L"<runtime-dir> <manifest> <joc.multi.ec3>\n"
+                      L"   or: OpenJocDirectShowNegotiationSmoke.exe --native-renderer-probe "
+                      L"<runtime-dir> <manifest> <fixture> <renderer-moniker> <policy> "
+                      L"<new-evidence-file>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --compare-task3-evidence "
                       L"<target-evidence> <pristine-evidence> <policy> <stock|passthrough>\n");
         return 64;
