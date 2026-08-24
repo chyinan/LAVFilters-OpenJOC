@@ -18,6 +18,7 @@
 #include <psapi.h>
 
 #include "OpenJocDecoder.h"
+#include "OpenJocStrictNegotiation.h"
 #include "OpenJocStrictOutput.h"
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocDiagnostics.h"
@@ -28,6 +29,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -179,6 +181,185 @@ ControlledEvidenceState ClassifyControlledEvidence(const EvidenceInputs &inputs)
         inputs.graph_error)
         return ControlledEvidenceState::Incomplete;
     return ControlledEvidenceState::ControlledSinkComplete;
+}
+
+struct Task4TrendEvidence
+{
+    double full_slope = 0.0;
+    double full_r_squared = 0.0;
+    double tail_slope = 0.0;
+    double tail_r_squared = 0.0;
+    std::array<std::size_t, 4> quartile_medians{};
+    std::array<std::size_t, 4> quartile_lower_quartiles{};
+    std::array<std::size_t, 2> tail_half_medians{};
+    bool gate_a = false;
+    bool gate_b = false;
+    bool tail_gate = false;
+};
+
+struct Task4CycleEvidence
+{
+    bool source_type_exact = false;
+    bool output_type_exact = false;
+    bool graph_exactly_three_filters = false;
+    bool paused = false;
+    bool running = false;
+    bool no_graph_error = false;
+    bool timestamps_valid = false;
+    bool sample_contracts_valid = false;
+    bool allocator_valid = false;
+    bool runtime_identity_valid = false;
+    bool fixture_identity_valid = false;
+    bool policy_exact = false;
+    bool end_of_stream_running = false;
+    std::uint64_t samples = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t timestamp_count = 0;
+    std::array<std::uint8_t, 32> payload_digest{};
+    REFERENCE_TIME first_timestamp = 0;
+    REFERENCE_TIME last_timestamp = 0;
+    std::uint64_t end_of_stream_count = 0;
+    long allocator_requested_capacity = 0;
+    long allocator_actual_capacity = 0;
+    long sample_capacity_high_water = 0;
+    long sample_actual_length_high_water = 0;
+    std::size_t checked_total_bytes = 0;
+    std::uint64_t actual_length_total = 0;
+};
+
+bool Task4CycleEvidenceIsValid(const Task4CycleEvidence &value)
+{
+    return value.source_type_exact && value.output_type_exact &&
+           value.graph_exactly_three_filters && value.paused && value.running &&
+           value.no_graph_error && value.timestamps_valid && value.sample_contracts_valid &&
+           value.allocator_valid && value.runtime_identity_valid &&
+           value.fixture_identity_valid && value.policy_exact && value.end_of_stream_running &&
+           value.samples > 0 && value.bytes > 0 && value.timestamp_count == value.samples &&
+           value.first_timestamp < value.last_timestamp && value.end_of_stream_count == 1 &&
+           value.allocator_requested_capacity > 0 &&
+           value.allocator_actual_capacity >= value.allocator_requested_capacity &&
+           value.sample_capacity_high_water > 0 && value.sample_actual_length_high_water > 0 &&
+           value.sample_actual_length_high_water <= value.sample_capacity_high_water &&
+           value.checked_total_bytes == value.bytes && value.actual_length_total == value.bytes;
+}
+
+bool Task4CycleMatchesBaseline(const Task4CycleEvidence &baseline,
+                               const Task4CycleEvidence &candidate)
+{
+    return Task4CycleEvidenceIsValid(baseline) && Task4CycleEvidenceIsValid(candidate) &&
+           baseline.samples == candidate.samples && baseline.bytes == candidate.bytes &&
+           baseline.timestamp_count == candidate.timestamp_count &&
+           baseline.payload_digest == candidate.payload_digest &&
+           baseline.first_timestamp == candidate.first_timestamp &&
+           baseline.last_timestamp == candidate.last_timestamp &&
+           baseline.end_of_stream_count == candidate.end_of_stream_count &&
+           baseline.allocator_requested_capacity == candidate.allocator_requested_capacity &&
+           baseline.allocator_actual_capacity == candidate.allocator_actual_capacity &&
+           baseline.sample_capacity_high_water == candidate.sample_capacity_high_water &&
+           baseline.sample_actual_length_high_water == candidate.sample_actual_length_high_water &&
+           baseline.checked_total_bytes == candidate.checked_total_bytes &&
+           baseline.actual_length_total == candidate.actual_length_total;
+}
+
+std::size_t MedianRange(const std::vector<std::size_t> &values, const std::size_t begin,
+                        const std::size_t count)
+{
+    if (count == 0 || begin > values.size() || count > values.size() - begin)
+        return 0;
+    std::vector<std::size_t> ordered(values.begin() + begin, values.begin() + begin + count);
+    std::sort(ordered.begin(), ordered.end());
+    const std::size_t middle = ordered.size() / 2;
+    if (ordered.size() % 2 != 0)
+        return ordered[middle];
+    return ordered[middle - 1] + (ordered[middle] - ordered[middle - 1]) / 2;
+}
+
+std::size_t LowerQuartileRange(const std::vector<std::size_t> &values,
+                               const std::size_t begin, const std::size_t count)
+{
+    if (count < 4 || begin > values.size() || count > values.size() - begin)
+        return 0;
+    std::vector<std::size_t> ordered(values.begin() + begin, values.begin() + begin + count);
+    std::sort(ordered.begin(), ordered.end());
+    const std::size_t lower_count = ordered.size() / 2;
+    const std::size_t middle = lower_count / 2;
+    return lower_count % 2 != 0
+               ? ordered[middle]
+               : ordered[middle - 1] + (ordered[middle] - ordered[middle - 1]) / 2;
+}
+
+bool LinearFit(const std::vector<std::size_t> &values, const std::size_t begin,
+               const std::size_t count, double *slope, double *r_squared)
+{
+    if (!slope || !r_squared || count < 2 || begin > values.size() ||
+        count > values.size() - begin)
+        return false;
+    const double mean_x = static_cast<double>(count - 1) / 2.0;
+    double mean_y = 0.0;
+    for (std::size_t index = 0; index < count; ++index)
+        mean_y += static_cast<double>(values[begin + index]);
+    mean_y /= static_cast<double>(count);
+    double covariance = 0.0;
+    double variance_x = 0.0;
+    double variance_y = 0.0;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const double centered_x = static_cast<double>(index) - mean_x;
+        const double centered_y = static_cast<double>(values[begin + index]) - mean_y;
+        covariance += centered_x * centered_y;
+        variance_x += centered_x * centered_x;
+        variance_y += centered_y * centered_y;
+    }
+    if (variance_x <= 0.0)
+        return false;
+    *slope = covariance / variance_x;
+    *r_squared = variance_y <= 0.0 ? 0.0 : (covariance * covariance) / (variance_x * variance_y);
+    return std::isfinite(*slope) && std::isfinite(*r_squared);
+}
+
+bool IncreasedByPages(const std::size_t high, const std::size_t low,
+                      const std::size_t page_size, const std::size_t pages)
+{
+    return page_size > 0 && pages <= (std::numeric_limits<std::size_t>::max)() / page_size &&
+           high >= low && high - low >= page_size * pages;
+}
+
+bool WorkingSetTrendIsBounded(const std::vector<std::size_t> &values,
+                              const std::size_t page_size, Task4TrendEvidence *evidence)
+{
+    if (!evidence)
+        return false;
+    *evidence = {};
+    if (values.size() != 128 || page_size == 0 ||
+        !LinearFit(values, 0, values.size(), &evidence->full_slope,
+                   &evidence->full_r_squared) ||
+        !LinearFit(values, 64, 64, &evidence->tail_slope, &evidence->tail_r_squared))
+        return false;
+    for (std::size_t quartile = 0; quartile < 4; ++quartile)
+    {
+        evidence->quartile_medians[quartile] = MedianRange(values, quartile * 32, 32);
+        evidence->quartile_lower_quartiles[quartile] =
+            LowerQuartileRange(values, quartile * 32, 32);
+    }
+    evidence->tail_half_medians[0] = MedianRange(values, 64, 32);
+    evidence->tail_half_medians[1] = MedianRange(values, 96, 32);
+    evidence->gate_a = evidence->full_slope >= static_cast<double>(page_size) / 8.0 &&
+                       evidence->full_r_squared >= 0.90 &&
+                       IncreasedByPages(evidence->quartile_medians[3],
+                                        evidence->quartile_medians[0], page_size, 16);
+    evidence->gate_b = IncreasedByPages(evidence->quartile_lower_quartiles[1],
+                                        evidence->quartile_lower_quartiles[0], page_size, 43) &&
+                       IncreasedByPages(evidence->quartile_lower_quartiles[2],
+                                        evidence->quartile_lower_quartiles[1], page_size, 43) &&
+                       IncreasedByPages(evidence->quartile_lower_quartiles[3],
+                                        evidence->quartile_lower_quartiles[2], page_size, 43) &&
+                       IncreasedByPages(evidence->quartile_lower_quartiles[3],
+                                        evidence->quartile_lower_quartiles[0], page_size, 128);
+    evidence->tail_gate = evidence->tail_slope >= static_cast<double>(page_size) &&
+                          evidence->tail_r_squared >= 0.85 &&
+                          IncreasedByPages(evidence->tail_half_medians[1],
+                                           evidence->tail_half_medians[0], page_size, 32);
+    return !evidence->gate_a && !evidence->gate_b && !evidence->tail_gate;
 }
 } // namespace openjoc_harness_core
 
@@ -1714,6 +1895,11 @@ class StrictCaptureSink final : public CBaseFilter
         CAutoLock lock(&filter_lock_);
         return timestamps_.size();
     }
+    std::uint64_t timestamp_observation_count() const
+    {
+        CAutoLock lock(&filter_lock_);
+        return timestamp_observation_count_;
+    }
     bool end_of_stream() const
     {
         CAutoLock lock(&filter_lock_);
@@ -1763,6 +1949,16 @@ class StrictCaptureSink final : public CBaseFilter
                allocator_properties_.cbBuffer >= allocator_requested_properties_.cbBuffer &&
                allocator_properties_.cbAlign >= allocator_requested_properties_.cbAlign &&
                allocator_properties_.cbPrefix >= allocator_requested_properties_.cbPrefix;
+    }
+    ALLOCATOR_PROPERTIES allocator_requested_properties() const
+    {
+        CAutoLock lock(&filter_lock_);
+        return allocator_requested_properties_;
+    }
+    ALLOCATOR_PROPERTIES allocator_actual_properties() const
+    {
+        CAutoLock lock(&filter_lock_);
+        return allocator_properties_;
     }
     bool sample_contracts_valid() const
     {
@@ -4650,6 +4846,922 @@ HRESULT RunControlledSinkMatrix(const std::filesystem::path &runtime_dir,
     return status;
 }
 
+class Task4TestSample final : public IMediaSample
+{
+  public:
+    explicit Task4TestSample(const long capacity, const std::size_t guard_bytes = 32)
+        : capacity_(capacity), storage_(capacity >= 0 ? static_cast<std::size_t>(capacity) + guard_bytes
+                                                     : guard_bytes,
+                                       kCanary)
+    {
+    }
+
+    STDMETHODIMP QueryInterface(REFIID iid, void **value) override
+    {
+        if (!value)
+            return E_POINTER;
+        *value = nullptr;
+        if (iid != IID_IUnknown && iid != IID_IMediaSample)
+            return E_NOINTERFACE;
+        *value = static_cast<IMediaSample *>(this);
+        AddRef();
+        return S_OK;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return ++reference_count_; }
+    STDMETHODIMP_(ULONG) Release() override
+    {
+        ++release_count_;
+        return reference_count_ > 0 ? --reference_count_ : 0;
+    }
+    STDMETHODIMP GetPointer(BYTE **buffer) override
+    {
+        if (!buffer)
+            return E_POINTER;
+        ++get_pointer_count_;
+        *buffer = storage_.data();
+        return S_OK;
+    }
+    STDMETHODIMP_(LONG) GetSize() override { return capacity_; }
+    STDMETHODIMP GetTime(REFERENCE_TIME *, REFERENCE_TIME *) override { return E_NOTIMPL; }
+    STDMETHODIMP SetTime(REFERENCE_TIME *, REFERENCE_TIME *) override { return S_OK; }
+    STDMETHODIMP IsSyncPoint() override { return S_FALSE; }
+    STDMETHODIMP SetSyncPoint(BOOL) override { return S_OK; }
+    STDMETHODIMP IsPreroll() override { return S_FALSE; }
+    STDMETHODIMP SetPreroll(BOOL) override { return S_OK; }
+    STDMETHODIMP_(LONG) GetActualDataLength() override { return actual_length_; }
+    STDMETHODIMP SetActualDataLength(LONG length) override
+    {
+        ++set_actual_length_count_;
+        if (length < 0 || length > capacity_)
+            return VFW_E_BUFFER_OVERFLOW;
+        actual_length_ = length;
+        return S_OK;
+    }
+    STDMETHODIMP GetMediaType(AM_MEDIA_TYPE **media_type) override
+    {
+        if (!media_type)
+            return E_POINTER;
+        *media_type = nullptr;
+        return S_FALSE;
+    }
+    STDMETHODIMP SetMediaType(AM_MEDIA_TYPE *) override
+    {
+        ++set_media_type_count_;
+        return S_OK;
+    }
+    STDMETHODIMP IsDiscontinuity() override { return S_FALSE; }
+    STDMETHODIMP SetDiscontinuity(BOOL) override { return S_OK; }
+    STDMETHODIMP GetMediaTime(LONGLONG *, LONGLONG *) override { return E_NOTIMPL; }
+    STDMETHODIMP SetMediaTime(LONGLONG *, LONGLONG *) override { return S_OK; }
+
+    static constexpr BYTE kCanary = 0xa5;
+    const std::vector<BYTE> &storage() const { return storage_; }
+    std::uint64_t release_count() const { return release_count_; }
+    std::uint64_t set_actual_length_count() const { return set_actual_length_count_; }
+    std::uint64_t set_media_type_count() const { return set_media_type_count_; }
+
+  private:
+    ULONG reference_count_ = 1;
+    long capacity_ = 0;
+    long actual_length_ = 0;
+    std::vector<BYTE> storage_;
+    std::uint64_t release_count_ = 0;
+    std::uint64_t get_pointer_count_ = 0;
+    std::uint64_t set_actual_length_count_ = 0;
+    std::uint64_t set_media_type_count_ = 0;
+};
+
+HRESULT CopyIntoTask4Sample(IMediaSample *sample, const BYTE *payload, const long required_bytes,
+                            std::uint64_t *set_actual_length_count,
+                            std::uint64_t *copy_count)
+{
+    if (!sample || !payload || !set_actual_length_count || !copy_count || required_bytes < 0)
+        return E_INVALIDARG;
+    if (required_bytes > sample->GetSize())
+        return VFW_E_BUFFER_UNDERFLOW;
+    BYTE *destination = nullptr;
+    HRESULT status = sample->GetPointer(&destination);
+    if (FAILED(status) || !destination)
+        return FAILED(status) ? status : E_POINTER;
+    status = sample->SetActualDataLength(required_bytes);
+    if (FAILED(status))
+        return status;
+    ++*set_actual_length_count;
+    std::memcpy(destination, payload, static_cast<std::size_t>(required_bytes));
+    ++*copy_count;
+    return S_OK;
+}
+
+struct Task4BoundaryCounters
+{
+    std::uint64_t query_count = 0;
+    std::uint64_t reconnect_count = 0;
+    std::uint64_t acquire_count = 0;
+    std::uint64_t sample_type_count = 0;
+    std::uint64_t output_type_count = 0;
+    std::uint64_t set_actual_length_count = 0;
+    std::uint64_t copy_count = 0;
+    std::uint64_t deliver_count = 0;
+};
+
+bool TestTask4AllocatorBoundaries()
+{
+    const LAVOpenJocOutputContract *contract =
+        FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Layout714);
+    if (!contract)
+        return false;
+    const CMediaType exact_type = BuildStrictTarget(*contract);
+    constexpr std::size_t frames = 256;
+    std::size_t checked_bytes = 0;
+    long required_bytes = 0;
+    if (!CheckedLAVOpenJocPcmByteCount(frames,
+                                       static_cast<std::uint16_t>(contract->channel_count * sizeof(float)),
+                                       &checked_bytes) ||
+        !CheckedLAVOpenJocLongNarrow(checked_bytes, &required_bytes) || required_bytes <= 1)
+        return false;
+    std::vector<BYTE> payload(checked_bytes);
+    for (std::size_t index = 0; index < payload.size(); ++index)
+        payload[index] = static_cast<BYTE>((index * 37u + 11u) & 0xffu);
+
+    auto operations_for = [&](Task4TestSample &test_sample, Task4BoundaryCounters &counters) {
+        LAVOpenJocStrictDeliveryOperations operations;
+        operations.query_accept = [&](const AM_MEDIA_TYPE &) {
+            ++counters.query_count;
+            return S_OK;
+        };
+        operations.reconnect = [&](long, const AM_MEDIA_TYPE &) {
+            ++counters.reconnect_count;
+            return S_OK;
+        };
+        operations.acquire_sample = [&](LAVOpenJocStrictAcquiredSample *acquired) {
+            ++counters.acquire_count;
+            acquired->handle = static_cast<IMediaSample *>(&test_sample);
+            acquired->capacity = test_sample.GetSize();
+            return test_sample.GetPointer(&acquired->data);
+        };
+        operations.release_attached_type = [](AM_MEDIA_TYPE *) {};
+        operations.release_sample = [](void *handle) {
+            static_cast<IMediaSample *>(handle)->Release();
+        };
+        operations.set_sample_media_type = [&](void *handle, const AM_MEDIA_TYPE &candidate) {
+            ++counters.sample_type_count;
+            return static_cast<IMediaSample *>(handle)->SetMediaType(
+                const_cast<AM_MEDIA_TYPE *>(&candidate));
+        };
+        operations.set_output_media_type = [&](const AM_MEDIA_TYPE &) {
+            ++counters.output_type_count;
+            return S_OK;
+        };
+        operations.deliver = [&](void *handle, BYTE *, long bytes) {
+            ++counters.deliver_count;
+            return CopyIntoTask4Sample(static_cast<IMediaSample *>(handle), payload.data(), bytes,
+                                       &counters.set_actual_length_count, &counters.copy_count);
+        };
+        return operations;
+    };
+
+    Task4TestSample short_sample(required_bytes - 1);
+    const std::vector<BYTE> canary = short_sample.storage();
+    Task4BoundaryCounters short_counters;
+    auto short_operations = operations_for(short_sample, short_counters);
+    const HRESULT short_status = DeliverLAVOpenJocStrictMediaType(
+        contract, exact_type, true, required_bytes, short_operations);
+    if (short_status != VFW_E_BUFFER_UNDERFLOW || short_sample.storage() != canary ||
+        short_sample.GetActualDataLength() != 0 || short_sample.release_count() != 1 ||
+        short_sample.set_media_type_count() != 0 || short_counters.sample_type_count != 0 ||
+        short_counters.output_type_count != 0 ||
+        short_counters.set_actual_length_count != 0 || short_counters.copy_count != 0 ||
+        short_counters.deliver_count != 0)
+        return false;
+    std::wprintf(L"TASK4_ALLOCATOR_BOUNDARY case=required_minus_one required=%ld capacity=%ld "
+                 L"hr=0x%08lx set_type=0 set_actual=0 copy=0 deliver=0 release=1 canary=1\n",
+                 required_bytes, required_bytes - 1, static_cast<unsigned long>(short_status));
+
+    Task4TestSample exact_sample(required_bytes);
+    Task4BoundaryCounters exact_counters;
+    auto exact_operations = operations_for(exact_sample, exact_counters);
+    const HRESULT exact_status = DeliverLAVOpenJocStrictMediaType(
+        contract, exact_type, true, required_bytes, exact_operations);
+    const bool payload_exact =
+        std::equal(payload.begin(), payload.end(), exact_sample.storage().begin());
+    const bool guard_exact = std::all_of(exact_sample.storage().begin() + required_bytes,
+                                         exact_sample.storage().end(),
+                                         [](BYTE value) { return value == Task4TestSample::kCanary; });
+    if (exact_status != S_OK || exact_sample.GetActualDataLength() != required_bytes ||
+        exact_sample.release_count() != 1 || exact_sample.set_media_type_count() != 1 ||
+        exact_counters.sample_type_count != 1 || exact_counters.output_type_count != 1 ||
+        exact_counters.set_actual_length_count != 1 || exact_counters.copy_count != 1 ||
+        exact_counters.deliver_count != 1 || !payload_exact || !guard_exact)
+        return false;
+    std::wprintf(L"TASK4_ALLOCATOR_BOUNDARY case=exact_capacity required=%ld capacity=%ld "
+                 L"hr=0x%08lx set_type=1 set_actual=1 copy=1 deliver=1 release=1 "
+                 L"payload=exact canary=1\n",
+                 required_bytes, required_bytes, static_cast<unsigned long>(exact_status));
+
+    std::uint32_t sample_sum = 19;
+    std::size_t byte_count = 23;
+    long narrowed = 29;
+    long grown = 31;
+    const std::size_t safe_frames =
+        (std::numeric_limits<std::size_t>::max)() / static_cast<std::size_t>(48);
+    const long allocator_safe = (std::numeric_limits<long>::max)() -
+                                (std::numeric_limits<long>::max)() / 3;
+    const bool arithmetic_ok =
+        !CheckedLAVOpenJocSampleAdd((std::numeric_limits<std::uint32_t>::max)(), 1, &sample_sum) &&
+        sample_sum == 0 &&
+        CheckedLAVOpenJocPcmByteCount(safe_frames, 48, &byte_count) &&
+        byte_count == safe_frames * 48 &&
+        !CheckedLAVOpenJocPcmByteCount(safe_frames + 1, 48, &byte_count) && byte_count == 0 &&
+        !CheckedLAVOpenJocPcmByteCount((std::numeric_limits<std::size_t>::max)(), 48,
+                                       &byte_count) &&
+        CheckedLAVOpenJocLongNarrow(
+            static_cast<std::size_t>((std::numeric_limits<long>::max)()), &narrowed) &&
+        narrowed == (std::numeric_limits<long>::max)() &&
+        !CheckedLAVOpenJocLongNarrow(
+            static_cast<std::size_t>((std::numeric_limits<long>::max)()) + 1u, &narrowed) &&
+        narrowed == 0 && CheckedLAVOpenJocAllocatorGrowth(allocator_safe, &grown) &&
+        grown == (std::numeric_limits<long>::max)() &&
+        !CheckedLAVOpenJocAllocatorGrowth(allocator_safe + 1, &grown) && grown == 0;
+    if (!arithmetic_ok)
+        return false;
+    std::wprintf(L"TASK4_SAMPLE_OVERFLOW sample_add=checked pcm_safe=%llu pcm_overflow=failed "
+                 L"long_max=checked allocator_safe=%ld allocator_overflow=failed\n",
+                 static_cast<unsigned long long>(safe_frames), allocator_safe);
+
+    std::uint64_t flush_count = 0;
+    std::uint64_t metadata_count = 0;
+    std::uint64_t swap_count = 0;
+    std::uint64_t append_count = 0;
+    LAVOpenJocQueueTransactionOperations queue_operations;
+    queue_operations.flush = [&]() { ++flush_count; return S_OK; };
+    queue_operations.prepare_metadata = [&]() { ++metadata_count; return S_OK; };
+    queue_operations.swap_buffer = [&]() { ++swap_count; };
+    queue_operations.append_buffer = [&]() { ++append_count; return S_OK; };
+    const LAVOpenJocQueueTransactionInput queue_input{
+        true, (std::numeric_limits<std::uint32_t>::max)(), 1, 101, 202, 48000};
+    const LAVOpenJocQueueTransactionResult sentinel{0x13579bdfu, 0x2468ace0};
+    LAVOpenJocQueueTransactionResult queue_result = sentinel;
+    const HRESULT queue_status =
+        ExecuteLAVOpenJocQueueTransaction(queue_input, queue_operations, &queue_result);
+    if (queue_status != HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW) ||
+        queue_result.sample_count != sentinel.sample_count ||
+        queue_result.start_time != sentinel.start_time || flush_count != 0 ||
+        metadata_count != 0 || swap_count != 0 || append_count != 0)
+        return false;
+    std::wprintf(L"TASK4_QUEUE_OVERFLOW hr=0x%08lx sentinel=unchanged flush=0 metadata=0 "
+                 L"swap=0 append=0\n",
+                 static_cast<unsigned long>(queue_status));
+    return true;
+}
+
+bool TestTask4CycleEvidence()
+{
+    using openjoc_harness_core::Task4CycleEvidence;
+    using openjoc_harness_core::Task4CycleEvidenceIsValid;
+    using openjoc_harness_core::Task4CycleMatchesBaseline;
+    Task4CycleEvidence baseline;
+    baseline.source_type_exact = baseline.output_type_exact =
+        baseline.graph_exactly_three_filters = baseline.paused = baseline.running =
+            baseline.no_graph_error = baseline.timestamps_valid =
+                baseline.sample_contracts_valid = baseline.allocator_valid =
+                    baseline.runtime_identity_valid = baseline.fixture_identity_valid =
+                        baseline.policy_exact = baseline.end_of_stream_running = true;
+    baseline.samples = 4;
+    baseline.bytes = 4096;
+    baseline.timestamp_count = 4;
+    baseline.payload_digest[0] = 0x5a;
+    baseline.first_timestamp = 0;
+    baseline.last_timestamp = 320000;
+    baseline.end_of_stream_count = 1;
+    baseline.allocator_requested_capacity = 4096;
+    baseline.allocator_actual_capacity = 8192;
+    baseline.sample_capacity_high_water = 8192;
+    baseline.sample_actual_length_high_water = 1024;
+    baseline.checked_total_bytes = 4096;
+    baseline.actual_length_total = 4096;
+    if (!Task4CycleEvidenceIsValid(baseline) || !Task4CycleMatchesBaseline(baseline, baseline))
+        return false;
+
+    auto rejects = [&](Task4CycleEvidence changed) {
+        return !Task4CycleEvidenceIsValid(changed) ||
+               !Task4CycleMatchesBaseline(baseline, changed);
+    };
+    std::vector<Task4CycleEvidence> boolean_failures;
+    auto add_boolean_failure = [&](bool Task4CycleEvidence::*field) {
+        Task4CycleEvidence changed = baseline;
+        changed.*field = false;
+        boolean_failures.push_back(changed);
+    };
+    add_boolean_failure(&Task4CycleEvidence::source_type_exact);
+    add_boolean_failure(&Task4CycleEvidence::output_type_exact);
+    add_boolean_failure(&Task4CycleEvidence::graph_exactly_three_filters);
+    add_boolean_failure(&Task4CycleEvidence::paused);
+    add_boolean_failure(&Task4CycleEvidence::running);
+    add_boolean_failure(&Task4CycleEvidence::no_graph_error);
+    add_boolean_failure(&Task4CycleEvidence::timestamps_valid);
+    add_boolean_failure(&Task4CycleEvidence::sample_contracts_valid);
+    add_boolean_failure(&Task4CycleEvidence::allocator_valid);
+    add_boolean_failure(&Task4CycleEvidence::runtime_identity_valid);
+    add_boolean_failure(&Task4CycleEvidence::fixture_identity_valid);
+    add_boolean_failure(&Task4CycleEvidence::policy_exact);
+    add_boolean_failure(&Task4CycleEvidence::end_of_stream_running);
+    for (const auto &changed : boolean_failures)
+        if (!rejects(changed))
+            return false;
+
+    Task4CycleEvidence changed = baseline;
+    changed.samples++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.bytes++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.timestamp_count++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.payload_digest[0] ^= 1;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.first_timestamp++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.last_timestamp++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.end_of_stream_count++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.allocator_requested_capacity++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.allocator_actual_capacity++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.sample_capacity_high_water++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.sample_actual_length_high_water++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.checked_total_bytes++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.actual_length_total++;
+    if (!rejects(changed)) return false;
+    changed = baseline;
+    changed.samples = 0;
+    if (Task4CycleEvidenceIsValid(changed)) return false;
+    changed = baseline;
+    changed.actual_length_total = changed.bytes - 1;
+    if (Task4CycleEvidenceIsValid(changed)) return false;
+    return true;
+}
+
+bool TestTask4WorkingSetTrends()
+{
+    using openjoc_harness_core::Task4TrendEvidence;
+    using openjoc_harness_core::WorkingSetTrendIsBounded;
+    constexpr std::size_t page = 4096;
+    std::vector<std::size_t> flat(128, page * 1000);
+    std::vector<std::size_t> noise(128, page * 1000);
+    std::vector<std::size_t> linear(128, page * 1000);
+    std::vector<std::size_t> slow_linear(128, page * 1000);
+    std::vector<std::size_t> quartile_steps(128, page * 1000);
+    std::vector<std::size_t> slow_quartile_steps(128, page * 1000);
+    std::vector<std::size_t> late_step_only(128, page * 1000);
+    std::vector<std::size_t> allocator_high_state_frequency(128, page * 1000);
+    std::vector<std::size_t> tail_linear(128, page * 1000);
+    std::vector<std::size_t> early_step_then_plateau(128, page * 1000);
+    for (std::size_t index = 0; index < 128; ++index)
+    {
+        noise[index] += index % 2 == 0 ? page : 0;
+        linear[index] += index * page;
+        slow_linear[index] += (index / 4) * page;
+        if (index >= 32) quartile_steps[index] += page * 43;
+        if (index >= 64) quartile_steps[index] += page * 43;
+        if (index >= 96) quartile_steps[index] += page * 43;
+        if (index >= 32) slow_quartile_steps[index] += page * 16;
+        if (index >= 64) slow_quartile_steps[index] += page * 16;
+        if (index >= 96) slow_quartile_steps[index] += page * 16;
+        if (index >= 32) late_step_only[index] += page;
+        if (index >= 64) late_step_only[index] += page;
+        if (index >= 96) late_step_only[index] += page * 128;
+        const std::size_t quartile = index / 32;
+        if (index % 32 >= 9)
+            allocator_high_state_frequency[index] += page * 43 * quartile;
+        if (index >= 64) tail_linear[index] += (index - 64) * page;
+        if (index >= 32) early_step_then_plateau[index] += page * 200;
+    }
+    std::vector<std::size_t> incomplete(flat.begin(), flat.end() - 1);
+    std::vector<std::size_t> excessive = flat;
+    excessive.push_back(flat.back());
+    Task4TrendEvidence evidence;
+    if (!WorkingSetTrendIsBounded(flat, page, &evidence) || evidence.gate_a ||
+        evidence.gate_b || evidence.tail_gate)
+        return false;
+    if (!WorkingSetTrendIsBounded(noise, page, &evidence) || evidence.gate_a ||
+        evidence.gate_b || evidence.tail_gate)
+        return false;
+    if (WorkingSetTrendIsBounded(linear, page, &evidence) || !evidence.gate_a)
+        return false;
+    if (WorkingSetTrendIsBounded(slow_linear, page, &evidence) || !evidence.gate_a)
+        return false;
+    if (WorkingSetTrendIsBounded(quartile_steps, page, &evidence) || !evidence.gate_b)
+        return false;
+    if (WorkingSetTrendIsBounded(slow_quartile_steps, page, &evidence) || !evidence.gate_a)
+        return false;
+    if (!WorkingSetTrendIsBounded(late_step_only, page, &evidence) || evidence.gate_b)
+        return false;
+    if (!WorkingSetTrendIsBounded(allocator_high_state_frequency, page, &evidence) ||
+        evidence.gate_b)
+        return false;
+    if (WorkingSetTrendIsBounded(tail_linear, page, &evidence) || evidence.gate_a ||
+        evidence.gate_b || !evidence.tail_gate)
+        return false;
+    if (!WorkingSetTrendIsBounded(early_step_then_plateau, page, &evidence))
+        return false;
+    if (WorkingSetTrendIsBounded(incomplete, page, &evidence) ||
+        WorkingSetTrendIsBounded(excessive, page, &evidence) ||
+        WorkingSetTrendIsBounded(flat, 0, &evidence))
+        return false;
+    return true;
+}
+
+struct Task4ProcessMemory
+{
+    std::size_t working_set = 0;
+    std::size_t private_usage = 0;
+};
+
+bool ReadTask4ProcessMemory(Task4ProcessMemory *memory)
+{
+    if (!memory)
+        return false;
+    *memory = {};
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    if (!GetProcessMemoryInfo(GetCurrentProcess(),
+                              reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&counters),
+                              sizeof(counters)))
+        return false;
+    memory->working_set = counters.WorkingSetSize;
+    memory->private_usage = counters.PrivateUsage;
+    return memory->working_set > 0 && memory->private_usage > 0;
+}
+
+HRESULT RunOneTask4GraphCycle(
+    const PrivateComModule &audio, const PrivateComModule &splitter,
+    const FixtureIdentity &fixture, const LAVOpenJocOutputPolicy policy,
+    const bool runtime_identity_valid, const bool fixture_identity_valid,
+    openjoc_harness_core::Task4CycleEvidence *evidence)
+{
+    if (!evidence)
+        return E_POINTER;
+    *evidence = {};
+    const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
+    if (!contract || !runtime_identity_valid || !fixture_identity_valid)
+    {
+        std::wprintf(L"TASK4_CYCLE_DIAGNOSTIC stage=precondition policy_value=%u "
+                     L"contract=%d runtime_identity=%d fixture_identity=%d hr=0x%08lx\n",
+                     static_cast<unsigned>(policy), contract ? 1 : 0,
+                     runtime_identity_valid ? 1 : 0, fixture_identity_valid ? 1 : 0,
+                     static_cast<unsigned long>(E_INVALIDARG));
+        return E_INVALIDARG;
+    }
+    const CMediaType target = BuildStrictTarget(*contract);
+    ComOwner<IGraphBuilder> graph;
+    ComOwner<IBaseFilter> source_filter;
+    ComOwner<IBaseFilter> audio_filter;
+    ComOwner<IPin> source_output;
+    ComOwner<IPin> audio_input;
+    ComOwner<IPin> audio_output;
+    CMediaType exact_eac3;
+    HRESULT status = CreateGraphForFixture(audio, splitter, fixture.final_path, policy, true,
+                                           graph.put(), source_filter.put(), audio_filter.put(),
+                                           source_output.put(), audio_input.put(), audio_output.put(),
+                                           &exact_eac3);
+    if (FAILED(status))
+    {
+        std::wprintf(L"TASK4_CYCLE_DIAGNOSTIC stage=create_graph policy=%hs hr=0x%08lx\n",
+                     contract->property_page_label, static_cast<unsigned long>(status));
+        return status;
+    }
+    HRESULT sink_status = S_OK;
+    auto *sink = new (std::nothrow)
+        StrictCaptureSink(target, false, std::vector<CMediaType>{}, &sink_status);
+    if (!sink)
+    {
+        std::wprintf(L"TASK4_CYCLE_DIAGNOSTIC stage=create_sink policy=%hs "
+                     L"hr=0x%08lx\n",
+                     contract->property_page_label, static_cast<unsigned long>(E_OUTOFMEMORY));
+        return E_OUTOFMEMORY;
+    }
+    if (FAILED(sink_status))
+    {
+        std::wprintf(L"TASK4_CYCLE_DIAGNOSTIC stage=create_sink policy=%hs hr=0x%08lx\n",
+                     contract->property_page_label, static_cast<unsigned long>(sink_status));
+        delete sink;
+        return sink_status;
+    }
+    sink->AddRef();
+    ComOwner<IBaseFilter> sink_owner;
+    sink_owner.attach(static_cast<IBaseFilter *>(sink));
+    status = AttachCaptureSink(graph.get(), audio_output.get(), sink, target);
+    if (FAILED(status))
+    {
+        std::wprintf(L"TASK4_CYCLE_DIAGNOSTIC stage=attach_sink policy=%hs hr=0x%08lx\n",
+                     contract->property_page_label, static_cast<unsigned long>(status));
+        return status;
+    }
+    const bool graph_exact = GraphContainsExactly(graph.get(), 3);
+    const bool source_exact = ExactConnectionTypes(source_output.get(), audio_input.get(), exact_eac3);
+    const CMediaType negotiated = target;
+    const bool output_exact = ExactConnectionTypes(audio_output.get(), sink->input(), negotiated);
+
+    ComOwner<ILAVOpenJocSettings> settings;
+    LAVOpenJocOutputPolicy actual_policy = LAVOpenJocOutputPolicy::Stereo;
+    const bool policy_exact =
+        audio_filter->QueryInterface(__uuidof(ILAVOpenJocSettings),
+                                     reinterpret_cast<void **>(settings.put())) == S_OK &&
+        settings->GetOutputPolicy(&actual_policy) == S_OK && actual_policy == policy;
+    ComOwner<IMediaControl> control;
+    ComOwner<IMediaEvent> events;
+    if (FAILED(status = graph->QueryInterface(IID_IMediaControl,
+                                              reinterpret_cast<void **>(control.put()))) ||
+        FAILED(status = graph->QueryInterface(IID_IMediaEvent,
+                                              reinterpret_cast<void **>(events.put()))))
+    {
+        std::wprintf(L"TASK4_CYCLE_DIAGNOSTIC stage=query_graph_control policy=%hs "
+                     L"hr=0x%08lx\n",
+                     contract->property_page_label, static_cast<unsigned long>(status));
+        return status;
+    }
+    OAFilterState state = State_Stopped;
+    const HRESULT pause_status = control->Pause();
+    const HRESULT pause_state_status = control->GetState(10000, &state);
+    const OAFilterState pause_state = state;
+    const bool paused = pause_status == S_OK && pause_state_status == S_OK && state == State_Paused;
+    state = State_Stopped;
+    const HRESULT run_status = control->Run();
+    const HRESULT run_state_status = control->GetState(10000, &state);
+    const OAFilterState run_state = state;
+    const bool running = run_status == S_OK && run_state_status == S_OK && state == State_Running;
+    const DWORD eos_wait = WaitForSingleObject(sink->end_of_stream_event(), 30000);
+    const HRESULT stop_status = control->Stop();
+    HRESULT graph_error_status = S_OK;
+    const bool graph_error = DrainGraphErrors(events.get(), &graph_error_status);
+
+    const std::vector<CapturedSampleEvidence> samples = sink->samples();
+    const std::vector<BYTE> bytes = sink->bytes();
+    std::size_t checked_total = 0;
+    std::uint64_t actual_total = 0;
+    long capacity_high_water = 0;
+    long actual_high_water = 0;
+    const std::uint16_t block_align =
+        static_cast<std::uint16_t>(contract->channel_count * sizeof(float));
+    bool checked_lengths = !samples.empty() && block_align > 0;
+    for (const auto &sample : samples)
+    {
+        if (sample.length <= 0 || sample.capacity <= 0 ||
+            sample.length % static_cast<long>(block_align) != 0)
+        {
+            checked_lengths = false;
+            break;
+        }
+        const std::size_t frames = static_cast<std::size_t>(sample.length) / block_align;
+        std::size_t checked_sample = 0;
+        long narrowed_sample = 0;
+        if (!CheckedLAVOpenJocPcmByteCount(frames, block_align, &checked_sample) ||
+            !CheckedLAVOpenJocLongNarrow(checked_sample, &narrowed_sample) ||
+            narrowed_sample != sample.length || checked_total >
+                (std::numeric_limits<std::size_t>::max)() - checked_sample ||
+            actual_total > (std::numeric_limits<std::uint64_t>::max)() -
+                               static_cast<std::uint64_t>(sample.length))
+        {
+            checked_lengths = false;
+            break;
+        }
+        checked_total += checked_sample;
+        actual_total += static_cast<std::uint64_t>(sample.length);
+        capacity_high_water = (std::max)(capacity_high_water, sample.capacity);
+        actual_high_water = (std::max)(actual_high_water, sample.length);
+    }
+    const ALLOCATOR_PROPERTIES requested = sink->allocator_requested_properties();
+    const ALLOCATOR_PROPERTIES actual = sink->allocator_actual_properties();
+    Digest digest{};
+    const bool digest_ok = Sha256Bytes(bytes, &digest);
+    bool attached_types_exact = true;
+    for (const auto &attached : sink->sample_attached_types())
+        attached_types_exact = attached_types_exact &&
+                               openjoc_harness_core::ExactMediaTypeEqual(negotiated, attached);
+    bool set_types_exact = true;
+    for (const auto &set_type : sink->set_media_types())
+        set_types_exact = set_types_exact &&
+                          openjoc_harness_core::ExactMediaTypeEqual(negotiated, set_type);
+
+    evidence->source_type_exact = source_exact &&
+                                  ExactConnectionTypes(source_output.get(), audio_input.get(), exact_eac3);
+    evidence->output_type_exact = output_exact && attached_types_exact && set_types_exact &&
+                                  ExactConnectionTypes(audio_output.get(), sink->input(), negotiated);
+    evidence->graph_exactly_three_filters = graph_exact && GraphContainsExactly(graph.get(), 3);
+    evidence->paused = paused;
+    evidence->running = running;
+    evidence->no_graph_error = !graph_error && stop_status == S_OK &&
+                               graph_error_status == S_OK && eos_wait == WAIT_OBJECT_0;
+    evidence->timestamps_valid = sink->sample_contracts_valid();
+    evidence->sample_contracts_valid = sink->sample_contracts_valid() && checked_lengths;
+    evidence->allocator_valid = sink->allocator_contract_valid();
+    evidence->runtime_identity_valid = runtime_identity_valid;
+    evidence->fixture_identity_valid = fixture_identity_valid;
+    evidence->policy_exact = policy_exact;
+    evidence->end_of_stream_running = sink->end_of_stream_running();
+    evidence->samples = sink->sample_count();
+    evidence->bytes = bytes.size();
+    evidence->timestamp_count = sink->timestamp_observation_count();
+    evidence->payload_digest = digest;
+    evidence->first_timestamp = samples.empty() ? 0 : samples.front().start;
+    evidence->last_timestamp = samples.empty() ? 0 : samples.back().stop;
+    evidence->end_of_stream_count = sink->end_of_stream_count();
+    evidence->allocator_requested_capacity = requested.cbBuffer;
+    evidence->allocator_actual_capacity = actual.cbBuffer;
+    evidence->sample_capacity_high_water = capacity_high_water;
+    evidence->sample_actual_length_high_water = actual_high_water;
+    evidence->checked_total_bytes = checked_total;
+    evidence->actual_length_total = actual_total;
+    const bool evidence_valid = openjoc_harness_core::Task4CycleEvidenceIsValid(*evidence);
+    if (!digest_ok || !evidence_valid)
+    {
+        std::wprintf(
+            L"TASK4_CYCLE_DIAGNOSTIC stage=evidence policy=%hs "
+            L"pause_hr=0x%08lx pause_state_hr=0x%08lx pause_state=%d "
+            L"run_hr=0x%08lx run_state_hr=0x%08lx run_state=%d "
+            L"stop_hr=0x%08lx graph_error_hr=0x%08lx eos_wait=%lu "
+            L"source_exact=%d output_exact=%d graph3=%d paused=%d running=%d "
+            L"no_error=%d timestamps=%d sample_contracts=%d allocator=%d "
+            L"runtime=%d fixture=%d policy_exact=%d eos_running=%d digest_ok=%d "
+            L"samples=%llu bytes=%llu timestamp_count=%llu first=%lld last=%lld "
+            L"eos=%llu requested=%ld actual=%ld GetSize_high_water=%ld "
+            L"ActualDataLength_high_water=%ld checked_bytes=%llu actual_length_bytes=%llu\n",
+            contract->property_page_label, static_cast<unsigned long>(pause_status),
+            static_cast<unsigned long>(pause_state_status), static_cast<int>(pause_state),
+            static_cast<unsigned long>(run_status), static_cast<unsigned long>(run_state_status),
+            static_cast<int>(run_state), static_cast<unsigned long>(stop_status),
+            static_cast<unsigned long>(graph_error_status), static_cast<unsigned long>(eos_wait),
+            evidence->source_type_exact ? 1 : 0, evidence->output_type_exact ? 1 : 0,
+            evidence->graph_exactly_three_filters ? 1 : 0, evidence->paused ? 1 : 0,
+            evidence->running ? 1 : 0, evidence->no_graph_error ? 1 : 0,
+            evidence->timestamps_valid ? 1 : 0, evidence->sample_contracts_valid ? 1 : 0,
+            evidence->allocator_valid ? 1 : 0, evidence->runtime_identity_valid ? 1 : 0,
+            evidence->fixture_identity_valid ? 1 : 0, evidence->policy_exact ? 1 : 0,
+            evidence->end_of_stream_running ? 1 : 0, digest_ok ? 1 : 0,
+            static_cast<unsigned long long>(evidence->samples),
+            static_cast<unsigned long long>(evidence->bytes),
+            static_cast<unsigned long long>(evidence->timestamp_count),
+            static_cast<long long>(evidence->first_timestamp),
+            static_cast<long long>(evidence->last_timestamp),
+            static_cast<unsigned long long>(evidence->end_of_stream_count),
+            evidence->allocator_requested_capacity, evidence->allocator_actual_capacity,
+            evidence->sample_capacity_high_water, evidence->sample_actual_length_high_water,
+            static_cast<unsigned long long>(evidence->checked_total_bytes),
+            static_cast<unsigned long long>(evidence->actual_length_total));
+    }
+    return digest_ok && evidence_valid ? S_OK : E_FAIL;
+}
+
+std::wstring Task4SequenceText(const std::vector<std::size_t> &values)
+{
+    std::wostringstream stream;
+    for (std::size_t index = 0; index < values.size(); ++index)
+    {
+        if (index != 0)
+            stream << L',';
+        stream << static_cast<unsigned long long>(values[index]);
+    }
+    return stream.str();
+}
+
+void LogTask4Trend(const wchar_t *metric, const LAVOpenJocOutputContract &contract,
+                   const std::size_t page_size, const std::vector<std::size_t> &values,
+                   const openjoc_harness_core::Task4TrendEvidence &trend, const bool bounded)
+{
+    const std::wstring sequence = Task4SequenceText(values);
+    const wchar_t *verdict =
+        values.size() != 128 ? L"INCOMPLETE" : bounded ? L"BOUNDED" : L"GROWTH_DETECTED";
+    std::wprintf(
+        L"TASK4_MEMORY_TREND policy=%hs metric=%ls page_size=%llu samples=%llu "
+        L"full_slope=%.3f full_r2=%.6f tail_slope=%.3f tail_r2=%.6f "
+        L"q1=%llu q2=%llu q3=%llu q4=%llu lq1=%llu lq2=%llu lq3=%llu lq4=%llu "
+        L"h1=%llu h2=%llu "
+        L"gate_a_slope_pages=0.125 gate_a_r2=0.90 gate_a_delta_pages=16 "
+        L"gate_b_quantile=p25 gate_b_step_pages=43 gate_b_delta_pages=128 "
+        L"tail_slope_pages=1 tail_r2=0.85 "
+        L"tail_delta_pages=32 gate_a=%d gate_b=%d tail_gate=%d verdict=%ls sequence=%ls\n",
+        contract.property_page_label, metric, static_cast<unsigned long long>(page_size),
+        static_cast<unsigned long long>(values.size()), trend.full_slope, trend.full_r_squared,
+        trend.tail_slope, trend.tail_r_squared,
+        static_cast<unsigned long long>(trend.quartile_medians[0]),
+        static_cast<unsigned long long>(trend.quartile_medians[1]),
+        static_cast<unsigned long long>(trend.quartile_medians[2]),
+        static_cast<unsigned long long>(trend.quartile_medians[3]),
+        static_cast<unsigned long long>(trend.quartile_lower_quartiles[0]),
+        static_cast<unsigned long long>(trend.quartile_lower_quartiles[1]),
+        static_cast<unsigned long long>(trend.quartile_lower_quartiles[2]),
+        static_cast<unsigned long long>(trend.quartile_lower_quartiles[3]),
+        static_cast<unsigned long long>(trend.tail_half_medians[0]),
+        static_cast<unsigned long long>(trend.tail_half_medians[1]), trend.gate_a ? 1 : 0,
+        trend.gate_b ? 1 : 0, trend.tail_gate ? 1 : 0, verdict, sequence.c_str());
+}
+
+HRESULT RunTask4AllocatorPerformance(const std::filesystem::path &runtime_dir,
+                                     const std::filesystem::path &manifest_path,
+                                     const std::filesystem::path &fixture_path)
+{
+    constexpr std::size_t kTask4WarmupCycles = 16;
+    constexpr std::size_t kTask4MeasuredCycles = 128;
+    const bool allocator_self_test = TestTask4AllocatorBoundaries();
+    const bool cycle_self_test = TestTask4CycleEvidence();
+    const bool trend_self_test = TestTask4WorkingSetTrends();
+    std::wprintf(L"TASK4_SELF_TEST allocator=%d cycle=%d trend=%d\n",
+                 allocator_self_test ? 1 : 0, cycle_self_test ? 1 : 0,
+                 trend_self_test ? 1 : 0);
+    if (!allocator_self_test || !cycle_self_test || !trend_self_test)
+        return E_UNEXPECTED;
+    std::vector<StagedRecord> records;
+    if (!ReadStagedManifest(runtime_dir, manifest_path, &records))
+        return E_INVALIDARG;
+    const StagedRecord *audio_record = FindRecord(records, StagedKind::Module, L"LAVAudio.ax");
+    const StagedRecord *splitter_record = FindRecord(records, StagedKind::Module, L"LAVSplitter.ax");
+    if (!audio_record || !splitter_record)
+        return E_UNEXPECTED;
+    const std::wstring runtime_final = FinalPathForFile(runtime_dir);
+    ScopedActivationContext activation(audio_record->final_path, runtime_final);
+    if (!activation.active())
+        return HRESULT_FROM_WIN32(GetLastError());
+    PrivateComModule audio(audio_record->final_path, kTargetLavAudio);
+    PrivateComModule splitter(splitter_record->final_path, kLavSplitterSource);
+    std::wprintf(L"TASK4_STAGE activation=%d audio_hr=0x%08lx splitter_hr=0x%08lx\n",
+                 activation.active() ? 1 : 0, static_cast<unsigned long>(audio.status()),
+                 static_cast<unsigned long>(splitter.status()));
+    if (FAILED(audio.status()) || FAILED(splitter.status()))
+        return E_UNEXPECTED;
+    std::vector<HMODULE> dependencies;
+    if (!LoadStagedDependencies(records, &dependencies))
+        return E_UNEXPECTED;
+    FixtureIdentity fixture;
+    const bool fixture_identity_valid = BuildFixtureIdentity(fixture_path, &fixture) &&
+                                        FixtureIdentityMatches(fixture);
+    const bool runtime_identity_valid = RuntimeIdentityMatches(records);
+    std::wprintf(L"TASK4_STAGE dependencies=%llu fixture_identity=%d runtime_identity=%d\n",
+                 static_cast<unsigned long long>(dependencies.size()),
+                 fixture_identity_valid ? 1 : 0, runtime_identity_valid ? 1 : 0);
+    HRESULT status = fixture_identity_valid && runtime_identity_valid ? S_OK : E_UNEXPECTED;
+    SYSTEM_INFO system_info{};
+    GetSystemInfo(&system_info);
+    const std::size_t page_size = system_info.dwPageSize;
+    constexpr std::array<LAVOpenJocOutputPolicy, 3> policies = {
+        LAVOpenJocOutputPolicy::Stereo, LAVOpenJocOutputPolicy::Layout51,
+        LAVOpenJocOutputPolicy::Layout714};
+    for (const auto policy : policies)
+    {
+        if (FAILED(status))
+            break;
+        const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
+        if (!contract)
+        {
+            status = E_UNEXPECTED;
+            break;
+        }
+        openjoc_harness_core::Task4CycleEvidence warmup_baseline;
+        bool have_warmup_baseline = false;
+        for (std::size_t cycle = 0; cycle < kTask4WarmupCycles && SUCCEEDED(status); ++cycle)
+        {
+            openjoc_harness_core::Task4CycleEvidence current;
+            status = RunOneTask4GraphCycle(audio, splitter, fixture, policy,
+                                           runtime_identity_valid, fixture_identity_valid, &current);
+            if (FAILED(status))
+                std::wprintf(L"TASK4_CYCLE_STATUS policy=%hs phase=warmup cycle=%llu "
+                             L"hr=0x%08lx\n",
+                             contract->property_page_label,
+                             static_cast<unsigned long long>(cycle),
+                             static_cast<unsigned long>(status));
+            if (SUCCEEDED(status))
+            {
+                if (!have_warmup_baseline)
+                {
+                    warmup_baseline = current;
+                    have_warmup_baseline = true;
+                }
+                else if (!openjoc_harness_core::Task4CycleMatchesBaseline(warmup_baseline, current))
+                    status = E_FAIL;
+            }
+        }
+        std::vector<std::size_t> working_set;
+        std::vector<std::size_t> private_usage;
+        working_set.reserve(kTask4MeasuredCycles);
+        private_usage.reserve(kTask4MeasuredCycles);
+        openjoc_harness_core::Task4CycleEvidence measured_baseline;
+        bool have_measured_baseline = false;
+        const ULONGLONG started = GetTickCount64();
+        for (std::size_t cycle = 0; cycle < kTask4MeasuredCycles && SUCCEEDED(status); ++cycle)
+        {
+            openjoc_harness_core::Task4CycleEvidence current;
+            status = RunOneTask4GraphCycle(audio, splitter, fixture, policy,
+                                           runtime_identity_valid, fixture_identity_valid, &current);
+            Task4ProcessMemory memory;
+            const bool memory_read = ReadTask4ProcessMemory(&memory);
+            const DWORD memory_error = memory_read ? ERROR_SUCCESS : GetLastError();
+            if (FAILED(status))
+            {
+                std::wprintf(L"TASK4_CYCLE_STATUS policy=%hs phase=measured cycle=%llu "
+                             L"hr=0x%08lx\n",
+                             contract->property_page_label,
+                             static_cast<unsigned long long>(cycle),
+                             static_cast<unsigned long>(status));
+                break;
+            }
+            if (!have_measured_baseline)
+            {
+                measured_baseline = current;
+                have_measured_baseline = true;
+            }
+            else if (!openjoc_harness_core::Task4CycleMatchesBaseline(measured_baseline, current))
+            {
+                status = E_FAIL;
+                break;
+            }
+            if (!memory_read)
+            {
+                status = HRESULT_FROM_WIN32(memory_error ? memory_error : ERROR_INVALID_DATA);
+                break;
+            }
+            working_set.push_back(memory.working_set);
+            private_usage.push_back(memory.private_usage);
+        }
+        const ULONGLONG elapsed_ms = GetTickCount64() - started;
+        openjoc_harness_core::Task4TrendEvidence working_set_trend;
+        openjoc_harness_core::Task4TrendEvidence private_usage_trend;
+        const bool working_set_bounded =
+            working_set.size() == kTask4MeasuredCycles &&
+            openjoc_harness_core::WorkingSetTrendIsBounded(working_set, page_size,
+                                                            &working_set_trend);
+        const bool private_usage_bounded =
+            private_usage.size() == kTask4MeasuredCycles &&
+            openjoc_harness_core::WorkingSetTrendIsBounded(private_usage, page_size,
+                                                            &private_usage_trend);
+        LogTask4Trend(L"WorkingSetSize", *contract, page_size, working_set,
+                      working_set_trend, working_set_bounded);
+        LogTask4Trend(L"PrivateUsage", *contract, page_size, private_usage,
+                      private_usage_trend, private_usage_bounded);
+        if (FAILED(status) || !have_measured_baseline || !working_set_bounded ||
+            !private_usage_bounded ||
+            !openjoc_harness_core::Task4CycleEvidenceIsValid(measured_baseline))
+        {
+            status = E_FAIL;
+            break;
+        }
+        std::wprintf(
+            L"TASK4_PERFORMANCE_ROW controlled_sink=1 renderer_state=UNVERIFIED "
+            L"support_inference=none policy=%hs channels=%u mask=0x%08x warmup=%llu "
+            L"cycles=%llu elapsed_ms=%llu samples_per_cycle=%llu bytes_per_cycle=%llu "
+            L"timestamp_count=%llu first_timestamp=%lld last_timestamp=%lld eos=%llu "
+            L"allocator_requested=%ld allocator_actual=%ld GetSize_high_water=%ld "
+            L"ActualDataLength_high_water=%ld checked_bytes=%llu actual_length_bytes=%llu "
+            L"working_set_verdict=BOUNDED private_usage_verdict=BOUNDED\n",
+            contract->property_page_label, contract->channel_count,
+            contract->windows_channel_mask,
+            static_cast<unsigned long long>(kTask4WarmupCycles),
+            static_cast<unsigned long long>(kTask4MeasuredCycles),
+            static_cast<unsigned long long>(elapsed_ms),
+            static_cast<unsigned long long>(measured_baseline.samples),
+            static_cast<unsigned long long>(measured_baseline.bytes),
+            static_cast<unsigned long long>(measured_baseline.timestamp_count),
+            static_cast<long long>(measured_baseline.first_timestamp),
+            static_cast<long long>(measured_baseline.last_timestamp),
+            static_cast<unsigned long long>(measured_baseline.end_of_stream_count),
+            measured_baseline.allocator_requested_capacity,
+            measured_baseline.allocator_actual_capacity,
+            measured_baseline.sample_capacity_high_water,
+            measured_baseline.sample_actual_length_high_water,
+            static_cast<unsigned long long>(measured_baseline.checked_total_bytes),
+            static_cast<unsigned long long>(measured_baseline.actual_length_total));
+        if (policy == LAVOpenJocOutputPolicy::Layout714)
+            std::wprintf(L"TASK4_ALLOCATOR_HIGH_WATER policy=7.1.4 requested=%ld actual=%ld "
+                         L"GetSize=%ld ActualDataLength=%ld checked_bytes=%llu\n",
+                         measured_baseline.allocator_requested_capacity,
+                         measured_baseline.allocator_actual_capacity,
+                         measured_baseline.sample_capacity_high_water,
+                         measured_baseline.sample_actual_length_high_water,
+                         static_cast<unsigned long long>(measured_baseline.checked_total_bytes));
+    }
+    if (SUCCEEDED(status) && !RuntimeIdentityMatches(records))
+        status = E_UNEXPECTED;
+    FreeModules(&dependencies);
+    if (SUCCEEDED(status))
+        std::wprintf(L"TASK4_CONTROL_COMPLETE controlled_sink=1 renderer_state=UNVERIFIED "
+                     L"support_inference=none allocator_boundaries=PASS performance_rows=3\n");
+    return status;
+}
+
 bool TestExactMediaTypeComparison()
 {
     WAVEFORMATEXTENSIBLE first_format{};
@@ -4756,7 +5868,7 @@ bool TestExactMediaTypeComparison()
 bool TestPureHelpers()
 {
     using namespace openjoc_harness_core;
-    if (!FingerprintsArePairwiseDistinct(
+    if (!TestTask4WorkingSetTrends() || !FingerprintsArePairwiseDistinct(
             {{0.0f, 1.0f, 2.0f}, {1.0f, 2.0f, 3.0f}, {2.0f, 3.0f, 4.0f}}) ||
         FingerprintsArePairwiseDistinct({{0.0f, 1.0f}, {0.0f, 1.0f}}) ||
         !FingerprintsArePairwiseDistinct(
@@ -4940,7 +6052,9 @@ int wmain(int argc, wchar_t **argv)
     }
     const bool controlled_sink = argc == 5 && wcscmp(argv[1], L"--controlled-sink") == 0;
     const bool lifecycle = argc == 5 && wcscmp(argv[1], L"--openjoc-lifecycle") == 0;
-    if (!controlled_sink && !lifecycle &&
+    const bool allocator_performance =
+        argc == 5 && wcscmp(argv[1], L"--allocator-performance") == 0;
+    if (!controlled_sink && !lifecycle && !allocator_performance &&
         (argc != 5 || wcscmp(argv[1], L"--self-test") != 0 ||
         (wcscmp(argv[4], L"target") != 0 && wcscmp(argv[4], L"pristine") != 0))
        )
@@ -4956,6 +6070,8 @@ int wmain(int argc, wchar_t **argv)
                       L"--stock-eac3-worker|--eac3-passthrough-worker <runtime-dir> "
                       L"<manifest> <target|pristine> <fixture> <evidence> <policy>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --openjoc-lifecycle ...\n"
+                      L"   or: OpenJocDirectShowNegotiationSmoke.exe --allocator-performance "
+                      L"<runtime-dir> <manifest> <joc.multi.ec3>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --compare-task3-evidence "
                       L"<target-evidence> <pristine-evidence> <policy> <stock|passthrough>\n");
         return 64;
@@ -4967,10 +6083,14 @@ int wmain(int argc, wchar_t **argv)
                       static_cast<unsigned long>(com_status));
         return 1;
     }
-    const GUID &audio_class_id = !controlled_sink && !lifecycle && wcscmp(argv[4], L"pristine") == 0
+    const GUID &audio_class_id = !controlled_sink && !lifecycle && !allocator_performance &&
+                                         wcscmp(argv[4], L"pristine") == 0
                                      ? kPristineLavAudio
                                      : kTargetLavAudio;
-    const HRESULT status = lifecycle
+    const HRESULT status = allocator_performance
+                               ? openjoc_harness_shell::RunTask4AllocatorPerformance(
+                                     argv[2], argv[3], argv[4])
+                           : lifecycle
                                ? openjoc_harness_shell::RunOpenJocLifecycleMatrix(argv[2], argv[3],
                                                                                   argv[4])
                            : controlled_sink
@@ -4986,6 +6106,9 @@ int wmain(int argc, wchar_t **argv)
                           static_cast<unsigned long>(status));
         else if (lifecycle)
             std::fwprintf(stderr, L"TASK3_UNVERIFIED: lifecycle matrix failed: 0x%08lx\n",
+                          static_cast<unsigned long>(status));
+        else if (allocator_performance)
+            std::fwprintf(stderr, L"TASK4_UNVERIFIED: allocator/performance failed: 0x%08lx\n",
                           static_cast<unsigned long>(status));
         else
             std::fwprintf(stderr, L"self-test failed: 0x%08lx\n",
@@ -5004,6 +6127,8 @@ int wmain(int argc, wchar_t **argv)
                      L"UNVERIFIED\n");
         return 0;
     }
+    if (allocator_performance)
+        return 0;
     std::wprintf(L"UNVERIFIED: lane-private Audio/Splitter activation and staged identity passed\n");
     return 0;
 }
