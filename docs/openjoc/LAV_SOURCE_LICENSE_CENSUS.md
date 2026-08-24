@@ -45,11 +45,12 @@ They are `AudioStatusCapacityTests.cpp`, `LAVAudioIdentitySmoke.cpp`, `LAVAudioR
 
 ## Modified upstream census
 
-All 13 OpenJOC-modified upstream files preserve their applicable original
+All 14 OpenJOC-modified upstream files preserve their applicable original
 license evidence and contain a dated OpenJOC downstream modification notice
 for the release in which the downstream change was introduced:
 
 - `common/DSUtilLite/growarray.h`
+- `common/genversion.bat`
 - `common/includes/common_defines.h`
 - `decoder/LAVAudio/AudioSettingsProp.cpp`
 - `decoder/LAVAudio/AudioSettingsProp.h`

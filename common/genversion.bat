@@ -1,4 +1,6 @@
 @ECHO OFF
+@rem OpenJOC downstream modification (openjoc-0.12.0, 2026-08-25):
+@rem handle hyphenated downstream tags without generating a non-integer build macro.
 SETLOCAL
 
 PUSHD "%~dp0"
@@ -7,27 +9,26 @@ SET nbMAJOR_PART=0
 SET nbCOMMIT_PART=0
 SET nbHASH_PART=00000
 SET OLDVER=
+SET strTAG=
 
 :: check for git presence
-CALL git describe >NUL 2>&1
+CALL git rev-parse --is-inside-work-tree >NUL 2>&1
 IF ERRORLEVEL 1 (
     GOTO NOGIT
 )
 
-:: Get git-describe output
-FOR /F "tokens=*" %%A IN ('"git describe --long --abbrev=5 HEAD"') DO (
-  SET strFILE_VERSION=%%A
+:: Count commits after the nearest tag without parsing the tag text. Downstream
+:: OpenJOC tags contain hyphens, so splitting git-describe output on '-' would
+:: turn a dotted tag component into an invalid integer preprocessor macro.
+FOR /F "tokens=*" %%A IN ('git describe --tags --abbrev^=0 HEAD') DO (
+  SET strTAG=%%A
 )
-
-:: Split into tag, nb commits, hash
-FOR /F "tokens=1,2,3 delims=-" %%A IN ("%strFILE_VERSION%") DO (
-  SET nbMAJOR_PART=%%A
-  SET nbCOMMIT_PART=%%B
-  SET nbHASH_PART=%%C
+IF DEFINED strTAG (
+  FOR /F "tokens=*" %%A IN ('git rev-list --count "%strTAG%..HEAD"') DO SET nbCOMMIT_PART=%%A
+) ELSE (
+  FOR /F "tokens=*" %%A IN ('git rev-list --count HEAD') DO SET nbCOMMIT_PART=%%A
 )
-
-:: strip the "g" off the hash
-SET nbHASH_PART=%nbHASH_PART:~1%
+FOR /F "tokens=*" %%A IN ('git rev-parse --short^=5 HEAD') DO SET nbHASH_PART=%%A
 
 :WRITE_VER
 
