@@ -29,6 +29,10 @@ int wmain(int argc, wchar_t **argv)
         0x27247580, 0xc701, 0x40cd, {0x88, 0x6d, 0xe6, 0x18, 0xfc, 0x8c, 0x9f, 0xff}};
     static const GUID kStockLavAudio = {
         0xe8e73b6b, 0x4cb3, 0x44a4, {0xbe, 0x99, 0x4f, 0x7b, 0xcb, 0x96, 0xe4, 0x91}};
+    static const GUID kAudioSettings = {
+        0x4158a22b, 0x6553, 0x45d0, {0x80, 0x69, 0x24, 0x71, 0x6f, 0x8f, 0xf1, 0x71}};
+    static const GUID kOpenJocSettings = {
+        0x6b97fd1c, 0xb463, 0x4b5e, {0x93, 0x49, 0xcd, 0x8b, 0x96, 0x4d, 0x6b, 0x46}};
 
     if (argc < 2 || argc > 3)
     {
@@ -68,6 +72,21 @@ int wmain(int argc, wchar_t **argv)
         if (SUCCEEDED(hr) && class_id != expected_class_id)
             hr = E_UNEXPECTED;
         Release(persist);
+    }
+    if (SUCCEEDED(hr))
+    {
+        IUnknown *audio_settings = nullptr;
+        hr = filter->QueryInterface(kAudioSettings, reinterpret_cast<void **>(&audio_settings));
+        Release(audio_settings);
+    }
+    if (SUCCEEDED(hr))
+    {
+        IUnknown *openjoc_settings = nullptr;
+        const HRESULT settings_hr =
+            filter->QueryInterface(kOpenJocSettings, reinterpret_cast<void **>(&openjoc_settings));
+        if ((!expect_stock && settings_hr != S_OK) || (expect_stock && settings_hr != E_NOINTERFACE))
+            hr = E_UNEXPECTED;
+        Release(openjoc_settings);
     }
 
     if (FAILED(hr))

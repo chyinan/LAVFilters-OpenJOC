@@ -54,6 +54,9 @@
     <ClCompile Include="OpenJocOutput.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="OpenJocShippedLayouts.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="OpenJocStrictOutput.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -96,6 +99,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="OpenJocOutput.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OpenJocShippedLayouts.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="OpenJocStrictOutput.h">

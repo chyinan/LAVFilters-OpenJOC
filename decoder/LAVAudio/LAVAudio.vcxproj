@@ -65,6 +65,9 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;LAVAUDIO_EXPORTS;$(OpenJocDefines);$(OpenJocIdentityDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories Condition="'$(EnableOpenJOC)'=='true'">$(OpenJocIncludeDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>$(OpenJocDefines);$(OpenJocIdentityDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
     <Link>
       <AdditionalDependencies>advapi32.lib;ole32.lib;winmm.lib;user32.lib;oleaut32.lib;shell32.lib;Shlwapi.lib;Comctl32.lib;version.lib;avformat-lav.lib;avutil-lav.lib;avcodec-lav.lib;swresample-lav.lib</AdditionalDependencies>
       <ModuleDefinitionFile>LAVAudio.def</ModuleDefinitionFile>
@@ -78,6 +81,9 @@
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;LAVAUDIO_EXPORTS;$(OpenJocDefines);$(OpenJocIdentityDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories Condition="'$(EnableOpenJOC)'=='true'">$(OpenJocIncludeDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>$(OpenJocDefines);$(OpenJocIdentityDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
     <Link>
       <AdditionalDependencies>advapi32.lib;ole32.lib;winmm.lib;user32.lib;oleaut32.lib;shell32.lib;Shlwapi.lib;Comctl32.lib;version.lib;avformat-lav.lib;avutil-lav.lib;avcodec-lav.lib;swresample-lav.lib</AdditionalDependencies>
       <ModuleDefinitionFile>LAVAudio.def</ModuleDefinitionFile>
@@ -106,6 +112,9 @@
     <ClCompile Include="OpenJocOutput.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="OpenJocShippedLayouts.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="OpenJocStrictOutput.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -130,6 +139,7 @@
     <ClInclude Include="OpenJocAdmission.h" />
     <ClInclude Include="OpenJocDecoder.h" />
     <ClInclude Include="OpenJocOutput.h" />
+    <ClInclude Include="OpenJocShippedLayouts.h" />
     <ClInclude Include="OpenJocStrictOutput.h" />
     <ClInclude Include="OpenJocStrictNegotiation.h" />
     <ClInclude Include="parser\dts.h" />

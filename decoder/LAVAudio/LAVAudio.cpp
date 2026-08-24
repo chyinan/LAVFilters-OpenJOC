@@ -71,6 +71,38 @@ extern "C"
 
 static DWORD get_lav_channel_layout(AVChannelLayout * layout);
 
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+namespace
+{
+constexpr wchar_t kOpenJocOutputPolicyVersionValue[] = L"OpenJocOutputPolicyVersion";
+constexpr wchar_t kOpenJocOutputPolicyValue[] = L"OpenJocOutputPolicy";
+
+bool ReadExactRegistryDword(HKEY root_key, const wchar_t *subkey, const wchar_t *value_name, DWORD *value)
+{
+    if (!value)
+        return false;
+    *value = 0;
+
+    HKEY key = nullptr;
+    const LONG open_status = RegOpenKeyExW(root_key, subkey, 0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key);
+    if (open_status != ERROR_SUCCESS)
+        return false;
+
+    DWORD type = 0;
+    DWORD size = sizeof(DWORD);
+    DWORD candidate = 0;
+    const LONG query_status =
+        RegQueryValueExW(key, value_name, nullptr, &type, reinterpret_cast<BYTE *>(&candidate), &size);
+    RegCloseKey(key);
+    if (query_status != ERROR_SUCCESS || type != REG_DWORD || size != sizeof(DWORD))
+        return false;
+
+    *value = candidate;
+    return true;
+}
+} // namespace
+#endif
+
 extern HINSTANCE g_hInst;
 
 // Constructor
@@ -195,6 +227,10 @@ HRESULT CLAVAudio::LoadDefaults()
 
     m_settings.SuppressFormatChanges = FALSE;
 
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    m_settings.OpenJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
+#endif
+
     return S_OK;
 }
 
@@ -206,11 +242,91 @@ HRESULT CLAVAudio::LoadSettings()
 {
     LoadDefaults();
     if (m_bRuntimeConfig)
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    {
+        return ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy::Stereo, true);
+    }
+#else
         return S_FALSE;
+#endif
 
     ReadSettings(HKEY_LOCAL_MACHINE);
-    return ReadSettings(HKEY_CURRENT_USER);
+    const HRESULT settings_hr = ReadSettings(HKEY_CURRENT_USER);
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    LoadOpenJocOutputPolicySettings();
+    const HRESULT policy_hr = ConfigureOpenJocOutputPolicy(m_settings.OpenJocOutputPolicy, true);
+    if (FAILED(policy_hr))
+    {
+        m_settings.OpenJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
+        ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy::Stereo, true);
+    }
+#endif
+    return settings_hr;
 }
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+HRESULT CLAVAudio::LoadOpenJocOutputPolicySettings()
+{
+    m_settings.OpenJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
+    DWORD version = 0;
+    DWORD policy_value = 0;
+    if (!ReadExactRegistryDword(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY,
+                                kOpenJocOutputPolicyVersionValue, &version) ||
+        version != LAV_OPENJOC_OUTPUT_POLICY_SCHEMA_VERSION ||
+        !ReadExactRegistryDword(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY,
+                                kOpenJocOutputPolicyValue, &policy_value))
+        return S_FALSE;
+
+    const auto policy = static_cast<LAVOpenJocOutputPolicy>(policy_value);
+    if (!FindLAVOpenJocOutputContract(policy))
+        return S_FALSE;
+    m_settings.OpenJocOutputPolicy = policy;
+    return S_OK;
+}
+
+HRESULT CLAVAudio::SaveOpenJocOutputPolicySettings(const LAVOpenJocOutputPolicy policy)
+{
+    if (m_bRuntimeConfig)
+        return S_FALSE;
+    if (!CreateRegistryKey(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY))
+        return HRESULT_FROM_WIN32(GetLastError());
+
+    HRESULT hr = S_OK;
+    CRegistry registry(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY, hr);
+    if (FAILED(hr))
+        return hr;
+    hr = registry.WriteDWORD(kOpenJocOutputPolicyVersionValue, LAV_OPENJOC_OUTPUT_POLICY_SCHEMA_VERSION);
+    if (FAILED(hr))
+        return hr;
+    return registry.WriteDWORD(kOpenJocOutputPolicyValue, static_cast<DWORD>(policy));
+}
+
+HRESULT CLAVAudio::ConfigureOpenJocOutputPolicy(const LAVOpenJocOutputPolicy policy, const bool clear_queues)
+{
+    if (!FindLAVOpenJocOutputContract(policy))
+        return E_INVALIDARG;
+
+    const LAVOpenJocOutputContract *current_contract = m_openJoc.OutputContract();
+    const bool changed = !current_contract || current_contract->policy != policy;
+    if (!m_openJoc.SetOutputPolicy(policy))
+    {
+        if (current_contract)
+            m_settings.OpenJocOutputPolicy = current_contract->policy;
+        return E_FAIL;
+    }
+
+    m_settings.OpenJocOutputPolicy = policy;
+    if (changed && clear_queues)
+    {
+        m_buff.Clear();
+        FlushOutput(FALSE);
+        m_bQueueResync = TRUE;
+        m_bResyncTimestamp = FALSE;
+    }
+
+    return S_OK;
+}
+#endif
 
 HRESULT CLAVAudio::ReadSettings(HKEY rootKey)
 {
@@ -467,7 +583,11 @@ STDMETHODIMP CLAVAudio::NonDelegatingQueryInterface(REFIID riid, void **ppv)
     *ppv = nullptr;
 
     return QI(ISpecifyPropertyPages) QI(ISpecifyPropertyPages2) QI2(ILAVAudioSettings)
-        QI2(ILAVAudioStatus) QI2(ILAVOpenJocStatus) __super::NonDelegatingQueryInterface(riid, ppv);
+        QI2(ILAVAudioStatus) QI2(ILAVOpenJocStatus)
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+            QI2(ILAVOpenJocSettings)
+#endif
+                __super::NonDelegatingQueryInterface(riid, ppv);
 }
 
 // ISpecifyPropertyPages2
@@ -535,14 +655,50 @@ HRESULT CLAVAudio::GetDRC(BOOL *pbDRCEnabled, int *piDRCLevel)
 // ILAVAudioSettings
 HRESULT CLAVAudio::SetRuntimeConfig(BOOL bRuntimeConfig)
 {
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    CAutoLock receive_lock(&m_csReceive);
+#endif
     m_bRuntimeConfig = bRuntimeConfig;
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    const HRESULT hr = LoadSettings();
+#else
     LoadSettings();
+#endif
 
     // Tray Icon is disabled by default
     SAFE_DELETE(m_pTrayIcon);
 
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    return FAILED(hr) ? hr : S_OK;
+#else
+    return S_OK;
+#endif
+}
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+HRESULT CLAVAudio::GetOutputPolicy(LAVOpenJocOutputPolicy *policy)
+{
+    CheckPointer(policy, E_POINTER);
+    CAutoLock receive_lock(&m_csReceive);
+    *policy = m_settings.OpenJocOutputPolicy;
     return S_OK;
 }
+
+HRESULT CLAVAudio::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
+{
+    if (!FindLAVOpenJocOutputContract(policy))
+        return E_INVALIDARG;
+    HRESULT hr = S_OK;
+    {
+        CAutoLock receive_lock(&m_csReceive);
+        hr = ConfigureOpenJocOutputPolicy(policy, true);
+    }
+    if (FAILED(hr))
+        return hr;
+    const HRESULT save_hr = SaveOpenJocOutputPolicySettings(policy);
+    return save_hr == S_FALSE ? S_OK : save_hr;
+}
+#endif
 
 HRESULT CLAVAudio::SetDRC(BOOL bDRCEnabled, int fDRCLevel)
 {
@@ -950,6 +1106,9 @@ HRESULT CLAVAudio::GetDecodeDetails(const char **pCodec, const char **pDecodeFor
 
 HRESULT CLAVAudio::GetOutputDetails(const char **pOutputFormat, int *pnChannels, int *pSampleRate, DWORD *pChannelMask)
 {
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    CAutoLock receive_lock(&m_csReceive);
+#endif
     if (!m_pOutput || m_pOutput->IsConnected() == FALSE)
     {
         return E_UNEXPECTED;
@@ -1015,11 +1174,17 @@ HRESULT CLAVAudio::GetChannelVolumeAverage(WORD nChannel, float *pfDb)
 
 BOOL CLAVAudio::IsOpenJocAvailable()
 {
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    CAutoLock receive_lock(&m_csReceive);
+#endif
     return m_openJoc.IsAvailable() ? TRUE : FALSE;
 }
 
 LAVOpenJocAdmissionState CLAVAudio::GetOpenJocAdmissionState()
 {
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    CAutoLock receive_lock(&m_csReceive);
+#endif
     switch (m_openJoc.State())
     {
     case LAVOpenJocState::StockEac3:

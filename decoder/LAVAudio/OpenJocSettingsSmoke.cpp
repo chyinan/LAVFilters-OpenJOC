@@ -1,0 +1,498 @@
+/*
+ * SPDX-FileCopyrightText: 2026 OpenJOC contributors
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+// Isolated COM/settings/registry integration smoke test.
+
+#include <windows.h>
+
+#include <cstdint>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
+
+#include <dshow.h>
+
+#include "LAVOpenJocSettings.h"
+
+namespace
+{
+constexpr wchar_t kPolicyKey[] = L"Software\\LAV\\Audio\\OpenJOC";
+constexpr wchar_t kParentAudioKey[] = L"Software\\LAV\\Audio";
+constexpr wchar_t kPolicyVersionValue[] = L"OpenJocOutputPolicyVersion";
+constexpr wchar_t kPolicyValue[] = L"OpenJocOutputPolicy";
+
+constexpr GUID kOpenJocLavAudio = {
+    0x27247580, 0xc701, 0x40cd, {0x88, 0x6d, 0xe6, 0x18, 0xfc, 0x8c, 0x9f, 0xff}};
+constexpr GUID kOpenJocSettingsIidOracle = {
+    0x6b97fd1c, 0xb463, 0x4b5e, {0x93, 0x49, 0xcd, 0x8b, 0x96, 0x4d, 0x6b, 0x46}};
+constexpr GUID kAudioSettings = {
+    0x4158a22b, 0x6553, 0x45d0, {0x80, 0x69, 0x24, 0x71, 0x6f, 0x8f, 0xf1, 0x71}};
+
+// SetRuntimeConfig is the first ILAVAudioSettings member after IUnknown.
+struct __declspec(novtable) ITestRuntimeSettings : IUnknown
+{
+    virtual HRESULT STDMETHODCALLTYPE SetRuntimeConfig(BOOL runtime_config) = 0;
+};
+
+template <typename T> void Release(T *&value)
+{
+    if (value)
+    {
+        value->Release();
+        value = nullptr;
+    }
+}
+
+class CurrentUserOverride final
+{
+  public:
+    CurrentUserOverride()
+    {
+        wchar_t suffix[96] = {};
+        _snwprintf_s(suffix, _TRUNCATE, L"Software\\OpenJOC\\Tests\\SettingsSmoke-%lu-%llu",
+                     static_cast<unsigned long>(GetCurrentProcessId()),
+                     static_cast<unsigned long long>(GetTickCount64()));
+        path_ = suffix;
+
+        DWORD disposition = 0;
+        status_ = RegCreateKeyExW(HKEY_CURRENT_USER, path_.c_str(), 0, nullptr, REG_OPTION_VOLATILE,
+                                  KEY_ALL_ACCESS, nullptr, &key_, &disposition);
+        if (status_ == ERROR_SUCCESS)
+        {
+            status_ = RegOverridePredefKey(HKEY_CURRENT_USER, key_);
+            overridden_ = status_ == ERROR_SUCCESS;
+        }
+        if (overridden_)
+        {
+            HKEY policy_key = nullptr;
+            DWORD disposition = 0;
+            status_ = RegCreateKeyExW(HKEY_CURRENT_USER, kPolicyKey, 0, nullptr, REG_OPTION_VOLATILE,
+                                      KEY_ALL_ACCESS, nullptr, &policy_key, &disposition);
+            if (policy_key)
+                RegCloseKey(policy_key);
+            HKEY formats_key = nullptr;
+            if (status_ == ERROR_SUCCESS)
+                status_ = RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\LAV\\Audio\\OpenJOC\\Formats", 0,
+                                          nullptr, REG_OPTION_VOLATILE, KEY_ALL_ACCESS, nullptr,
+                                          &formats_key, &disposition);
+            if (formats_key)
+                RegCloseKey(formats_key);
+        }
+    }
+
+    ~CurrentUserOverride()
+    {
+        Restore();
+    }
+
+    LONG Restore()
+    {
+        if (!overridden_)
+            return restore_status_;
+        restore_status_ = RegOverridePredefKey(HKEY_CURRENT_USER, nullptr);
+        if (restore_status_ != ERROR_SUCCESS)
+            return restore_status_;
+        overridden_ = false;
+        if (key_)
+        {
+            RegCloseKey(key_);
+            key_ = nullptr;
+        }
+        if (!path_.empty())
+            RegDeleteTreeW(HKEY_CURRENT_USER, path_.c_str());
+        return restore_status_;
+    }
+
+    bool ready() const { return overridden_ && status_ == ERROR_SUCCESS; }
+    LONG status() const { return status_; }
+
+  private:
+    HKEY key_ = nullptr;
+    std::wstring path_;
+    LONG status_ = ERROR_INVALID_FUNCTION;
+    LONG restore_status_ = ERROR_INVALID_FUNCTION;
+    bool overridden_ = false;
+};
+
+class FilterModule final
+{
+  public:
+    explicit FilterModule(const wchar_t *path)
+    {
+        std::wstring directory(path);
+        const std::size_t separator = directory.find_last_of(L"\\/");
+        if (separator != std::wstring::npos)
+            SetDllDirectoryW(directory.substr(0, separator).c_str());
+
+        module_ = LoadLibraryW(path);
+        if (!module_)
+            return;
+        auto get_class_object = reinterpret_cast<HRESULT(STDAPICALLTYPE *)(REFCLSID, REFIID, LPVOID *)>(
+            GetProcAddress(module_, "DllGetClassObject"));
+        if (get_class_object)
+            status_ = get_class_object(kOpenJocLavAudio, IID_IClassFactory,
+                                       reinterpret_cast<void **>(&factory_));
+    }
+
+    ~FilterModule()
+    {
+        Release(factory_);
+        if (module_)
+            FreeLibrary(module_);
+        SetDllDirectoryW(nullptr);
+    }
+
+    HRESULT Create(ILAVOpenJocSettings **settings, ITestRuntimeSettings **runtime = nullptr) const
+    {
+        if (!settings)
+            return E_POINTER;
+        *settings = nullptr;
+        if (runtime)
+            *runtime = nullptr;
+        if (FAILED(status_) || !factory_)
+            return FAILED(status_) ? status_ : E_FAIL;
+
+        IBaseFilter *filter = nullptr;
+        HRESULT hr = factory_->CreateInstance(nullptr, IID_IBaseFilter,
+                                              reinterpret_cast<void **>(&filter));
+        if (SUCCEEDED(hr))
+            hr = filter->QueryInterface(__uuidof(ILAVOpenJocSettings), reinterpret_cast<void **>(settings));
+        if (SUCCEEDED(hr) && runtime)
+            hr = filter->QueryInterface(kAudioSettings, reinterpret_cast<void **>(runtime));
+        Release(filter);
+        if (FAILED(hr))
+        {
+            Release(*settings);
+            if (runtime)
+                Release(*runtime);
+        }
+        return hr;
+    }
+
+  private:
+    HMODULE module_ = nullptr;
+    IClassFactory *factory_ = nullptr;
+    HRESULT status_ = E_FAIL;
+};
+
+bool ResetPolicyKey()
+{
+    HKEY key = nullptr;
+    const LONG open_status = RegOpenKeyExW(HKEY_CURRENT_USER, kPolicyKey, 0, KEY_SET_VALUE, &key);
+    if (open_status != ERROR_SUCCESS)
+        return false;
+    const LONG version_status = RegDeleteValueW(key, kPolicyVersionValue);
+    const LONG policy_status = RegDeleteValueW(key, kPolicyValue);
+    RegCloseKey(key);
+    return (version_status == ERROR_SUCCESS || version_status == ERROR_FILE_NOT_FOUND) &&
+           (policy_status == ERROR_SUCCESS || policy_status == ERROR_FILE_NOT_FOUND);
+}
+
+bool WriteRawValue(const wchar_t *name, const DWORD type, const void *data, const DWORD size)
+{
+    HKEY key = nullptr;
+    LONG status = RegOpenKeyExW(HKEY_CURRENT_USER, kPolicyKey, 0, KEY_SET_VALUE, &key);
+    if (status == ERROR_SUCCESS)
+        status = RegSetValueExW(key, name, 0, type, static_cast<const BYTE *>(data), size);
+    if (key)
+        RegCloseKey(key);
+    return status == ERROR_SUCCESS;
+}
+
+bool WriteDword(const wchar_t *name, const DWORD value)
+{
+    return WriteRawValue(name, REG_DWORD, &value, sizeof(value));
+}
+
+bool ValueIsExactDword(const wchar_t *subkey, const wchar_t *name, const DWORD expected)
+{
+    HKEY key = nullptr;
+    LONG status = RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_QUERY_VALUE, &key);
+    DWORD type = 0;
+    DWORD size = sizeof(DWORD);
+    DWORD value = 0;
+    if (status == ERROR_SUCCESS)
+        status = RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE *>(&value), &size);
+    if (key)
+        RegCloseKey(key);
+    return status == ERROR_SUCCESS && type == REG_DWORD && size == sizeof(DWORD) && value == expected;
+}
+
+bool ValueIsAbsent(const wchar_t *subkey, const wchar_t *name)
+{
+    HKEY key = nullptr;
+    LONG status = RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_QUERY_VALUE, &key);
+    if (status == ERROR_SUCCESS)
+        status = RegQueryValueExW(key, name, nullptr, nullptr, nullptr, nullptr);
+    if (key)
+        RegCloseKey(key);
+    return status == ERROR_FILE_NOT_FOUND || status == ERROR_PATH_NOT_FOUND;
+}
+
+bool ExpectLoadedPolicy(const FilterModule &module, const LAVOpenJocOutputPolicy expected)
+{
+    ILAVOpenJocSettings *settings = nullptr;
+    HRESULT hr = module.Create(&settings);
+    LAVOpenJocOutputPolicy actual = LAVOpenJocOutputPolicy::Layout714;
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputPolicy(&actual);
+    Release(settings);
+    return SUCCEEDED(hr) && actual == expected;
+}
+
+bool TestDefaultAndSetters(const FilterModule &module)
+{
+    if (!ResetPolicyKey())
+        return false;
+
+    ILAVOpenJocSettings *settings = nullptr;
+    HRESULT hr = module.Create(&settings);
+    LAVOpenJocOutputPolicy actual = LAVOpenJocOutputPolicy::Layout714;
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputPolicy(&actual);
+    if (FAILED(hr) || actual != LAVOpenJocOutputPolicy::Stereo || settings->GetOutputPolicy(nullptr) != E_POINTER)
+    {
+        std::fwprintf(stderr, L"default contract detail: hr=0x%08lx policy=%lu settings=%p\n",
+                      static_cast<unsigned long>(hr), static_cast<unsigned long>(actual), settings);
+        Release(settings);
+        return false;
+    }
+
+    for (std::uint32_t value = 0; value <= 6; ++value)
+    {
+        const auto policy = static_cast<LAVOpenJocOutputPolicy>(value);
+        if (settings->SetOutputPolicy(policy) != S_OK ||
+            settings->GetOutputPolicy(&actual) != S_OK || actual != policy)
+        {
+            std::fwprintf(stderr, L"setter contract detail: requested=%lu actual=%lu\n",
+                          static_cast<unsigned long>(policy), static_cast<unsigned long>(actual));
+            Release(settings);
+            return false;
+        }
+    }
+
+    const HRESULT invalid_hr = settings->SetOutputPolicy(static_cast<LAVOpenJocOutputPolicy>(0xffffffffu));
+    const HRESULT get_hr = settings->GetOutputPolicy(&actual);
+    Release(settings);
+    if (!(invalid_hr == E_INVALIDARG && get_hr == S_OK && actual == LAVOpenJocOutputPolicy::Layout714))
+        std::fwprintf(stderr, L"invalid contract detail: set=0x%08lx get=0x%08lx actual=%lu\n",
+                      static_cast<unsigned long>(invalid_hr), static_cast<unsigned long>(get_hr),
+                      static_cast<unsigned long>(actual));
+    return invalid_hr == E_INVALIDARG && get_hr == S_OK && actual == LAVOpenJocOutputPolicy::Layout714 &&
+           ValueIsExactDword(kPolicyKey, kPolicyVersionValue, 1) &&
+           ValueIsExactDword(kPolicyKey, kPolicyValue, 6) &&
+           ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Layout714);
+}
+
+bool TestPersistenceMatrix(const FilterModule &module)
+{
+    if (!ResetPolicyKey() || !ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Stereo))
+        return false;
+    if (!ResetPolicyKey() || !WriteDword(kPolicyValue, 6) ||
+        !ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Stereo))
+        return false;
+    if (!ResetPolicyKey() || !WriteDword(kPolicyVersionValue, 1) ||
+        !ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Stereo))
+        return false;
+
+    struct Case
+    {
+        DWORD version;
+        DWORD policy;
+    };
+    constexpr Case fallback_cases[] = {{0, 6}, {2, 6}, {1, 7}, {1, 0xffffffffu}};
+    for (const auto &test : fallback_cases)
+    {
+        if (!ResetPolicyKey() || !WriteDword(kPolicyVersionValue, test.version) ||
+            !WriteDword(kPolicyValue, test.policy) ||
+            !ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Stereo))
+            return false;
+    }
+
+    const DWORD version = 1;
+    const DWORD policy = 6;
+    const WORD truncated = 1;
+    if (!ResetPolicyKey() || !WriteRawValue(kPolicyVersionValue, REG_BINARY, &version, sizeof(version)) ||
+        !WriteDword(kPolicyValue, policy) || !ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Stereo))
+        return false;
+    if (!ResetPolicyKey() || !WriteDword(kPolicyVersionValue, version) ||
+        !WriteRawValue(kPolicyValue, REG_BINARY, &policy, sizeof(policy)) ||
+        !ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Stereo))
+        return false;
+    if (!ResetPolicyKey() || !WriteRawValue(kPolicyVersionValue, REG_DWORD, &truncated, sizeof(truncated)) ||
+        !WriteDword(kPolicyValue, policy) || !ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Stereo))
+        return false;
+    if (!ResetPolicyKey() || !WriteDword(kPolicyVersionValue, version) ||
+        !WriteRawValue(kPolicyValue, REG_DWORD, &truncated, sizeof(truncated)) ||
+        !ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Stereo))
+        return false;
+
+    return ResetPolicyKey() && WriteDword(kPolicyVersionValue, version) && WriteDword(kPolicyValue, policy) &&
+           ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Layout714);
+}
+
+bool TestRoundTripAndIsolation(const FilterModule &module)
+{
+    if (!ResetPolicyKey())
+        return false;
+    ILAVOpenJocSettings *settings = nullptr;
+    HRESULT hr = module.Create(&settings);
+    if (SUCCEEDED(hr))
+        hr = settings->SetOutputPolicy(LAVOpenJocOutputPolicy::Layout714);
+    Release(settings);
+    if (FAILED(hr) || !ValueIsExactDword(kPolicyKey, kPolicyVersionValue, 1) ||
+        !ValueIsExactDword(kPolicyKey, kPolicyValue, 6) ||
+        !ValueIsAbsent(kParentAudioKey, kPolicyVersionValue) || !ValueIsAbsent(kParentAudioKey, kPolicyValue))
+        return false;
+    return ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Layout714);
+}
+
+bool TestRuntimeConfigDoesNotWrite(const FilterModule &module)
+{
+    if (!ResetPolicyKey() || !WriteDword(kPolicyVersionValue, 1) || !WriteDword(kPolicyValue, 6))
+        return false;
+    ILAVOpenJocSettings *settings = nullptr;
+    ITestRuntimeSettings *runtime = nullptr;
+    HRESULT hr = module.Create(&settings, &runtime);
+    LAVOpenJocOutputPolicy actual = LAVOpenJocOutputPolicy::Stereo;
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputPolicy(&actual);
+    if (SUCCEEDED(hr) && actual != LAVOpenJocOutputPolicy::Layout714)
+        hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr))
+        hr = runtime->SetRuntimeConfig(TRUE);
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputPolicy(&actual);
+    if (SUCCEEDED(hr) && actual != LAVOpenJocOutputPolicy::Stereo)
+        hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr))
+        hr = settings->SetOutputPolicy(LAVOpenJocOutputPolicy::Layout514);
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputPolicy(&actual);
+    if (SUCCEEDED(hr) && actual != LAVOpenJocOutputPolicy::Layout514)
+        hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr))
+        hr = runtime->SetRuntimeConfig(FALSE);
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputPolicy(&actual);
+    Release(runtime);
+    Release(settings);
+    return SUCCEEDED(hr) && actual == LAVOpenJocOutputPolicy::Layout714 &&
+           ValueIsExactDword(kPolicyKey, kPolicyVersionValue, 1) &&
+           ValueIsExactDword(kPolicyKey, kPolicyValue, 6) &&
+           ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Layout714);
+}
+
+bool TestPolicyReloadClearsIncompatibleQueues()
+{
+    const std::filesystem::path source_path = std::filesystem::path(__FILE__).parent_path() / "LAVAudio.cpp";
+    std::ifstream source_file(source_path, std::ios::binary);
+    if (!source_file.good())
+        return false;
+    const std::string source((std::istreambuf_iterator<char>(source_file)), std::istreambuf_iterator<char>());
+
+    const std::size_t load_begin = source.find("HRESULT CLAVAudio::LoadSettings()");
+    const std::size_t load_end = source.find("HRESULT CLAVAudio::LoadOpenJocOutputPolicySettings()", load_begin);
+    if (load_begin == std::string::npos || load_end == std::string::npos)
+        return false;
+    const std::string load = source.substr(load_begin, load_end - load_begin);
+    if (load.find("ConfigureOpenJocOutputPolicy(m_settings.OpenJocOutputPolicy, true)") == std::string::npos ||
+        load.find("ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy::Stereo, true)") == std::string::npos)
+        return false;
+
+    const std::size_t configure_begin = source.find("HRESULT CLAVAudio::ConfigureOpenJocOutputPolicy(");
+    const std::size_t configure_end = source.find("HRESULT CLAVAudio::ReadSettings(", configure_begin);
+    if (configure_begin == std::string::npos || configure_end == std::string::npos)
+        return false;
+    const std::string configure = source.substr(configure_begin, configure_end - configure_begin);
+    const std::size_t decoder_transition = configure.find("m_openJoc.SetOutputPolicy(policy)");
+    const std::size_t changed = configure.find("if (changed && clear_queues)");
+    const std::size_t clear_input = configure.find("m_buff.Clear();", changed);
+    const std::size_t clear_output = configure.find("FlushOutput(FALSE);", clear_input);
+    const std::size_t queue_resync = configure.find("m_bQueueResync = TRUE;", clear_output);
+    const std::size_t timestamp_resync = configure.find("m_bResyncTimestamp = FALSE;", queue_resync);
+    if (decoder_transition == std::string::npos || changed == std::string::npos ||
+        clear_input == std::string::npos || clear_output == std::string::npos ||
+        queue_resync == std::string::npos || timestamp_resync == std::string::npos ||
+        !(decoder_transition < changed && changed < clear_input && clear_input < clear_output &&
+          clear_output < queue_resync && queue_resync < timestamp_resync))
+        return false;
+
+    const std::size_t flush_begin = source.find("HRESULT CLAVAudio::FlushOutput(BOOL bDeliver)");
+    const std::size_t flush_end = source.find("static HRESULT CreateOpenJocStrictDirectShowMediaType", flush_begin);
+    if (flush_begin == std::string::npos || flush_end == std::string::npos)
+        return false;
+    const std::string flush = source.substr(flush_begin, flush_end - flush_begin);
+    return flush.find("m_OutputQueue.nSamples = 0;") != std::string::npos &&
+           flush.find("m_OutputQueue.bBuffer->SetSize(0);") != std::string::npos &&
+           flush.find("m_OutputQueue.rtStart = AV_NOPTS_VALUE;") != std::string::npos &&
+           flush.find("m_OutputQueue.openjoc_contract = nullptr;") != std::string::npos;
+}
+} // namespace
+
+int wmain(int argc, wchar_t **argv)
+{
+    static_assert(sizeof(LAVOpenJocOutputPolicy) == sizeof(std::uint32_t));
+    if (!IsEqualGUID(__uuidof(ILAVOpenJocSettings), kOpenJocSettingsIidOracle))
+    {
+        std::fwprintf(stderr, L"ILAVOpenJocSettings IID oracle mismatch\n");
+        return 1;
+    }
+    if (argc != 2)
+    {
+        std::fwprintf(stderr, L"usage: OpenJocSettingsSmoke.exe <OpenJOC LAVAudio.ax>\n");
+        return 2;
+    }
+    if (!TestPolicyReloadClearsIncompatibleQueues())
+    {
+        std::fwprintf(stderr, L"policy reload queue-reset source contract failed\n");
+        return 1;
+    }
+
+    CurrentUserOverride registry_override;
+    if (!registry_override.ready())
+    {
+        std::fwprintf(stderr, L"RegOverridePredefKey setup failed: %ld\n", registry_override.status());
+        return 1;
+    }
+
+    int test_result = 0;
+    {
+        FilterModule module(argv[1]);
+        if (!TestDefaultAndSetters(module))
+        {
+            std::fwprintf(stderr, L"default/setter policy contract failed\n");
+            test_result = 1;
+        }
+        else if (!TestPersistenceMatrix(module))
+        {
+            std::fwprintf(stderr, L"strict registry policy matrix failed\n");
+            test_result = 1;
+        }
+        else if (!TestRoundTripAndIsolation(module))
+        {
+            std::fwprintf(stderr, L"policy round-trip/isolation failed\n");
+            test_result = 1;
+        }
+        else if (!TestRuntimeConfigDoesNotWrite(module))
+        {
+            std::fwprintf(stderr, L"runtime-config registry isolation failed\n");
+            test_result = 1;
+        }
+    }
+
+    if (registry_override.Restore() != ERROR_SUCCESS)
+    {
+        std::fwprintf(stderr, L"RegOverridePredefKey restore failed\n");
+        return 1;
+    }
+    if (test_result != 0)
+        return test_result;
+
+    std::wprintf(L"OpenJOC settings smoke passed\n");
+    return 0;
+}

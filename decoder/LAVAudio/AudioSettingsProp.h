@@ -19,9 +19,21 @@
 
 #pragma once
 
+// pattern: Imperative Shell
+
 #include "LAVAudioSettings.h"
+#include "LAVOpenJocSettings.h"
 #include "BaseDSPropPage.h"
 #include "Media.h"
+
+inline constexpr int LAV_AUDIO_STATUS_METER_CAPACITY = 8;
+
+inline constexpr int LAVAudioStatusMeterCount(const int output_channels) noexcept
+{
+    return output_channels <= 0 ? 0 : (output_channels < LAV_AUDIO_STATUS_METER_CAPACITY
+                                           ? output_channels
+                                           : LAV_AUDIO_STATUS_METER_CAPACITY);
+}
 
 // {2D8F1801-A70D-48F4-B76B-7F5AE022AB54}
 DEFINE_GUID(CLSID_LAVAudioSettingsProp, 0x2d8f1801, 0xa70d, 0x48f4, 0xb7, 0x6b, 0x7f, 0x5a, 0xe0, 0x22, 0xab, 0x54);
@@ -61,6 +73,10 @@ class CLAVAudioSettingsProp : public CBaseDSPropPage
 
   private:
     ILAVAudioSettings *m_pAudioSettings = nullptr;
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    ILAVOpenJocSettings *m_pOpenJocSettings = nullptr;
+    LAVOpenJocOutputPolicy m_openJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
+#endif
 
     BOOL m_bDRCEnabled;
     int m_iDRCLevel;
@@ -160,8 +176,16 @@ class CLAVAudioStatusProp : public CBaseDSPropPage
 
   private:
     void UpdateVolumeDisplay();
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    void UpdateMeterLayout(int output_channels, DWORD output_mask);
+    void UpdateOpenJocStatusDisplay();
+#endif
 
   private:
     ILAVAudioStatus *m_pAudioStatus = nullptr;
-    int m_nChannels = 0;
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    ILAVOpenJocSettings *m_pOpenJocSettings = nullptr;
+    ILAVOpenJocStatus *m_pOpenJocStatus = nullptr;
+#endif
+    int m_nMeterChannels = 0;
 };

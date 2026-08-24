@@ -28,6 +28,7 @@
 #pragma once
 
 #include "LAVAudioSettings.h"
+#include "LAVOpenJocSettings.h"
 #include "FloatingAverage.h"
 #include "Media.h"
 #include "BitstreamParser.h"
@@ -105,6 +106,9 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     , public ILAVAudioSettings
     , public ILAVAudioStatus
     , public ILAVOpenJocStatus
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    , public ILAVOpenJocSettings
+#endif
 {
   public:
     CLAVAudio(LPUNKNOWN pUnk, HRESULT *phr);
@@ -176,6 +180,12 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     STDMETHODIMP_(BOOL) IsOpenJocAvailable();
     STDMETHODIMP_(LAVOpenJocAdmissionState) GetOpenJocAdmissionState();
 
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    // ILAVOpenJocSettings
+    STDMETHODIMP GetOutputPolicy(LAVOpenJocOutputPolicy *policy);
+    STDMETHODIMP SetOutputPolicy(LAVOpenJocOutputPolicy policy);
+#endif
+
     // CTransformFilter
     HRESULT CheckInputType(const CMediaType *mtIn);
     HRESULT CheckTransform(const CMediaType *mtIn, const CMediaType *mtOut);
@@ -217,6 +227,11 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     HRESULT ReadSettings(HKEY rootKey);
     HRESULT LoadSettings();
     HRESULT SaveSettings();
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    HRESULT LoadOpenJocOutputPolicySettings();
+    HRESULT SaveOpenJocOutputPolicySettings(LAVOpenJocOutputPolicy policy);
+    HRESULT ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy policy, bool clear_queues);
+#endif
 
     STDMETHODIMP CreateTrayIcon();
 
@@ -347,6 +362,9 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
         DWORD MixingLFELevel;
 
         BOOL SuppressFormatChanges;
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+        LAVOpenJocOutputPolicy OpenJocOutputPolicy;
+#endif
     } m_settings;
     BOOL m_bRuntimeConfig = FALSE;
 

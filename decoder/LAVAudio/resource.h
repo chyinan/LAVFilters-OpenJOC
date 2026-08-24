@@ -109,6 +109,10 @@
 #define IDC_OUT_S16_DITHER              1132
 #define IDC_OUTPUT51_LEGACY             1133
 #define IDC_BS_FALLBACK                 1135
+#define IDC_OPENJOC_OUTPUT_POLICY       1136
+#define IDC_LBL_OPENJOC_OUTPUT_POLICY   1137
+#define IDC_OPENJOC_STATUS_POLICY       1138
+#define IDC_OPENJOC_STATUS_ADMISSION    1139
 
 // Next default values for new objects
 // 
@@ -116,7 +120,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        106
 #define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1134
+#define _APS_NEXT_CONTROL_VALUE         1140
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

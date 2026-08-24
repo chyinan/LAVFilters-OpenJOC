@@ -17,6 +17,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+// pattern: Imperative Shell
+
 /*
  * OpenJOC downstream modification (openjoc-0.10.0, 2026-08-22):
  * show the side-by-side OpenJOC filter identity in the settings UI.
@@ -25,6 +27,8 @@
 #include "stdafx.h"
 #include "AudioSettingsProp.h"
 #include "Media.h"
+#include "OpenJocOutput.h"
+#include "OpenJocShippedLayouts.h"
 
 #include <Commctrl.h>
 
@@ -47,12 +51,22 @@ HRESULT CLAVAudioSettingsProp::OnConnect(IUnknown *pUnk)
         return E_POINTER;
     }
     ASSERT(m_pAudioSettings == nullptr);
-    return pUnk->QueryInterface(&m_pAudioSettings);
+    HRESULT hr = pUnk->QueryInterface(&m_pAudioSettings);
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    if (SUCCEEDED(hr))
+        hr = pUnk->QueryInterface(&m_pOpenJocSettings);
+    if (FAILED(hr))
+        SafeRelease(&m_pAudioSettings);
+#endif
+    return hr;
 }
 
 HRESULT CLAVAudioSettingsProp::OnDisconnect()
 {
     SafeRelease(&m_pAudioSettings);
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    SafeRelease(&m_pOpenJocSettings);
+#endif
     return S_OK;
 }
 
@@ -134,6 +148,22 @@ HRESULT CLAVAudioSettingsProp::OnApplyChanges()
 
     bFlag = (BOOL)SendDlgItemMessage(m_Dlg, IDC_TRAYICON, BM_GETCHECK, 0, 0);
     m_pAudioSettings->SetTrayIcon(bFlag);
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    const LRESULT selected_index = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETCURSEL, 0, 0);
+    if (selected_index != CB_ERR)
+    {
+        const LRESULT item_data =
+            SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETITEMDATA, selected_index, 0);
+        const auto policy = static_cast<LAVOpenJocOutputPolicy>(static_cast<std::uint32_t>(item_data));
+        if (item_data == CB_ERR || !IsLAVOpenJocOutputPolicyShipped(policy) ||
+            !FindLAVOpenJocOutputContract(policy))
+            return E_UNEXPECTED;
+        const HRESULT policy_hr = m_pOpenJocSettings->SetOutputPolicy(policy);
+        if (SUCCEEDED(hr) && FAILED(policy_hr))
+            hr = policy_hr;
+    }
+#endif
 
     LoadData();
 
@@ -226,6 +256,34 @@ HRESULT CLAVAudioSettingsProp::OnActivate()
         SendDlgItemMessage(m_Dlg, IDC_DELAY, WM_SETTEXT, 0, (LPARAM)stringBuffer);
 
         SendDlgItemMessage(m_Dlg, IDC_TRAYICON, BM_SETCHECK, m_TrayIcon, 0);
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_RESETCONTENT, 0, 0);
+        std::size_t shipped_count = 0;
+        const LAVOpenJocOutputPolicy *shipped = GetLAVOpenJocShippedOutputPolicies(&shipped_count);
+        LRESULT selected_index = CB_ERR;
+        for (std::size_t index = 0; index < shipped_count; ++index)
+        {
+            const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(shipped[index]);
+            if (!contract)
+                continue;
+            ATL::CA2W label(contract->property_page_label);
+            const LRESULT combo_index =
+                SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_ADDSTRING, 0, (LPARAM)(LPCWSTR)label);
+            if (combo_index == CB_ERR || combo_index == CB_ERRSPACE)
+                return E_OUTOFMEMORY;
+            const LRESULT set_result =
+                SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_SETITEMDATA, combo_index,
+                                   static_cast<LPARAM>(static_cast<std::uint32_t>(shipped[index])));
+            const LRESULT stored_data =
+                SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETITEMDATA, combo_index, 0);
+            if (set_result == CB_ERR || stored_data != static_cast<LRESULT>(static_cast<std::uint32_t>(shipped[index])))
+                return E_UNEXPECTED;
+            if (shipped[index] == m_openJocOutputPolicy)
+                selected_index = combo_index;
+        }
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_SETCURSEL, selected_index, 0);
+#endif
     }
 
     return hr;
@@ -252,6 +310,10 @@ HRESULT CLAVAudioSettingsProp::LoadData()
     m_pAudioSettings->GetAudioDelay(&m_bAudioDelay, &m_iAudioDelay);
 
     m_TrayIcon = m_pAudioSettings->GetTrayIcon();
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    hr = m_pOpenJocSettings->GetOutputPolicy(&m_openJocOutputPolicy);
+#endif
 
     return hr;
 }
@@ -414,6 +476,12 @@ INT_PTR CLAVAudioSettingsProp::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wPa
             if (bFlag != m_TrayIcon)
                 SetDirty();
         }
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+        else if (LOWORD(wParam) == IDC_OPENJOC_OUTPUT_POLICY && HIWORD(wParam) == CBN_SELCHANGE)
+        {
+            SetDirty();
+        }
+#endif
 
         break;
     case WM_HSCROLL:
@@ -876,11 +944,11 @@ INT_PTR CLAVAudioFormatsProp::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wPar
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Audio Status Panel
 
-#define MAX_CHANNELS 8
-static int iddVolumeControls[MAX_CHANNELS] = {IDC_VOLUME1, IDC_VOLUME2, IDC_VOLUME3, IDC_VOLUME4,
-                                              IDC_VOLUME5, IDC_VOLUME6, IDC_VOLUME7, IDC_VOLUME8};
-static int iddVolumeDescs[MAX_CHANNELS] = {IDC_VOLUME1_DESC, IDC_VOLUME2_DESC, IDC_VOLUME3_DESC, IDC_VOLUME4_DESC,
-                                           IDC_VOLUME5_DESC, IDC_VOLUME6_DESC, IDC_VOLUME7_DESC, IDC_VOLUME8_DESC};
+static int iddVolumeControls[LAV_AUDIO_STATUS_METER_CAPACITY] = {
+    IDC_VOLUME1, IDC_VOLUME2, IDC_VOLUME3, IDC_VOLUME4, IDC_VOLUME5, IDC_VOLUME6, IDC_VOLUME7, IDC_VOLUME8};
+static int iddVolumeDescs[LAV_AUDIO_STATUS_METER_CAPACITY] = {
+    IDC_VOLUME1_DESC, IDC_VOLUME2_DESC, IDC_VOLUME3_DESC, IDC_VOLUME4_DESC,
+    IDC_VOLUME5_DESC, IDC_VOLUME6_DESC, IDC_VOLUME7_DESC, IDC_VOLUME8_DESC};
 
 CLAVAudioStatusProp::CLAVAudioStatusProp(LPUNKNOWN pUnk, HRESULT *phr)
     : CBaseDSPropPage(NAME("LAVCAudioStatusProp"), pUnk, IDD_PROPPAGE_STATUS, IDS_STATUS)
@@ -898,12 +966,29 @@ HRESULT CLAVAudioStatusProp::OnConnect(IUnknown *pUnk)
         return E_POINTER;
     }
     ASSERT(m_pAudioStatus == nullptr);
-    return pUnk->QueryInterface(&m_pAudioStatus);
+    HRESULT hr = pUnk->QueryInterface(&m_pAudioStatus);
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    if (SUCCEEDED(hr))
+        hr = pUnk->QueryInterface(&m_pOpenJocSettings);
+    if (SUCCEEDED(hr))
+        hr = pUnk->QueryInterface(&m_pOpenJocStatus);
+    if (FAILED(hr))
+    {
+        SafeRelease(&m_pAudioStatus);
+        SafeRelease(&m_pOpenJocSettings);
+        SafeRelease(&m_pOpenJocStatus);
+    }
+#endif
+    return hr;
 }
 
 HRESULT CLAVAudioStatusProp::OnDisconnect()
 {
     SafeRelease(&m_pAudioStatus);
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    SafeRelease(&m_pOpenJocSettings);
+    SafeRelease(&m_pOpenJocStatus);
+#endif
     return S_OK;
 }
 
@@ -919,7 +1004,7 @@ HRESULT CLAVAudioStatusProp::OnActivate()
     }
     ASSERT(m_pAudioStatus != nullptr);
 
-    m_nChannels = 0;
+    m_nMeterChannels = 0;
 
     const char *codec = nullptr;
     const char *decodeFormat = nullptr;
@@ -948,6 +1033,9 @@ HRESULT CLAVAudioStatusProp::OnActivate()
     int nOutputChannels = 0;
     int nOutputSampleRate = 0;
     DWORD dwOutputChannelMask = 0;
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    UpdateOpenJocStatusDisplay();
+#else
     hr = m_pAudioStatus->GetOutputDetails(&outputFormat, &nOutputChannels, &nOutputSampleRate, &dwOutputChannelMask);
     if (SUCCEEDED(hr))
     {
@@ -967,7 +1055,7 @@ HRESULT CLAVAudioStatusProp::OnActivate()
             _snwprintf_s(buffer, _TRUNCATE, L"%S", outputFormat);
             SendDlgItemMessage(m_Dlg, IDC_OUTPUT_FORMAT, WM_SETTEXT, 0, (LPARAM)buffer);
 
-            m_nChannels = nOutputChannels;
+            m_nMeterChannels = LAVAudioStatusMeterCount(nOutputChannels);
         }
         else
         {
@@ -975,22 +1063,25 @@ HRESULT CLAVAudioStatusProp::OnActivate()
             SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CODEC, WM_SETTEXT, 0, (LPARAM)buffer);
         }
     }
+#endif
 
     SetTimer(m_Dlg, 1, 250, nullptr);
     m_pAudioStatus->EnableVolumeStats();
 
+#if !defined(LAV_OPENJOC_SIDE_BY_SIDE)
     WCHAR chBuffer[5];
     if (dwOutputChannelMask == 0 && nOutputChannels != 0)
     {
         // 0x4 is only front center, 0x3 is front left+right
         dwOutputChannelMask = nOutputChannels == 1 ? 0x4 : 0x3;
     }
-    for (int i = 0; i < MAX_CHANNELS; ++i)
+    for (int i = 0; i < LAV_AUDIO_STATUS_METER_CAPACITY; ++i)
     {
         SendDlgItemMessage(m_Dlg, iddVolumeControls[i], PBM_SETRANGE, 0, MAKELPARAM(0, 50));
         _snwprintf_s(chBuffer, _TRUNCATE, L"%S", get_channel_desc(get_flag_from_channel(dwOutputChannelMask, i)));
         SendDlgItemMessage(m_Dlg, iddVolumeDescs[i], WM_SETTEXT, 0, (LPARAM)chBuffer);
     }
+#endif
 
     return hr;
 }
@@ -1004,7 +1095,7 @@ HRESULT CLAVAudioStatusProp::OnDeactivate()
 
 void CLAVAudioStatusProp::UpdateVolumeDisplay()
 {
-    for (int i = 0; i < m_nChannels; ++i)
+    for (int i = 0; i < m_nMeterChannels; ++i)
     {
         float fDB = 0.0f;
         if (SUCCEEDED(m_pAudioStatus->GetChannelVolumeAverage(i, &fDB)))
@@ -1019,11 +1110,95 @@ void CLAVAudioStatusProp::UpdateVolumeDisplay()
     }
 }
 
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+void CLAVAudioStatusProp::UpdateMeterLayout(const int output_channels, DWORD output_mask)
+{
+    m_nMeterChannels = LAVAudioStatusMeterCount(output_channels);
+    if (output_mask == 0 && output_channels != 0)
+    {
+        // 0x4 is only front center, 0x3 is front left+right.
+        output_mask = output_channels == 1 ? 0x4 : 0x3;
+    }
+
+    for (int index = 0; index < LAV_AUDIO_STATUS_METER_CAPACITY; ++index)
+    {
+        SendDlgItemMessage(m_Dlg, iddVolumeControls[index], PBM_SETRANGE, 0, MAKELPARAM(0, 50));
+        WCHAR description[5] = {};
+        if (index < m_nMeterChannels)
+            _snwprintf_s(description, _TRUNCATE, L"%S", get_channel_desc(get_flag_from_channel(output_mask, index)));
+        else
+            SendDlgItemMessage(m_Dlg, iddVolumeControls[index], PBM_SETPOS, 0, 0);
+        SendDlgItemMessage(m_Dlg, iddVolumeDescs[index], WM_SETTEXT, 0, (LPARAM)description);
+    }
+}
+
+void CLAVAudioStatusProp::UpdateOpenJocStatusDisplay()
+{
+    LAVOpenJocOutputPolicy policy = LAVOpenJocOutputPolicy::Stereo;
+    if (SUCCEEDED(m_pOpenJocSettings->GetOutputPolicy(&policy)))
+    {
+        const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
+        ATL::CA2W label(contract ? contract->property_page_label : "Invalid");
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_POLICY, WM_SETTEXT, 0, (LPARAM)(LPCWSTR)label);
+    }
+
+    const wchar_t *admission = L"Undecided";
+    switch (m_pOpenJocStatus->GetOpenJocAdmissionState())
+    {
+    case LAVOpenJocAdmissionStockEac3: admission = L"StockEac3"; break;
+    case LAVOpenJocAdmissionOpenJoc: admission = L"OpenJoc"; break;
+    case LAVOpenJocAdmissionUndecided:
+    default: break;
+    }
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_ADMISSION, WM_SETTEXT, 0, (LPARAM)admission);
+
+    const char *format = nullptr;
+    int channels = 0;
+    int sample_rate = 0;
+    DWORD mask = 0;
+    const HRESULT hr = m_pAudioStatus->GetOutputDetails(&format, &channels, &sample_rate, &mask);
+    if (SUCCEEDED(hr))
+    {
+        WCHAR buffer[100] = {};
+        if (hr == S_OK)
+        {
+            _snwprintf_s(buffer, _TRUNCATE, L"%d / 0x%x", channels, mask);
+            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CHANNEL, WM_SETTEXT, 0, (LPARAM)buffer);
+            _snwprintf_s(buffer, _TRUNCATE, L"%d", sample_rate);
+            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_SAMPLERATE, WM_SETTEXT, 0, (LPARAM)buffer);
+            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CODEC, WM_SETTEXT, 0, (LPARAM)L"PCM");
+            _snwprintf_s(buffer, _TRUNCATE, L"%S", format ? format : "");
+            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_FORMAT, WM_SETTEXT, 0, (LPARAM)buffer);
+        }
+        else
+        {
+            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CODEC, WM_SETTEXT, 0, (LPARAM)L"Bitstreaming");
+            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CHANNEL, WM_SETTEXT, 0, (LPARAM)L"");
+            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_SAMPLERATE, WM_SETTEXT, 0, (LPARAM)L"");
+            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_FORMAT, WM_SETTEXT, 0, (LPARAM)L"");
+        }
+    }
+    else
+    {
+        SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CODEC, WM_SETTEXT, 0, (LPARAM)L"");
+        SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CHANNEL, WM_SETTEXT, 0, (LPARAM)L"");
+        SendDlgItemMessage(m_Dlg, IDC_OUTPUT_SAMPLERATE, WM_SETTEXT, 0, (LPARAM)L"");
+        SendDlgItemMessage(m_Dlg, IDC_OUTPUT_FORMAT, WM_SETTEXT, 0, (LPARAM)L"");
+    }
+    UpdateMeterLayout(hr == S_OK ? channels : 0, hr == S_OK ? mask : 0);
+}
+#endif
+
 INT_PTR CLAVAudioStatusProp::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch (uMsg)
     {
-    case WM_TIMER: UpdateVolumeDisplay(); break;
+    case WM_TIMER:
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+        UpdateOpenJocStatusDisplay();
+#endif
+        UpdateVolumeDisplay();
+        break;
     }
     // Let the parent class handle the message.
     return __super::OnReceiveMessage(hwnd, uMsg, wParam, lParam);
