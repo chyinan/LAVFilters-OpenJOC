@@ -13,7 +13,7 @@
       "common/DSUtilLite/DSUtilLite.vcxproj",
       "common/baseclasses/baseclasses.vcxproj"
     ],
-    "compiled_input_count": 60,
+    "compiled_input_count": 64,
     "method": "All ClCompile Include entries in the three projects"
   },
   "compiled_inputs": [
@@ -99,6 +99,46 @@
     },
     {
       "source_path": "decoder/LAVAudio/OpenJocDecoder.cpp",
+      "origin": "OpenJOC downstream integration",
+      "upstream_revision": "not-applicable (new downstream file)",
+      "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
+      "lav_modification_state": "not-applicable",
+      "openjoc_modification_state": "new for openjoc-0.10.0",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/OpenJocOutput.cpp",
+      "origin": "OpenJOC downstream integration",
+      "upstream_revision": "not-applicable (new downstream file)",
+      "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
+      "lav_modification_state": "not-applicable",
+      "openjoc_modification_state": "new for openjoc-0.10.0",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/OpenJocShippedLayouts.cpp",
+      "origin": "OpenJOC downstream integration",
+      "upstream_revision": "not-applicable (new downstream file)",
+      "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
+      "lav_modification_state": "not-applicable",
+      "openjoc_modification_state": "new for openjoc-0.10.0",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/OpenJocStrictNegotiation.cpp",
+      "origin": "OpenJOC downstream integration",
+      "upstream_revision": "not-applicable (new downstream file)",
+      "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
+      "lav_modification_state": "not-applicable",
+      "openjoc_modification_state": "new for openjoc-0.10.0",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/OpenJocStrictOutput.cpp",
       "origin": "OpenJOC downstream integration",
       "upstream_revision": "not-applicable (new downstream file)",
       "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",

@@ -15,10 +15,10 @@ The census enumerates every `ClCompile Include` entry in the exact three project
 
 | Project | Compiled units | Classification summary |
 |---|---:|---|
-| `decoder/LAVAudio/LAVAudio.vcxproj` | 12 | 12 GPL-2.0-or-later |
+| `decoder/LAVAudio/LAVAudio.vcxproj` | 16 | 16 GPL-2.0-or-later |
 | `common/DSUtilLite/DSUtilLite.vcxproj` | 17 | 15 GPL-2.0-or-later; 2 GPL-3.0-only |
 | `common/baseclasses/baseclasses.vcxproj` | 31 | 24 MIT; 7 MIT AND GPL-2.0-or-later |
-| **Total** | **60** | **0 unresolved** |
+| **Total** | **64** | **0 unresolved** |
 
 The effective combined distribution license is GPL-3.0-only because the two CSS compilation units are GPL-3.0-only and the GPL-2.0-or-later units may be distributed under GPLv3. The MIT inputs are compatible. No GPL-2.0-only compiled component and no known license incompatibility were found.
 
@@ -32,16 +32,16 @@ The effective combined distribution license is GPL-3.0-only because the two CSS 
 | 24 Microsoft Base Classes units | Microsoft sample `d59e5f1...`; LAV import `6162854...`; normalized-identical | MIT | High |
 | 7 modified Microsoft Base Classes units | Same Microsoft/LAV lineage, with LAV changes | MIT AND GPL-2.0-or-later | Medium-high |
 
-See `DIRECTSHOW_BASECLASSES_PROVENANCE.md` for the exact evidence chain. The JSON census contains one record for each of all 60 compiled units, including origin, revision, license evidence, LAV change state, OpenJOC change state, classification, and confidence.
+See `DIRECTSHOW_BASECLASSES_PROVENANCE.md` for the exact evidence chain. The JSON census contains one record for each of all 64 compiled units, including origin, revision, license evidence, LAV change state, OpenJOC change state, classification, and confidence.
 
 ## OpenJOC-created LAV files
 
-All seven new integration/test/smoke files carry:
+All 24 OpenJOC-created integration, contract, test, and smoke files carry:
 
 - `SPDX-FileCopyrightText: 2026 OpenJOC contributors`
 - `SPDX-License-Identifier: GPL-2.0-or-later`
 
-They are `LAVAudioIdentitySmoke.cpp`, `OpenJocAdmission.cpp/.h`, `OpenJocAdmissionTests.cpp`, `OpenJocDecoder.cpp/.h`, and `OpenJocDecoderSmoke.cpp`.
+They are `AudioStatusCapacityTests.cpp`, `LAVAudioIdentitySmoke.cpp`, `LAVAudioResourceIdentitySmoke.cpp`, `OpenJocAdmission.cpp/.h`, `OpenJocAdmissionTests.cpp`, `OpenJocDecoder.cpp/.h`, `OpenJocDecoderSmoke.cpp`, `OpenJocDirectShowNegotiationSmoke.cpp`, `OpenJocOutput.cpp/.h`, `OpenJocOutputTests.cpp`, `OpenJocPropertyPageSmoke.cpp`, `OpenJocSettingsSmoke.cpp`, `OpenJocShippedLayouts.cpp/.h`, `OpenJocShippedLayoutsTests.cpp`, `OpenJocStrictNegotiation.cpp/.h`, `OpenJocStrictOutput.cpp/.h`, `OpenJocStrictOutputTests.cpp`, and `include/LAVOpenJocSettings.h`.
 
 ## Modified upstream census
 
