@@ -34,11 +34,12 @@ int main(const int argc, char **argv)
     if (argc != 1)
         return 64;
 
-    assert(count == 1);
-    assert(policies[0] == LAVOpenJocOutputPolicy::Stereo);
-    assert(IsLAVOpenJocOutputPolicyShipped(LAVOpenJocOutputPolicy::Stereo));
-    for (std::uint32_t value = 1; value <= 6; ++value)
-        assert(!IsLAVOpenJocOutputPolicyShipped(static_cast<LAVOpenJocOutputPolicy>(value)));
+    assert(count == LAV_OPENJOC_OUTPUT_CONTRACT_COUNT);
+    for (std::uint32_t value = 0; value < LAV_OPENJOC_OUTPUT_CONTRACT_COUNT; ++value)
+    {
+        assert(policies[value] == static_cast<LAVOpenJocOutputPolicy>(value));
+        assert(IsLAVOpenJocOutputPolicyShipped(static_cast<LAVOpenJocOutputPolicy>(value)));
+    }
     for (std::size_t index = 0; index < count; ++index)
         assert(FindLAVOpenJocOutputContract(policies[index]) != nullptr);
 

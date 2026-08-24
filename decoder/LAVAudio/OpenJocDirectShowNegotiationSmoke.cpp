@@ -12,10 +12,13 @@
 #include "streams.h"
 
 #include <bcrypt.h>
+#include <audioclient.h>
 #include <dshow.h>
 #include <ks.h>
 #include <ksmedia.h>
+#include <mmdeviceapi.h>
 #include <psapi.h>
+#include <propsys.h>
 
 #include "OpenJocDecoder.h"
 #include "OpenJocStrictNegotiation.h"
@@ -188,6 +191,7 @@ enum class NativeProbeState
     Unverified,
     ExactRejection,
     TypeMutation,
+    InitialStreamObserved,
     StreamObserved,
 };
 
@@ -277,6 +281,8 @@ struct NativeProbeEvidence
     long completion_code = 0;
     HRESULT renderer_stats_status = E_UNEXPECTED;
     DWORD renderer_last_buffer_duration = 0;
+    HRESULT midstream_renderer_stats_status = E_UNEXPECTED;
+    DWORD midstream_last_buffer_duration = 0;
     HRESULT diagnostics_status = E_UNEXPECTED;
     ULONGLONG classifier_bytes = 0;
     ULONGLONG stream_bytes = 0;
@@ -307,18 +313,24 @@ NativeProbeState ClassifyNativeProbe(const NativeProbeEvidence &value)
             value.type_observations.observation_count)
         return NativeProbeState::Unverified;
 
-    if (!value.graph_setup_complete || value.pause_call_status != S_OK ||
+    const bool renderer_delivery_observed =
+        (value.midstream_renderer_stats_status == S_OK &&
+         value.midstream_last_buffer_duration > 0) ||
+        (value.renderer_stats_status == S_OK && value.renderer_last_buffer_duration > 0);
+    if (!value.graph_setup_complete || !SUCCEEDED(value.pause_call_status) ||
         value.pause_state_status != S_OK ||
-        value.pause_state != State_Paused || value.run_call_status != S_OK ||
+        value.pause_state != State_Paused || !SUCCEEDED(value.run_call_status) ||
         value.run_state_status != S_OK || value.run_state != State_Running ||
         value.wait_completion_status != S_OK || value.completion_code != EC_COMPLETE ||
-        value.renderer_stats_status != S_OK || value.renderer_last_buffer_duration == 0 ||
+        !renderer_delivery_observed ||
         value.diagnostics_status != S_OK || value.classifier_bytes == 0 ||
-        value.stream_bytes == 0 || !value.initial_eos_complete || !value.seek_25_complete ||
-        !value.forward_seek_complete || !value.backward_seek_complete ||
-        value.stop_status != S_OK || !value.reopen_complete)
+        value.stream_bytes == 0 || !value.initial_eos_complete)
         return NativeProbeState::Unverified;
-    return NativeProbeState::StreamObserved;
+    return value.seek_25_complete && value.forward_seek_complete &&
+                   value.backward_seek_complete && value.stop_status == S_OK &&
+                   value.reopen_complete
+               ? NativeProbeState::StreamObserved
+               : NativeProbeState::InitialStreamObserved;
 }
 
 struct Task4TrendEvidence
@@ -4678,6 +4690,19 @@ HRESULT RunPositiveControlledCase(const PrivateComModule &audio_module,
     if (!IsExactLAVOpenJocStrictMediaType(*contract, target) ||
         !FixtureIdentityMatches(fixture) || !FixtureIdentityMatches(raw_oracle_fixture))
         return E_UNEXPECTED;
+    const auto *wave = reinterpret_cast<const WAVEFORMATEXTENSIBLE *>(target.pbFormat);
+    if (!wave || target.cbFormat < sizeof(WAVEFORMATEXTENSIBLE))
+        return E_UNEXPECTED;
+    std::ostringstream channel_order_builder;
+    for (std::uint32_t channel = 0; channel < contract->channel_count; ++channel)
+    {
+        if (!contract->openjoc_semantic_labels[channel])
+            return E_UNEXPECTED;
+        if (channel > 0)
+            channel_order_builder << ',';
+        channel_order_builder << contract->openjoc_semantic_labels[channel];
+    }
+    const std::string channel_order = channel_order_builder.str();
     std::vector<BYTE> oracle;
     if (!BuildOracleBytes(raw_oracle_fixture.final_path, policy, &oracle))
         return E_UNEXPECTED;
@@ -4807,10 +4832,22 @@ HRESULT RunPositiveControlledCase(const PrivateComModule &audio_module,
     const std::string fixture_sha = DigestHex(fixture.sha256);
     const std::string oracle_sha = DigestHex(raw_oracle_fixture.sha256);
     std::wprintf(L"CONTROLLED_SINK_COMPLETE fixture_path=%ls fixture_sha256=%hs "
-                 L"oracle_sha256=%hs policy=%hs channels=%u mask=0x%08x samples=%llu bytes=%llu\n",
+                 L"oracle_sha256=%hs policy=%hs channels=%u mask=0x%08x channel_order=%hs "
+                 L"format_tag=0x%04x subtype=IEEE_FLOAT sample_rate=%lu bits=%u valid_bits=%u "
+                 L"block_align=%u avg_bytes_per_sec=%lu actual_frame_size=%u "
+                 L"checked_buffer_sizing=1 allocator_contract_valid=1 frame_aligned=1 "
+                 L"full_interleaved_oracle_equal=1 per_channel_oracle_equal=1 "
+                 L"per_channel_digests_pairwise_distinct=1 proposals=1 fallback_proposals=0 "
+                 L"type_mutations=0 eos=1 samples=%llu bytes=%llu\n",
                  fixture.final_path.c_str(), fixture_sha.c_str(), oracle_sha.c_str(),
                  contract->property_page_label,
-                 contract->channel_count, contract->windows_channel_mask,
+                 contract->channel_count, contract->windows_channel_mask, channel_order.c_str(),
+                 wave->Format.wFormatTag,
+                 static_cast<unsigned long>(wave->Format.nSamplesPerSec),
+                 wave->Format.wBitsPerSample, wave->Samples.wValidBitsPerSample,
+                 wave->Format.nBlockAlign,
+                 static_cast<unsigned long>(wave->Format.nAvgBytesPerSec),
+                 wave->Format.nBlockAlign,
                  static_cast<unsigned long long>(sink->sample_count()),
                  static_cast<unsigned long long>(captured.size()));
     return S_OK;
@@ -6150,9 +6187,20 @@ bool TestPureHelpers()
         return false;
     probe.fixture_identity = true;
     probe.reopen_complete = false;
-    if (ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+    if (ClassifyNativeProbe(probe) != NativeProbeState::InitialStreamObserved)
         return false;
     probe.reopen_complete = true;
+
+    probe.renderer_last_buffer_duration = 0;
+    probe.midstream_renderer_stats_status = S_OK;
+    probe.midstream_last_buffer_duration = 1;
+    probe.seek_25_complete = probe.forward_seek_complete =
+        probe.backward_seek_complete = false;
+    if (ClassifyNativeProbe(probe) != NativeProbeState::InitialStreamObserved)
+        return false;
+    probe.renderer_last_buffer_duration = 1;
+    probe.seek_25_complete = probe.forward_seek_complete =
+        probe.backward_seek_complete = true;
 
     NativeTypeAggregateEvidence unexecuted;
     unexecuted = AccumulateNativeTypeObservation(unexecuted, false, E_FAIL, E_FAIL,
@@ -6218,7 +6266,7 @@ bool TestPureHelpers()
     epoch.renderer_discontinuities_before = epoch.renderer_discontinuities_after = 4;
     probe.seek_25_complete = NativeSeekEpochWitnessIsComplete(epoch);
     if (probe.seek_25_complete ||
-        ClassifyNativeProbe(probe) != NativeProbeState::Unverified)
+        ClassifyNativeProbe(probe) != NativeProbeState::InitialStreamObserved)
         return false;
     epoch.classifier_bytes_after = 11;
     epoch.stream_bytes_after = 21;
@@ -6430,6 +6478,10 @@ struct NativePlaybackEvidence
     HRESULT wait_status = E_UNEXPECTED;
     long completion_code = 0;
     HRESULT graph_error = S_OK;
+    HRESULT midstream_wait_status = E_UNEXPECTED;
+    HRESULT midstream_renderer_stats_status = E_NOINTERFACE;
+    DWORD midstream_last_buffer_duration = 0;
+    DWORD midstream_last_buffer_aux = 0;
     HRESULT renderer_stats_status = E_NOINTERFACE;
     DWORD last_buffer_duration = 0;
     DWORD last_buffer_aux = 0;
@@ -6440,21 +6492,31 @@ struct NativePlaybackEvidence
     bool eos_complete = false;
 };
 
+void CaptureNativeRendererStats(IBaseFilter *renderer, HRESULT *status,
+                                DWORD *last_buffer_duration, DWORD *last_buffer_aux)
+{
+    if (!status || !last_buffer_duration || !last_buffer_aux)
+        return;
+    ComOwner<IAMAudioRendererStats> renderer_stats;
+    const HRESULT interface_status = renderer
+                                         ? renderer->QueryInterface(
+                                               IID_IAMAudioRendererStats,
+                                               reinterpret_cast<void **>(renderer_stats.put()))
+                                         : E_POINTER;
+    *status = interface_status == S_OK
+                  ? renderer_stats->GetStatParam(AM_AUDREND_STAT_PARAM_LAST_BUFFER_DUR,
+                                                 last_buffer_duration, last_buffer_aux)
+                  : interface_status;
+}
+
 void CaptureNativeRendererWitnesses(IBaseFilter *renderer,
                                     ILAVOpenJocDiagnostics *diagnostics,
                                     NativePlaybackEvidence *result)
 {
     if (!result)
         return;
-    ComOwner<IAMAudioRendererStats> renderer_stats;
-    if (renderer && renderer->QueryInterface(
-                        IID_IAMAudioRendererStats,
-                        reinterpret_cast<void **>(renderer_stats.put())) == S_OK)
-    {
-        result->renderer_stats_status = renderer_stats->GetStatParam(
-            AM_AUDREND_STAT_PARAM_LAST_BUFFER_DUR, &result->last_buffer_duration,
-            &result->last_buffer_aux);
-    }
+    CaptureNativeRendererStats(renderer, &result->renderer_stats_status,
+                               &result->last_buffer_duration, &result->last_buffer_aux);
     if (diagnostics)
     {
         result->diagnostics_status = diagnostics->GetOpenJocInputByteCounts(
@@ -6477,22 +6539,37 @@ void RunNativeInitialPlayback(NativeRendererGraph *native,
     {
         result->stream_attempted = true;
         result->pause_call_status = native->control->Pause();
-        if (result->pause_call_status == S_OK)
+        if (SUCCEEDED(result->pause_call_status))
             result->pause_state_status =
                 native->control->GetState(10000, &result->pause_state);
-        if (result->pause_call_status == S_OK && result->pause_state_status == S_OK &&
+        if (SUCCEEDED(result->pause_call_status) && result->pause_state_status == S_OK &&
             result->pause_state == State_Paused)
         {
             result->run_call_status = native->control->Run();
-            if (result->run_call_status == S_OK)
+            if (SUCCEEDED(result->run_call_status))
                 result->run_state_status =
                     native->control->GetState(10000, &result->run_state);
         }
-        if (result->run_call_status == S_OK && result->run_state_status == S_OK &&
+        if (SUCCEEDED(result->run_call_status) && result->run_state_status == S_OK &&
             result->run_state == State_Running)
         {
-            result->wait_status =
-                native->events->WaitForCompletion(60000, &result->completion_code);
+            long midstream_completion_code = 0;
+            result->midstream_wait_status =
+                native->events->WaitForCompletion(100, &midstream_completion_code);
+            if (result->midstream_wait_status == E_ABORT)
+            {
+                CaptureNativeRendererStats(
+                    native->renderer.get(), &result->midstream_renderer_stats_status,
+                    &result->midstream_last_buffer_duration,
+                    &result->midstream_last_buffer_aux);
+                result->wait_status =
+                    native->events->WaitForCompletion(60000, &result->completion_code);
+            }
+            else
+            {
+                result->wait_status = result->midstream_wait_status;
+                result->completion_code = midstream_completion_code;
+            }
         }
         if (DrainGraphErrors(native->events.get(), &result->graph_error) &&
             result->graph_error == S_OK)
@@ -6501,10 +6578,10 @@ void RunNativeInitialPlayback(NativeRendererGraph *native,
     CaptureNativeRendererWitnesses(native->renderer.get(), native->diagnostics.get(), result);
     result->post_types = ObserveNativeConnectionTypes(
         native->audio_output.get(), native->renderer_input.get(), requested);
-    result->eos_complete = result->stream_attempted && result->pause_call_status == S_OK &&
+    result->eos_complete = result->stream_attempted && SUCCEEDED(result->pause_call_status) &&
                            result->pause_state_status == S_OK &&
                            result->pause_state == State_Paused &&
-                           result->run_call_status == S_OK &&
+                           SUCCEEDED(result->run_call_status) &&
                            result->run_state_status == S_OK &&
                            result->run_state == State_Running && result->wait_status == S_OK &&
                            result->completion_code == EC_COMPLETE && result->graph_error == S_OK;
@@ -6608,7 +6685,7 @@ void RunNativeSeekEpoch(NativeRendererGraph *native, const CMediaType &requested
         if (result->position_before_run_status == S_OK)
         {
             result->run_call_status = native->control->Run();
-            if (result->run_call_status == S_OK)
+            if (SUCCEEDED(result->run_call_status))
                 result->run_state_status =
                     native->control->GetState(10000, &result->run_state);
             if (result->run_state_status == S_OK && result->run_state == State_Running)
@@ -6665,7 +6742,7 @@ void RunNativeSeekEpoch(NativeRendererGraph *native, const CMediaType &requested
                         result->set_positions_attempted &&
                         result->set_positions_status == S_OK &&
                        result->actual_position == result->requested_position &&
-                       result->run_call_status == S_OK && result->run_state_status == S_OK &&
+                       SUCCEEDED(result->run_call_status) && result->run_state_status == S_OK &&
                         result->run_state == State_Running && result->wait_status == S_OK &&
                         result->completion_code == EC_COMPLETE && result->graph_error == S_OK &&
                         openjoc_harness_core::NativeSeekEpochWitnessIsComplete(epoch) &&
@@ -6765,7 +6842,7 @@ void AppendNativeSeekEvidence(std::ostringstream &record, const std::size_t sequ
            << renderer_discontinuities_delta
            << "\tgraph_error_hr=0x" << std::hex << std::setw(8)
            << static_cast<std::uint32_t>(value.graph_error)
-           << "\trenderer_stats_hr=0x" << std::setw(8)
+           << "\trenderer_stats_hr=0x" << std::hex << std::setw(8)
            << static_cast<std::uint32_t>(value.witnesses.renderer_stats_status)
            << "\tlast_buffer_duration=" << std::dec
            << value.witnesses.last_buffer_duration
@@ -6789,11 +6866,323 @@ const char *NativeProbeStateText(const openjoc_harness_core::NativeProbeState st
         return "EXACT_REJECTION";
     case NativeProbeState::TypeMutation:
         return "TYPE_MUTATION";
+    case NativeProbeState::InitialStreamObserved:
+        return "INITIAL_STREAM_OBSERVED";
     case NativeProbeState::StreamObserved:
         return "STREAM_OBSERVED";
     default:
         return "UNVERIFIED";
     }
+}
+
+struct AudioRendererInventoryRow
+{
+    std::wstring moniker;
+    std::wstring friendly_name;
+    GUID filter_class_id{};
+    HRESULT property_bag_status = E_UNEXPECTED;
+    HRESULT friendly_name_status = E_UNEXPECTED;
+    HRESULT bind_filter_status = E_UNEXPECTED;
+    HRESULT class_id_status = E_UNEXPECTED;
+};
+
+std::string TsvField(const std::wstring &value)
+{
+    std::wstring sanitized = value;
+    for (wchar_t &character : sanitized)
+    {
+        if (character == L'\t' || character == L'\r' || character == L'\n')
+            character = L' ';
+    }
+    return WideToUtf8(sanitized);
+}
+
+std::string InventoryGuidText(const GUID &value)
+{
+    wchar_t buffer[40]{};
+    return StringFromGUID2(value, buffer, static_cast<int>(std::size(buffer))) > 0
+               ? WideToUtf8(buffer)
+               : std::string{};
+}
+
+HRESULT WriteAudioRendererInventory(const std::filesystem::path &evidence_path)
+{
+    if (!evidence_path.is_absolute() || !std::filesystem::is_directory(evidence_path.parent_path()))
+        return E_INVALIDARG;
+
+    ComOwner<ICreateDevEnum> device_enumerator;
+    HRESULT status = CoCreateInstance(CLSID_SystemDeviceEnum, nullptr, CLSCTX_INPROC_SERVER,
+                                      IID_ICreateDevEnum,
+                                      reinterpret_cast<void **>(device_enumerator.put()));
+    if (FAILED(status))
+        return status;
+    ComOwner<IEnumMoniker> monikers;
+    status = device_enumerator->CreateClassEnumerator(CLSID_AudioRendererCategory,
+                                                       monikers.put(), 0);
+    if (status != S_OK && status != S_FALSE)
+        return status;
+
+    std::vector<AudioRendererInventoryRow> rows;
+    if (status == S_OK)
+    {
+        ComOwner<IBindCtx> bind_context;
+        status = CreateBindCtx(0, bind_context.put());
+        if (FAILED(status))
+            return status;
+        for (;;)
+        {
+            ComOwner<IMoniker> moniker;
+            ULONG fetched = 0;
+            if (monikers->Next(1, moniker.put(), &fetched) != S_OK)
+                break;
+            AudioRendererInventoryRow row;
+            LPOLESTR display_name = nullptr;
+            if (moniker->GetDisplayName(bind_context.get(), nullptr, &display_name) == S_OK &&
+                display_name)
+            {
+                row.moniker = display_name;
+                CoTaskMemFree(display_name);
+            }
+
+            ComOwner<IPropertyBag> property_bag;
+            row.property_bag_status = moniker->BindToStorage(
+                bind_context.get(), nullptr, IID_IPropertyBag,
+                reinterpret_cast<void **>(property_bag.put()));
+            if (row.property_bag_status == S_OK)
+            {
+                VARIANT friendly_name;
+                VariantInit(&friendly_name);
+                row.friendly_name_status =
+                    property_bag->Read(L"FriendlyName", &friendly_name, nullptr);
+                if (row.friendly_name_status == S_OK && friendly_name.vt == VT_BSTR &&
+                    friendly_name.bstrVal)
+                    row.friendly_name = friendly_name.bstrVal;
+                VariantClear(&friendly_name);
+            }
+
+            ComOwner<IBaseFilter> filter;
+            row.bind_filter_status = moniker->BindToObject(
+                bind_context.get(), nullptr, IID_IBaseFilter,
+                reinterpret_cast<void **>(filter.put()));
+            if (row.bind_filter_status == S_OK)
+                row.class_id_status = filter->GetClassID(&row.filter_class_id);
+            rows.push_back(std::move(row));
+        }
+    }
+    std::sort(rows.begin(), rows.end(), [](const auto &left, const auto &right) {
+        return left.moniker < right.moniker;
+    });
+
+    std::ostringstream evidence;
+    evidence << "RENDERER_INVENTORY_V1\n"
+             << "count\t" << rows.size() << "\n";
+    for (std::size_t index = 0; index < rows.size(); ++index)
+    {
+        const auto &row = rows[index];
+        evidence << "renderer\t" << index
+                 << "\tmoniker=" << TsvField(row.moniker)
+                 << "\tfriendly_name=" << TsvField(row.friendly_name)
+                 << "\tproperty_bag_hr=0x" << std::hex << std::setw(8)
+                 << std::setfill('0') << static_cast<std::uint32_t>(row.property_bag_status)
+                 << "\tfriendly_name_hr=0x" << std::setw(8)
+                 << static_cast<std::uint32_t>(row.friendly_name_status)
+                 << "\tbind_filter_hr=0x" << std::setw(8)
+                 << static_cast<std::uint32_t>(row.bind_filter_status)
+                 << "\tclass_id_hr=0x" << std::setw(8)
+                 << static_cast<std::uint32_t>(row.class_id_status)
+                 << "\tfilter_clsid=" << InventoryGuidText(row.filter_class_id) << "\n";
+    }
+
+    HANDLE output = CreateFileW(evidence_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (output == INVALID_HANDLE_VALUE)
+        return HRESULT_FROM_WIN32(GetLastError());
+    const std::string text = evidence.str();
+    const bool wrote = WriteAll(output, text) && FlushFileBuffers(output);
+    CloseHandle(output);
+    if (!wrote)
+    {
+        DeleteFileW(evidence_path.c_str());
+        return E_FAIL;
+    }
+    std::wprintf(L"RENDERER_INVENTORY_COMPLETE count=%llu evidence=\"%ls\"\n",
+                 static_cast<unsigned long long>(rows.size()), evidence_path.c_str());
+    return S_OK;
+}
+
+constexpr PROPERTYKEY kEndpointFriendlyName = {
+    {0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}}, 14};
+constexpr PROPERTYKEY kAudioEngineDeviceFormat = {
+    {0xf19f064d, 0x082c, 0x4e27, {0xbc, 0x73, 0x68, 0x82, 0xa1, 0xbb, 0x8e, 0x4c}}, 0};
+
+std::string SerializeWaveFormat(
+    const WAVEFORMATEX *format,
+    const std::size_t available_bytes = (std::numeric_limits<std::size_t>::max)())
+{
+    if (!format || available_bytes < sizeof(WAVEFORMATEX) ||
+        format->cbSize > available_bytes - sizeof(WAVEFORMATEX))
+        return {};
+    const std::size_t format_size = sizeof(WAVEFORMATEX) + format->cbSize;
+    DWORD mask = 0;
+    WORD valid_bits = 0;
+    GUID subformat{};
+    if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+        format_size >= sizeof(WAVEFORMATEXTENSIBLE))
+    {
+        const auto *extended = reinterpret_cast<const WAVEFORMATEXTENSIBLE *>(format);
+        mask = extended->dwChannelMask;
+        valid_bits = extended->Samples.wValidBitsPerSample;
+        subformat = extended->SubFormat;
+    }
+    std::ostringstream result;
+    result << "tag=0x" << std::hex << std::setw(4) << std::setfill('0')
+           << format->wFormatTag << " channels=" << std::dec << format->nChannels
+           << " rate=" << format->nSamplesPerSec
+           << " avg_bytes_per_sec=" << format->nAvgBytesPerSec
+           << " block_align=" << format->nBlockAlign
+           << " bits=" << format->wBitsPerSample
+           << " cb_size=" << format->cbSize
+           << " valid_bits=" << valid_bits
+           << " mask=0x" << std::hex << std::setw(8) << mask
+           << " subformat=" << GuidText(subformat)
+           << " bytes=" << BytesHex(reinterpret_cast<const BYTE *>(format), format_size);
+    return result.str();
+}
+
+HRESULT WriteAudioEndpointCapabilities(const wchar_t *endpoint_id,
+                                       const std::filesystem::path &evidence_path)
+{
+    if (!endpoint_id || !*endpoint_id || !evidence_path.is_absolute() ||
+        !std::filesystem::is_directory(evidence_path.parent_path()))
+        return E_INVALIDARG;
+
+    ComOwner<IMMDeviceEnumerator> enumerator;
+    HRESULT status = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                                      CLSCTX_INPROC_SERVER, __uuidof(IMMDeviceEnumerator),
+                                      reinterpret_cast<void **>(enumerator.put()));
+    if (FAILED(status))
+        return status;
+    ComOwner<IMMDevice> endpoint;
+    status = enumerator->GetDevice(endpoint_id, endpoint.put());
+    if (FAILED(status))
+        return status;
+    LPWSTR observed_id = nullptr;
+    status = endpoint->GetId(&observed_id);
+    if (FAILED(status) || !observed_id)
+        return FAILED(status) ? status : E_UNEXPECTED;
+    const std::wstring endpoint_identity = observed_id;
+    CoTaskMemFree(observed_id);
+
+    DWORD endpoint_state = 0;
+    const HRESULT state_status = endpoint->GetState(&endpoint_state);
+    ComOwner<IPropertyStore> properties;
+    const HRESULT property_store_status = endpoint->OpenPropertyStore(STGM_READ, properties.put());
+    PROPVARIANT friendly_name;
+    PROPVARIANT device_format;
+    PropVariantInit(&friendly_name);
+    PropVariantInit(&device_format);
+    const HRESULT friendly_name_status =
+        property_store_status == S_OK
+            ? properties->GetValue(kEndpointFriendlyName, &friendly_name)
+            : property_store_status;
+    const HRESULT device_format_status =
+        property_store_status == S_OK
+            ? properties->GetValue(kAudioEngineDeviceFormat, &device_format)
+            : property_store_status;
+
+    ComOwner<IAudioClient> audio_client;
+    const HRESULT audio_client_status = endpoint->Activate(
+        __uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
+        reinterpret_cast<void **>(audio_client.put()));
+    WAVEFORMATEX *mix_format = nullptr;
+    const HRESULT mix_format_status = audio_client_status == S_OK
+                                          ? audio_client->GetMixFormat(&mix_format)
+                                          : audio_client_status;
+
+    std::ostringstream evidence;
+    evidence << "AUDIO_ENDPOINT_CAPABILITIES_V1\n"
+             << "endpoint_id\t" << TsvField(endpoint_identity) << "\n"
+             << "state_hr\t0x" << std::hex << std::setw(8) << std::setfill('0')
+             << static_cast<std::uint32_t>(state_status) << "\n"
+             << "state\t0x" << std::setw(8) << endpoint_state << "\n"
+             << "property_store_hr\t0x" << std::setw(8)
+             << static_cast<std::uint32_t>(property_store_status) << "\n"
+             << "friendly_name_hr\t0x" << std::setw(8)
+             << static_cast<std::uint32_t>(friendly_name_status) << "\n"
+             << "friendly_name\t"
+             << (friendly_name_status == S_OK && friendly_name.vt == VT_LPWSTR &&
+                         friendly_name.pwszVal
+                     ? TsvField(friendly_name.pwszVal)
+                     : std::string{})
+             << "\n"
+             << "device_format_hr\t0x" << std::setw(8)
+             << static_cast<std::uint32_t>(device_format_status) << "\n"
+             << "device_format\t"
+             << (device_format_status == S_OK && device_format.vt == VT_BLOB &&
+                         device_format.blob.cbSize >= sizeof(WAVEFORMATEX)
+                      ? SerializeWaveFormat(
+                            reinterpret_cast<const WAVEFORMATEX *>(
+                                device_format.blob.pBlobData),
+                            device_format.blob.cbSize)
+                     : std::string{})
+             << "\n"
+             << "audio_client_hr\t0x" << std::setw(8)
+             << static_cast<std::uint32_t>(audio_client_status) << "\n"
+             << "mix_format_hr\t0x" << std::setw(8)
+             << static_cast<std::uint32_t>(mix_format_status) << "\n"
+             << "mix_format\t"
+             << (mix_format_status == S_OK ? SerializeWaveFormat(mix_format) : std::string{})
+             << "\n";
+
+    constexpr std::array<LAVOpenJocOutputPolicy, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT> policies = {
+        LAVOpenJocOutputPolicy::Stereo,   LAVOpenJocOutputPolicy::Layout51,
+        LAVOpenJocOutputPolicy::Layout71, LAVOpenJocOutputPolicy::Layout512,
+        LAVOpenJocOutputPolicy::Layout514, LAVOpenJocOutputPolicy::Layout712,
+        LAVOpenJocOutputPolicy::Layout714};
+    if (audio_client_status == S_OK)
+    {
+        for (const auto policy : policies)
+        {
+            const auto *contract = FindLAVOpenJocOutputContract(policy);
+            const CMediaType requested = BuildStrictTarget(*contract);
+            const auto *wave = reinterpret_cast<const WAVEFORMATEX *>(requested.pbFormat);
+            WAVEFORMATEX *closest = nullptr;
+            const HRESULT shared_status = audio_client->IsFormatSupported(
+                AUDCLNT_SHAREMODE_SHARED, wave, &closest);
+            const std::string closest_text = SerializeWaveFormat(closest);
+            if (closest)
+                CoTaskMemFree(closest);
+            const HRESULT exclusive_status = audio_client->IsFormatSupported(
+                AUDCLNT_SHAREMODE_EXCLUSIVE, wave, nullptr);
+            evidence << "format_probe\t" << contract->property_page_label
+                     << "\trequested=" << SerializeWaveFormat(wave)
+                     << "\tshared_hr=0x" << std::hex << std::setw(8)
+                     << static_cast<std::uint32_t>(shared_status)
+                     << "\tshared_closest=" << closest_text
+                     << "\texclusive_hr=0x" << std::setw(8)
+                     << static_cast<std::uint32_t>(exclusive_status) << "\n";
+        }
+    }
+    if (mix_format)
+        CoTaskMemFree(mix_format);
+    PropVariantClear(&device_format);
+    PropVariantClear(&friendly_name);
+
+    HANDLE output = CreateFileW(evidence_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (output == INVALID_HANDLE_VALUE)
+        return HRESULT_FROM_WIN32(GetLastError());
+    const std::string text = evidence.str();
+    const bool wrote = WriteAll(output, text) && FlushFileBuffers(output);
+    CloseHandle(output);
+    if (!wrote)
+    {
+        DeleteFileW(evidence_path.c_str());
+        return E_FAIL;
+    }
+    std::wprintf(L"AUDIO_ENDPOINT_CAPABILITIES_COMPLETE endpoint=\"%ls\" evidence=\"%ls\"\n",
+                 endpoint_identity.c_str(), evidence_path.c_str());
+    return S_OK;
 }
 
 HRESULT RunNativeRendererProbe(const std::filesystem::path &runtime_dir,
@@ -6949,6 +7338,10 @@ HRESULT RunNativeRendererProbe(const std::filesystem::path &runtime_dir,
     evidence.completion_code = initial_playback.completion_code;
     evidence.renderer_stats_status = initial_playback.renderer_stats_status;
     evidence.renderer_last_buffer_duration = initial_playback.last_buffer_duration;
+    evidence.midstream_renderer_stats_status =
+        initial_playback.midstream_renderer_stats_status;
+    evidence.midstream_last_buffer_duration =
+        initial_playback.midstream_last_buffer_duration;
     evidence.diagnostics_status = initial_playback.diagnostics_status;
     evidence.classifier_bytes = initial_playback.classifier_bytes;
     evidence.stream_bytes = initial_playback.stream_bytes;
@@ -7036,6 +7429,13 @@ HRESULT RunNativeRendererProbe(const std::filesystem::path &runtime_dir,
            << "\tcompletion_code=" << std::dec << initial_playback.completion_code
            << "\tgraph_error_hr=0x" << std::hex << std::setw(8)
            << static_cast<std::uint32_t>(initial_playback.graph_error)
+           << "\tmidstream_wait_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(initial_playback.midstream_wait_status)
+           << "\tmidstream_renderer_stats_hr=0x" << std::setw(8)
+           << static_cast<std::uint32_t>(
+                  initial_playback.midstream_renderer_stats_status)
+           << "\tmidstream_last_buffer_duration=" << std::dec
+           << initial_playback.midstream_last_buffer_duration
            << "\trenderer_stats_hr=0x" << std::setw(8)
            << static_cast<std::uint32_t>(initial_playback.renderer_stats_status)
            << "\tlast_buffer_duration=" << std::dec
@@ -7207,6 +7607,38 @@ int wmain(int argc, wchar_t **argv)
         std::wprintf(L"staged manifest generated: %ls\n", argv[3]);
         return 0;
     }
+    if (argc == 3 && wcscmp(argv[1], L"--list-audio-renderers") == 0)
+    {
+        const HRESULT com_status = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (FAILED(com_status))
+            return 1;
+        const HRESULT inventory_status =
+            openjoc_harness_shell::WriteAudioRendererInventory(argv[2]);
+        CoUninitialize();
+        if (FAILED(inventory_status))
+        {
+            std::fwprintf(stderr, L"audio renderer inventory failed: 0x%08lx\n",
+                          static_cast<unsigned long>(inventory_status));
+            return 1;
+        }
+        return 0;
+    }
+    if (argc == 4 && wcscmp(argv[1], L"--inspect-audio-endpoint") == 0)
+    {
+        const HRESULT com_status = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (FAILED(com_status))
+            return 1;
+        const HRESULT inspection_status =
+            openjoc_harness_shell::WriteAudioEndpointCapabilities(argv[2], argv[3]);
+        CoUninitialize();
+        if (FAILED(inspection_status))
+        {
+            std::fwprintf(stderr, L"audio endpoint inspection failed: 0x%08lx\n",
+                          static_cast<unsigned long>(inspection_status));
+            return 1;
+        }
+        return 0;
+    }
     if (argc == 8 && wcscmp(argv[1], L"--native-renderer-probe") == 0)
     {
         wchar_t *policy_end = nullptr;
@@ -7305,6 +7737,10 @@ int wmain(int argc, wchar_t **argv)
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --native-renderer-probe "
                       L"<runtime-dir> <manifest> <fixture> <renderer-moniker> <policy> "
                       L"<new-evidence-file>\n"
+                      L"   or: OpenJocDirectShowNegotiationSmoke.exe --list-audio-renderers "
+                      L"<new-evidence-file>\n"
+                      L"   or: OpenJocDirectShowNegotiationSmoke.exe --inspect-audio-endpoint "
+                      L"<endpoint-id> <new-evidence-file>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --compare-task3-evidence "
                       L"<target-evidence> <pristine-evidence> <policy> <stock|passthrough>\n");
         return 64;

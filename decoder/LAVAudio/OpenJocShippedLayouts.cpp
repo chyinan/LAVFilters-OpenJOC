@@ -6,13 +6,21 @@
 // pattern: Functional Core
 
 #include "OpenJocShippedLayouts.h"
+#include "OpenJocOutput.h"
 
 #include <array>
 
 namespace
 {
-constexpr std::array<LAVOpenJocOutputPolicy, 1> kShippedOutputPolicies = {
+constexpr std::array<LAVOpenJocOutputPolicy, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT>
+    kShippedOutputPolicies = {
     LAVOpenJocOutputPolicy::Stereo,
+    LAVOpenJocOutputPolicy::Layout51,
+    LAVOpenJocOutputPolicy::Layout71,
+    LAVOpenJocOutputPolicy::Layout512,
+    LAVOpenJocOutputPolicy::Layout514,
+    LAVOpenJocOutputPolicy::Layout712,
+    LAVOpenJocOutputPolicy::Layout714,
 };
 }
 
