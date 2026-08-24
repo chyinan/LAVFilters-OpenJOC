@@ -106,6 +106,12 @@
     <ClCompile Include="OpenJocOutput.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="OpenJocStrictOutput.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="OpenJocStrictNegotiation.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="parser\dts.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -124,6 +130,8 @@
     <ClInclude Include="OpenJocAdmission.h" />
     <ClInclude Include="OpenJocDecoder.h" />
     <ClInclude Include="OpenJocOutput.h" />
+    <ClInclude Include="OpenJocStrictOutput.h" />
+    <ClInclude Include="OpenJocStrictNegotiation.h" />
     <ClInclude Include="parser\dts.h" />
     <ClInclude Include="parser\parser.h" />
     <ClInclude Include="PostProcessor.h" />

@@ -27,9 +27,14 @@
 // It is the caller's responsibility to release the objects in the array. The array's destuctor does not release them.
 // The array does not actually shrink when SetSize is called with a smaller size. Only the reported size changes.
 
+// pattern: Functional Core
+
 #pragma once
 
 #include <assert.h>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include "DShowUtil.h"
 
 template <class T> class GrowableArray
@@ -42,22 +47,23 @@ template <class T> class GrowableArray
     // Allocate: Reserves memory for the array, but does not increase the count.
     HRESULT Allocate(DWORD alloc)
     {
-        HRESULT hr = S_OK;
+        if (alloc == 0)
+            return S_OK;
         if (alloc > m_allocated || !m_pArray)
         {
-            T *pNew = (T *)realloc(m_pArray, sizeof(T) * alloc);
+            if (alloc > (std::numeric_limits<std::size_t>::max)() / sizeof(T))
+                return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+            const std::size_t allocation_bytes = sizeof(T) * static_cast<std::size_t>(alloc);
+            T *pNew = static_cast<T *>(ReallocateMemory(m_pArray, allocation_bytes));
             if (!pNew)
             {
-                free(m_pArray);
-                m_pArray = nullptr;
-                m_allocated = 0;
                 return E_OUTOFMEMORY;
             }
             m_pArray = pNew;
             ZeroMemory(m_pArray + m_allocated, (alloc - m_allocated) * sizeof(T));
             m_allocated = alloc;
         }
-        return hr;
+        return S_OK;
     }
 
     HRESULT Clear()
@@ -83,27 +89,59 @@ template <class T> class GrowableArray
         return hr;
     }
 
-    HRESULT Append(GrowableArray<T> *other) { return Append(other->Ptr(), other->GetCount()); }
+    HRESULT Append(GrowableArray<T> *other)
+    {
+        return other ? Append(other->Ptr(), other->GetCount()) : E_POINTER;
+    }
 
     HRESULT Append(const T *other, DWORD dwSize)
     {
-        HRESULT hr = S_OK;
-        DWORD old = GetCount();
-        hr = SetSize(old + dwSize);
-        if (SUCCEEDED(hr))
-            memcpy(m_pArray + old, other, dwSize);
-
+        if (dwSize == 0)
+            return S_OK;
+        if (!other)
+            return E_POINTER;
+        if (dwSize > (std::numeric_limits<std::size_t>::max)() / sizeof(T) ||
+            m_allocated > (std::numeric_limits<std::size_t>::max)() / sizeof(T))
+        {
+            return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+        }
+        const std::size_t source_bytes = static_cast<std::size_t>(dwSize) * sizeof(T);
+        if (m_pArray)
+        {
+            const std::uintptr_t allocation_begin = reinterpret_cast<std::uintptr_t>(m_pArray);
+            const std::size_t allocation_bytes = static_cast<std::size_t>(m_allocated) * sizeof(T);
+            const std::uintptr_t source_begin = reinterpret_cast<std::uintptr_t>(other);
+            if (allocation_begin > (std::numeric_limits<std::uintptr_t>::max)() - allocation_bytes ||
+                source_begin > (std::numeric_limits<std::uintptr_t>::max)() - source_bytes)
+            {
+                return E_INVALIDARG;
+            }
+            const std::uintptr_t allocation_end = allocation_begin + allocation_bytes;
+            const std::uintptr_t source_end = source_begin + source_bytes;
+            if (source_begin < allocation_end && source_end > allocation_begin)
+                return E_INVALIDARG;
+        }
+        const DWORD old = GetCount();
+        if (dwSize > (std::numeric_limits<DWORD>::max)() - old)
+            return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+        const HRESULT hr = SetSize(old + dwSize);
+        if (FAILED(hr))
+            return hr;
+        memcpy(m_pArray + old, other, source_bytes);
         return S_OK;
     }
 
     HRESULT AppendZero(DWORD dwSize)
     {
-        HRESULT hr = S_OK;
-        DWORD old = GetCount();
-        hr = SetSize(old + dwSize);
-        if (SUCCEEDED(hr))
-            memset(m_pArray + old, 0, dwSize);
-
+        if (dwSize == 0)
+            return S_OK;
+        const DWORD old = GetCount();
+        if (dwSize > (std::numeric_limits<DWORD>::max)() - old)
+            return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+        const HRESULT hr = SetSize(old + dwSize);
+        if (FAILED(hr))
+            return hr;
+        memset(m_pArray + old, 0, static_cast<std::size_t>(dwSize) * sizeof(T));
         return S_OK;
     }
 
@@ -115,7 +153,7 @@ template <class T> class GrowableArray
             Clear();
         else
         {
-            memmove(m_pArray, m_pArray + dwSize, m_count - dwSize);
+            memmove(m_pArray, m_pArray + dwSize, static_cast<std::size_t>(m_count - dwSize) * sizeof(T));
             m_count -= dwSize;
         }
     }
@@ -141,6 +179,8 @@ template <class T> class GrowableArray
     T *Ptr() { return m_pArray; }
 
   protected:
+    virtual void *ReallocateMemory(void *memory, std::size_t bytes) { return realloc(memory, bytes); }
+
     GrowableArray &operator=(const GrowableArray &r);
     GrowableArray(const GrowableArray &r);
 

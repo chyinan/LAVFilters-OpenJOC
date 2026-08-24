@@ -28,6 +28,7 @@
 #include "stdafx.h"
 #include "LAVAudio.h"
 #include "PostProcessor.h"
+#include "OpenJocStrictNegotiation.h"
 
 #include <MMReg.h>
 #include <assert.h>
@@ -1194,7 +1195,11 @@ HRESULT CLAVAudio::ReconnectOutput(long cbBuffer, CMediaType &mt)
         {
             DbgLog((LOG_TRACE, 10, L"::ReconnectOutput(): -> Increasing buffer size"));
             props.cBuffers = 4;
-            props.cbBuffer = cbBuffer * 3 / 2;
+            if (!CheckedLAVOpenJocAllocatorGrowth(cbBuffer, &props.cbBuffer))
+            {
+                hr = HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+                goto done;
+            }
 
             if (FAILED(hr = m_pOutput->DeliverBeginFlush()) || FAILED(hr = m_pOutput->DeliverEndFlush()) ||
                 FAILED(hr = pAllocator->Decommit()) || FAILED(hr = pAllocator->SetProperties(&props, &actual)) ||
@@ -1752,10 +1757,25 @@ HRESULT CLAVAudio::EndOfStream()
     CAutoLock cAutoLock(&m_csReceive);
 
     // Flush the last data out of the parser
-    ProcessBuffer(nullptr);
-    ProcessBuffer(nullptr, TRUE);
+    bool strict_eos = m_OutputQueue.openjoc_contract != nullptr || m_openJoc.State() == LAVOpenJocState::OpenJoc;
+    const HRESULT first_process_hr = ProcessBuffer(nullptr);
+    strict_eos = strict_eos || m_OutputQueue.openjoc_contract != nullptr ||
+                 m_openJoc.State() == LAVOpenJocState::OpenJoc;
+    const HRESULT first_propagation_hr = NormalizeLAVOpenJocEndOfStreamStep(strict_eos, first_process_hr);
+    if (FAILED(first_propagation_hr))
+        return first_propagation_hr;
 
-    FlushOutput(TRUE);
+    const HRESULT eof_process_hr = ProcessBuffer(nullptr, TRUE);
+    strict_eos = strict_eos || m_OutputQueue.openjoc_contract != nullptr ||
+                 m_openJoc.State() == LAVOpenJocState::OpenJoc;
+    const HRESULT eof_propagation_hr = NormalizeLAVOpenJocEndOfStreamStep(strict_eos, eof_process_hr);
+    if (FAILED(eof_propagation_hr))
+        return eof_propagation_hr;
+
+    const HRESULT flush_hr = FlushOutput(TRUE);
+    const HRESULT flush_propagation_hr = NormalizeLAVOpenJocEndOfStreamStep(strict_eos, flush_hr);
+    if (FAILED(flush_propagation_hr))
+        return flush_propagation_hr;
     return __super::EndOfStream();
 }
 
@@ -1924,7 +1944,10 @@ HRESULT CLAVAudio::Receive(IMediaSample *pIn)
     {
         DbgLog((LOG_TRACE, 10, L"Resync Request; old: %I64d; new: %I64d; buffer: %d", m_rtStart, rtStart,
                 m_buff.GetCount()));
-        FlushOutput();
+        const bool strict_resync = m_OutputQueue.openjoc_contract != nullptr;
+        const HRESULT flush_hr = FlushOutput();
+        if (strict_resync && FAILED(flush_hr))
+            return flush_hr;
         if (m_rtStart != AV_NOPTS_VALUE && rtStart != m_rtStart)
             m_bDiscontinuity = TRUE;
 
@@ -2279,6 +2302,7 @@ HRESULT CLAVAudio::DecodeOpenJoc(HRESULT *hrDeliver)
         m_DecodeFormat = out.sfFormat;
         if (av_channel_layout_copy(&m_DecodeLayout, &out.layout) < 0)
             return E_OUTOFMEMORY;
+        out.openjoc_contract = contract;
         if (SUCCEEDED(PostProcess(&out)))
         {
             *hrDeliver = QueueOutput(out);
@@ -2739,40 +2763,42 @@ HRESULT CLAVAudio::GetDeliveryBuffer(IMediaSample **pSample, BYTE **pData)
 
 HRESULT CLAVAudio::QueueOutput(BufferDetails &buffer)
 {
-    HRESULT hr = S_OK;
-    if (av_channel_layout_compare(&m_OutputQueue.layout, &buffer.layout) != 0 ||
-        m_OutputQueue.sfFormat != buffer.sfFormat ||
-        m_OutputQueue.dwSamplesPerSec != buffer.dwSamplesPerSec ||
-        m_OutputQueue.wBitsPerSample != buffer.wBitsPerSample)
-    {
-        if (m_OutputQueue.nSamples > 0)
-            FlushOutput();
+    const bool compatible =
+        AreLAVOpenJocBufferContractsCompatible(m_OutputQueue.openjoc_contract, buffer.openjoc_contract) &&
+        av_channel_layout_compare(&m_OutputQueue.layout, &buffer.layout) == 0 &&
+        m_OutputQueue.sfFormat == buffer.sfFormat &&
+        m_OutputQueue.dwSamplesPerSec == buffer.dwSamplesPerSec &&
+        m_OutputQueue.wBitsPerSample == buffer.wBitsPerSample;
 
+    const LAVOpenJocQueueTransactionInput input{compatible, m_OutputQueue.nSamples, buffer.nSamples,
+                                                m_OutputQueue.rtStart, buffer.rtStart,
+                                                buffer.dwSamplesPerSec};
+    LAVOpenJocQueueTransactionOperations operations;
+    operations.flush = [this]() { return FlushOutput(); };
+    operations.prepare_metadata = [this, &buffer]() {
         m_OutputQueue.sfFormat = buffer.sfFormat;
-        av_channel_layout_copy(&m_OutputQueue.layout, &buffer.layout);
+        if (av_channel_layout_copy(&m_OutputQueue.layout, &buffer.layout) < 0)
+            return E_OUTOFMEMORY;
         m_OutputQueue.dwSamplesPerSec = buffer.dwSamplesPerSec;
         m_OutputQueue.wBitsPerSample = buffer.wBitsPerSample;
-    }
-
-    if (m_OutputQueue.nSamples == 0)
-        m_OutputQueue.rtStart = buffer.rtStart;
-    else if (m_OutputQueue.rtStart == AV_NOPTS_VALUE && buffer.rtStart != AV_NOPTS_VALUE)
-        m_OutputQueue.rtStart = buffer.rtStart - (REFERENCE_TIME)((double)m_OutputQueue.nSamples /
-                                                                  m_OutputQueue.dwSamplesPerSec * 10000000.0);
-
-    // Try to retain the buffer, if possible
-    if (m_OutputQueue.nSamples == 0)
-    {
+        m_OutputQueue.openjoc_contract = buffer.openjoc_contract;
+        return S_OK;
+    };
+    operations.swap_buffer = [this, &buffer]() {
         FFSWAP(GrowableArray<BYTE> *, m_OutputQueue.bBuffer, buffer.bBuffer);
-    }
-    else
-    {
-        m_OutputQueue.bBuffer->Append(buffer.bBuffer);
-    }
-    m_OutputQueue.nSamples += buffer.nSamples;
+    };
+    operations.append_buffer = [this, &buffer]() { return m_OutputQueue.bBuffer->Append(buffer.bBuffer); };
+
+    LAVOpenJocQueueTransactionResult result{};
+    HRESULT hr = ExecuteLAVOpenJocQueueTransaction(input, operations, &result);
+    if (FAILED(hr))
+        return hr;
+    m_OutputQueue.nSamples = result.sample_count;
+    m_OutputQueue.rtStart = result.start_time;
 
     buffer.bBuffer->SetSize(0);
     buffer.nSamples = 0;
+    buffer.openjoc_contract = nullptr;
 
     // Length of the current sample
     double dDuration = (double)m_OutputQueue.nSamples / m_OutputQueue.dwSamplesPerSec * 10000000.0;
@@ -2799,8 +2825,29 @@ HRESULT CLAVAudio::FlushOutput(BOOL bDeliver)
     m_OutputQueue.nSamples = 0;
     m_OutputQueue.bBuffer->SetSize(0);
     m_OutputQueue.rtStart = AV_NOPTS_VALUE;
+    m_OutputQueue.openjoc_contract = nullptr;
 
     return hr;
+}
+
+static HRESULT CreateOpenJocStrictDirectShowMediaType(const LAVOpenJocOutputContract &contract, CMediaType *output)
+{
+    if (!output)
+        return E_POINTER;
+
+    LAVOpenJocStrictMediaType strict{};
+    if (!BuildLAVOpenJocStrictMediaType(contract, &strict))
+        return E_INVALIDARG;
+
+    output->InitMediaType();
+    output->SetType(&strict.major_type);
+    output->SetSubtype(&strict.subtype);
+    output->SetSampleSize(strict.sample_size);
+    output->SetTemporalCompression(strict.temporal_compression);
+    output->SetFormatType(&strict.format_type);
+    if (!output->SetFormat(reinterpret_cast<BYTE *>(&strict.wave), strict.format_size))
+        return E_OUTOFMEMORY;
+    return IsExactLAVOpenJocStrictMediaType(contract, *output) ? S_OK : E_FAIL;
 }
 
 HRESULT CLAVAudio::Deliver(BufferDetails &buffer)
@@ -2810,18 +2857,75 @@ HRESULT CLAVAudio::Deliver(BufferDetails &buffer)
     if (m_bFlushing)
         return S_FALSE;
 
-    CMediaType mt = CreateMediaType(buffer.sfFormat, buffer.dwSamplesPerSec, buffer.layout.nb_channels,
-                                    (DWORD)buffer.layout.u.mask,
-                                    buffer.wBitsPerSample);
-    WAVEFORMATEX *wfe = (WAVEFORMATEX *)mt.Format();
-
-    long cbBuffer = buffer.nSamples * wfe->nBlockAlign;
-    if (FAILED(hr = ReconnectOutput(cbBuffer, mt)))
+    const bool strict_openjoc = buffer.openjoc_contract != nullptr;
+    if (strict_openjoc)
     {
-        return hr;
+        if (!ValidateLAVOpenJocStrictBuffer(buffer.openjoc_contract, buffer.sfFormat == SampleFormat_FP32,
+                                            buffer.dwSamplesPerSec, buffer.bPlanar != FALSE, buffer.layout,
+                                            buffer.nSamples, buffer.bBuffer->GetCount()))
+        {
+            return E_INVALIDARG;
+        }
+        CMediaType strict_media_type;
+        if (FAILED(hr = CreateOpenJocStrictDirectShowMediaType(*buffer.openjoc_contract, &strict_media_type)))
+            return hr;
+
+        std::size_t required_bytes = 0;
+        long strict_buffer_bytes = 0;
+        const auto *strict_wave = reinterpret_cast<const WAVEFORMATEXTENSIBLE *>(strict_media_type.Format());
+        if (!CheckedLAVOpenJocPcmByteCount(buffer.nSamples, strict_wave->Format.nBlockAlign, &required_bytes) ||
+            !CheckedLAVOpenJocLongNarrow(required_bytes, &strict_buffer_bytes) ||
+            required_bytes != buffer.bBuffer->GetCount())
+        {
+            return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+        }
+
+        const bool strict_type_changed = !IsExactLAVOpenJocStrictMediaType(
+            *buffer.openjoc_contract, m_pOutput->CurrentMediaType());
+        LAVOpenJocStrictDeliveryOperations operations;
+        operations.query_accept = [this](const AM_MEDIA_TYPE &candidate) {
+            return m_pOutput->GetConnected()->QueryAccept(&candidate);
+        };
+        operations.reconnect = [this](const long bytes, const AM_MEDIA_TYPE &candidate) {
+            CMediaType media_type(candidate);
+            return ReconnectOutput(bytes, media_type);
+        };
+        operations.acquire_sample = [this](LAVOpenJocStrictAcquiredSample *sample) {
+            IMediaSample *media_sample = nullptr;
+            HRESULT acquire_hr = m_pOutput->GetDeliveryBuffer(&media_sample, nullptr, nullptr, 0);
+            sample->handle = media_sample;
+            if (FAILED(acquire_hr))
+                return acquire_hr;
+            acquire_hr = media_sample->GetPointer(&sample->data);
+            if (FAILED(acquire_hr))
+                return acquire_hr;
+            sample->capacity = media_sample->GetSize();
+            return media_sample->GetMediaType(&sample->attached_type);
+        };
+        operations.release_attached_type = [](AM_MEDIA_TYPE *attached) { DeleteMediaType(attached); };
+        operations.release_sample = [](void *sample) { static_cast<IMediaSample *>(sample)->Release(); };
+        operations.set_sample_media_type = [](void *sample, const AM_MEDIA_TYPE &candidate) {
+            return static_cast<IMediaSample *>(sample)->SetMediaType(const_cast<AM_MEDIA_TYPE *>(&candidate));
+        };
+        operations.set_output_media_type = [this](const AM_MEDIA_TYPE &candidate) {
+            CMediaType media_type(candidate);
+            return m_pOutput->SetMediaType(&media_type);
+        };
+        operations.deliver = [this, &buffer](void *sample, BYTE *data, const long bytes) {
+            return CompleteOpenJocDelivery(buffer, static_cast<IMediaSample *>(sample), data, bytes);
+        };
+        return DeliverLAVOpenJocStrictMediaType(buffer.openjoc_contract, strict_media_type,
+                                                strict_type_changed, strict_buffer_bytes, operations);
     }
 
-    IMediaSample *pOut;
+    CMediaType mt = CreateMediaType(buffer.sfFormat, buffer.dwSamplesPerSec, buffer.layout.nb_channels,
+                                    (DWORD)buffer.layout.u.mask, buffer.wBitsPerSample);
+    const WAVEFORMATEX *wfe = reinterpret_cast<const WAVEFORMATEX *>(mt.Format());
+    long cbBuffer = buffer.nSamples * wfe->nBlockAlign;
+    if (FAILED(hr = ReconnectOutput(cbBuffer, mt)))
+        return hr;
+
+    IMediaSample *pOut = nullptr;
     BYTE *pDataOut = nullptr;
     if (FAILED(GetDeliveryBuffer(&pOut, &pDataOut)))
     {
@@ -3013,6 +3117,71 @@ HRESULT CLAVAudio::Deliver(BufferDetails &buffer)
     }
 done:
     SafeRelease(&pOut);
+    return hr;
+}
+
+HRESULT CLAVAudio::CompleteOpenJocDelivery(BufferDetails &buffer, IMediaSample *sample, BYTE *data,
+                                           const long requiredBytes)
+{
+    HRESULT hr = S_OK;
+    IMediaSample *pOut = sample;
+
+    if (m_bResyncTimestamp && buffer.rtStart != AV_NOPTS_VALUE)
+    {
+        m_rtStart = buffer.rtStart;
+        m_bResyncTimestamp = FALSE;
+    }
+
+    double dDuration = (double)buffer.nSamples / buffer.dwSamplesPerSec * DBL_SECOND_MULT / m_dRate;
+    m_dStartOffset += fmod(dDuration, 1.0);
+    REFERENCE_TIME rtStart = m_rtStart, rtStop = m_rtStart + (REFERENCE_TIME)(dDuration + 0.5);
+    m_rtStart += (REFERENCE_TIME)dDuration;
+    if (m_dStartOffset > 0.5)
+    {
+        m_rtStart++;
+        m_dStartOffset -= 1.0;
+    }
+
+    if (buffer.rtStart != AV_NOPTS_VALUE)
+    {
+        REFERENCE_TIME rtJitter = rtStart - buffer.rtStart;
+        m_faJitter.Sample(rtJitter);
+        REFERENCE_TIME rtJitterMin = m_faJitter.AbsMinimum();
+        if (m_settings.AutoAVSync && abs(rtJitterMin) > m_JitterLimit)
+        {
+            m_rtStart -= rtJitterMin;
+            rtStart -= rtJitterMin;
+            rtStop -= rtJitterMin;
+            m_faJitter.OffsetValues(-rtJitterMin);
+            m_bDiscontinuity = TRUE;
+        }
+    }
+
+    if (rtStart < 0)
+        goto done;
+
+    if (m_settings.AudioDelayEnabled)
+    {
+        REFERENCE_TIME rtDelay = (REFERENCE_TIME)((m_settings.AudioDelay * 10000i64) / m_dRate);
+        rtStart += rtDelay;
+        rtStop += rtDelay;
+    }
+
+    pOut->SetTime(&rtStart, &rtStop);
+    pOut->SetMediaTime(nullptr, nullptr);
+    pOut->SetPreroll(FALSE);
+    pOut->SetDiscontinuity(m_bDiscontinuity);
+    m_bDiscontinuity = FALSE;
+    pOut->SetSyncPoint(TRUE);
+
+    if (FAILED(hr = pOut->SetActualDataLength(requiredBytes)))
+        goto done;
+    memcpy(data, buffer.bBuffer->Ptr(), requiredBytes);
+    hr = m_pOutput->Deliver(pOut);
+    if (FAILED(hr))
+        DbgLog((LOG_ERROR, 10, L"::Deliver failed with code: %0#.8x", hr));
+
+done:
     return hr;
 }
 

@@ -17,6 +17,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+// pattern: Imperative Shell
+
 #include "stdafx.h"
 #include "PostProcessor.h"
 #include "LAVAudio.h"
@@ -624,6 +626,15 @@ setuperr:
 
 HRESULT CLAVAudio::PostProcess(BufferDetails *buffer)
 {
+    if (buffer->openjoc_contract)
+    {
+        return ValidateLAVOpenJocStrictBuffer(buffer->openjoc_contract, buffer->sfFormat == SampleFormat_FP32,
+                                             buffer->dwSamplesPerSec, buffer->bPlanar != FALSE, buffer->layout,
+                                             buffer->nSamples, buffer->bBuffer->GetCount())
+                   ? S_OK
+                   : E_INVALIDARG;
+    }
+
     // Validate channel mask
     if (buffer->layout.order == AV_CHANNEL_ORDER_UNSPEC || (buffer->layout.order == AV_CHANNEL_ORDER_NATIVE && buffer->layout.u.mask == 0) || (buffer->layout.order != AV_CHANNEL_ORDER_UNSPEC && buffer->layout.order != AV_CHANNEL_ORDER_NATIVE))
     {

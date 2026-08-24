@@ -33,6 +33,7 @@
 #include "BitstreamParser.h"
 #include "PostProcessor.h"
 #include "OpenJocDecoder.h"
+#include "OpenJocStrictOutput.h"
 
 #include "ISpecifyPropertyPages2.h"
 #include "BaseTrayIcon.h"
@@ -84,6 +85,7 @@ struct BufferDetails
     AVChannelLayout layout{};
     REFERENCE_TIME rtStart = AV_NOPTS_VALUE; // Start Time of the buffer
     BOOL bPlanar = FALSE;                    // Planar (not used)
+    const LAVOpenJocOutputContract *openjoc_contract = nullptr; // Non-owning canonical static contract.
 
     BufferDetails() { bBuffer = new GrowableArray<BYTE>(); };
     ~BufferDetails()
@@ -237,6 +239,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
 
     HRESULT PerformFlush();
     HRESULT Deliver(BufferDetails &buffer);
+    HRESULT CompleteOpenJocDelivery(BufferDetails &buffer, IMediaSample *sample, BYTE *data, long requiredBytes);
 
     void CreateBDLPCMHeader(BYTE *pBuf, const WAVEFORMATEX_HDMV_LPCM *wfex_lpcm) const;
     void CreateDVDLPCMHeader(BYTE *pBuf, const WAVEFORMATEX *wfex) const;
