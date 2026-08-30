@@ -5,6 +5,8 @@
 
 // Hidden-dialog integration smoke for shipped-layout and same-instance status pages.
 
+// pattern: Imperative Shell
+
 #include <windows.h>
 
 #include <algorithm>
@@ -29,10 +31,13 @@ constexpr GUID kSettingsPage = {
     0x2d8f1801, 0xa70d, 0x48f4, {0xb7, 0x6b, 0x7f, 0x5a, 0xe0, 0x22, 0xab, 0x54}};
 constexpr GUID kStatusPage = {
     0x20ed4a03, 0x6afd, 0x4fd9, {0x98, 0x0b, 0x2f, 0x61, 0x43, 0xaa, 0x08, 0x92}};
+constexpr GUID kOpenJocPage = {
+    0xb316b03c, 0x8c27, 0x4adb, {0xb4, 0x2b, 0x00, 0xde, 0xc7, 0x82, 0x25, 0xdf}};
 constexpr GUID kAudioSettings = {
     0x4158a22b, 0x6553, 0x45d0, {0x80, 0x69, 0x24, 0x71, 0x6f, 0x8f, 0xf1, 0x71}};
 
 constexpr int kOpenJocOutputPolicyControl = 1136;
+constexpr int kOpenJocDialnormPolicyControl = 1140;
 constexpr int kOpenJocStatusPolicyControl = 1138;
 constexpr int kOpenJocStatusAdmissionControl = 1139;
 constexpr int kTrayIconControl = 1131;
@@ -75,7 +80,12 @@ class PropertyPageSite final : public IPropertyPageSite
     }
     ULONG STDMETHODCALLTYPE AddRef() override { return static_cast<ULONG>(InterlockedIncrement(&references_)); }
     ULONG STDMETHODCALLTYPE Release() override { return static_cast<ULONG>(InterlockedDecrement(&references_)); }
-    HRESULT STDMETHODCALLTYPE OnStatusChange(DWORD) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnStatusChange(DWORD flags) override
+    {
+        if ((flags & PROPPAGESTATUS_DIRTY) != 0)
+            ++dirty_notifications_;
+        return S_OK;
+    }
     HRESULT STDMETHODCALLTYPE GetLocaleID(LCID *locale) override
     {
         if (!locale)
@@ -91,9 +101,11 @@ class PropertyPageSite final : public IPropertyPageSite
         return E_NOINTERFACE;
     }
     HRESULT STDMETHODCALLTYPE TranslateAccelerator(MSG *) override { return S_FALSE; }
+    int dirty_notifications() const { return dirty_notifications_; }
 
   private:
     LONG references_ = 1;
+    int dirty_notifications_ = 0;
 };
 
 class FilterModule final
@@ -341,7 +353,27 @@ void DisconnectPage(IPropertyPage *page, const bool active)
     page->SetPageSite(nullptr);
 }
 
-bool TestSettingsPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND parent)
+bool TestSettingsPageHasNoOpenJocControls(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND parent)
+{
+    IPropertyPage *page = nullptr;
+    HRESULT hr = pages->CreatePage(kSettingsPage, &page);
+    PropertyPageSite site;
+    HWND page_window = nullptr;
+    if (SUCCEEDED(hr))
+        hr = ActivatePage(page, filter, &site, parent, &page_window);
+    const bool active = SUCCEEDED(hr);
+    if (SUCCEEDED(hr) &&
+        (FindControl(page_window, kOpenJocOutputPolicyControl) != nullptr ||
+         FindControl(page_window, kOpenJocDialnormPolicyControl) != nullptr ||
+         FindControl(page_window, kTrayIconControl) == nullptr))
+        hr = E_UNEXPECTED;
+
+    DisconnectPage(page, active);
+    Release(page);
+    return SUCCEEDED(hr);
+}
+
+bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND parent)
 {
     constexpr struct
     {
@@ -356,29 +388,46 @@ bool TestSettingsPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND p
         {LAVOpenJocOutputPolicy::Layout712, L"7.1.2"},
         {LAVOpenJocOutputPolicy::Layout714, L"7.1.4"},
     };
+    constexpr struct
+    {
+        LAVOpenJocDialnormPolicy policy;
+        const wchar_t *label;
+    } expected_dialnorm[] = {
+        {LAVOpenJocDialnormPolicy::Calibrated, L"Calibrated (Recommended)"},
+        {LAVOpenJocDialnormPolicy::UnityCompatibility, L"Unity / Compatibility"},
+    };
 
     ILAVOpenJocSettings *settings = nullptr;
+    ILAVOpenJocLevelSettings *level_settings = nullptr;
     ITestRuntimeSettings *runtime = nullptr;
     HRESULT hr = filter->QueryInterface(__uuidof(ILAVOpenJocSettings), reinterpret_cast<void **>(&settings));
+    if (SUCCEEDED(hr))
+        hr = filter->QueryInterface(__uuidof(ILAVOpenJocLevelSettings),
+                                    reinterpret_cast<void **>(&level_settings));
     if (SUCCEEDED(hr))
         hr = filter->QueryInterface(kAudioSettings, reinterpret_cast<void **>(&runtime));
     if (SUCCEEDED(hr))
         hr = runtime->SetRuntimeConfig(TRUE);
     if (SUCCEEDED(hr))
         hr = settings->SetOutputPolicy(LAVOpenJocOutputPolicy::Layout714);
+    if (SUCCEEDED(hr))
+        hr = level_settings->SetDialnormPolicy(LAVOpenJocDialnormPolicy::Calibrated);
 
     IPropertyPage *page = nullptr;
     if (SUCCEEDED(hr))
-        hr = pages->CreatePage(kSettingsPage, &page);
+        hr = pages->CreatePage(kOpenJocPage, &page);
     PropertyPageSite site;
     HWND page_window = nullptr;
     if (SUCCEEDED(hr))
         hr = ActivatePage(page, filter, &site, parent, &page_window);
     const bool active = SUCCEEDED(hr);
 
-    HWND combo = SUCCEEDED(hr) ? FindControl(parent, kOpenJocOutputPolicyControl) : nullptr;
-    if (!combo || SendMessageW(combo, CB_GETCOUNT, 0, 0) != std::size(expected_policies) ||
-        SendMessageW(combo, CB_GETCURSEL, 0, 0) != 6)
+    HWND combo = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputPolicyControl) : nullptr;
+    HWND dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
+    if (!combo || !dialnorm || SendMessageW(combo, CB_GETCOUNT, 0, 0) != std::size(expected_policies) ||
+        SendMessageW(combo, CB_GETCURSEL, 0, 0) != 6 ||
+        SendMessageW(dialnorm, CB_GETCOUNT, 0, 0) != std::size(expected_dialnorm) ||
+        SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0)
         hr = E_UNEXPECTED;
     for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_policies); ++index)
     {
@@ -389,42 +438,109 @@ bool TestSettingsPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND p
             std::wstring(combo_label) != expected_policies[index].label)
             hr = E_UNEXPECTED;
     }
-
-    HWND tray = SUCCEEDED(hr) ? FindControl(parent, kTrayIconControl) : nullptr;
-    if (!tray)
-        hr = E_UNEXPECTED;
-    if (SUCCEEDED(hr))
+    for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_dialnorm); ++index)
     {
-        const LRESULT old_state = SendMessageW(tray, BM_GETCHECK, 0, 0);
-        SendMessageW(tray, BM_SETCHECK, old_state == BST_CHECKED ? BST_UNCHECKED : BST_CHECKED, 0);
-        SendMessageW(GetParent(tray), WM_COMMAND, MAKEWPARAM(kTrayIconControl, BN_CLICKED),
-                     reinterpret_cast<LPARAM>(tray));
-        hr = page->Apply();
+        wchar_t combo_label[64] = {};
+        SendMessageW(dialnorm, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(combo_label));
+        if (SendMessageW(dialnorm, CB_GETITEMDATA, index, 0) !=
+                static_cast<LRESULT>(expected_dialnorm[index].policy) ||
+            std::wstring(combo_label) != expected_dialnorm[index].label)
+            hr = E_UNEXPECTED;
     }
 
-    LAVOpenJocOutputPolicy policy = LAVOpenJocOutputPolicy::Stereo;
-    if (SUCCEEDED(hr))
-        hr = settings->GetOutputPolicy(&policy);
     if (SUCCEEDED(hr) &&
-        (policy != LAVOpenJocOutputPolicy::Layout714 || SendMessageW(combo, CB_GETCURSEL, 0, 0) != 6))
-        hr = E_UNEXPECTED;
-
-    if (SUCCEEDED(hr) && SendMessageW(combo, CB_SETCURSEL, 0, 0) != 0)
+        (SendMessageW(combo, CB_SETCURSEL, 0, 0) != 0 ||
+         SendMessageW(dialnorm, CB_SETCURSEL, 1, 0) != 1))
         hr = E_UNEXPECTED;
     if (SUCCEEDED(hr))
     {
-        SendMessageW(GetParent(combo), WM_COMMAND, MAKEWPARAM(kOpenJocOutputPolicyControl, CBN_SELCHANGE),
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocOutputPolicyControl, CBN_SELCHANGE),
                      reinterpret_cast<LPARAM>(combo));
-        hr = page->Apply();
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocDialnormPolicyControl, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(dialnorm));
+        if (site.dirty_notifications() < 2)
+            hr = E_UNEXPECTED;
     }
-    if (SUCCEEDED(hr))
-        hr = settings->GetOutputPolicy(&policy);
-    const bool passed = SUCCEEDED(hr) && policy == LAVOpenJocOutputPolicy::Stereo &&
-                        SendMessageW(combo, CB_GETCURSEL, 0, 0) == 0;
 
     DisconnectPage(page, active);
     Release(page);
+
+    LAVOpenJocOutputPolicy policy = LAVOpenJocOutputPolicy::Stereo;
+    LAVOpenJocDialnormPolicy dialnorm_policy = LAVOpenJocDialnormPolicy::UnityCompatibility;
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputPolicy(&policy);
+    if (SUCCEEDED(hr))
+        hr = level_settings->GetDialnormPolicy(&dialnorm_policy);
+    if (SUCCEEDED(hr) && (policy != LAVOpenJocOutputPolicy::Layout714 ||
+                          dialnorm_policy != LAVOpenJocDialnormPolicy::Calibrated))
+        hr = E_UNEXPECTED;
+
+    page = nullptr;
+    page_window = nullptr;
+    if (SUCCEEDED(hr))
+        hr = pages->CreatePage(kOpenJocPage, &page);
+    PropertyPageSite apply_site;
+    if (SUCCEEDED(hr))
+        hr = ActivatePage(page, filter, &apply_site, parent, &page_window);
+    const bool apply_active = SUCCEEDED(hr);
+    combo = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputPolicyControl) : nullptr;
+    dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
+    if (!combo || !dialnorm || SendMessageW(combo, CB_GETCURSEL, 0, 0) != 6 ||
+        SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0)
+        hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr) &&
+        (SendMessageW(combo, CB_SETCURSEL, 0, 0) != 0 ||
+         SendMessageW(dialnorm, CB_SETCURSEL, 1, 0) != 1))
+        hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr))
+    {
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocOutputPolicyControl, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(combo));
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocDialnormPolicyControl, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(dialnorm));
+        hr = page->Apply();
+    }
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputPolicy(&policy);
+    if (SUCCEEDED(hr))
+        hr = level_settings->GetDialnormPolicy(&dialnorm_policy);
+    if (SUCCEEDED(hr) && (policy != LAVOpenJocOutputPolicy::Stereo ||
+                          dialnorm_policy != LAVOpenJocDialnormPolicy::UnityCompatibility))
+        hr = E_UNEXPECTED;
+
+    DisconnectPage(page, apply_active);
+    Release(page);
+    page = nullptr;
+    page_window = nullptr;
+    if (SUCCEEDED(hr))
+        hr = pages->CreatePage(kOpenJocPage, &page);
+    PropertyPageSite reopen_site;
+    if (SUCCEEDED(hr))
+        hr = ActivatePage(page, filter, &reopen_site, parent, &page_window);
+    const bool reopen_active = SUCCEEDED(hr);
+    combo = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputPolicyControl) : nullptr;
+    dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
+    if (!combo || !dialnorm || SendMessageW(combo, CB_GETCURSEL, 0, 0) != 0 ||
+        SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 1)
+        hr = E_UNEXPECTED;
+
+    if (SUCCEEDED(hr) && SendMessageW(dialnorm, CB_SETCURSEL, 0, 0) != 0)
+        hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr))
+    {
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocDialnormPolicyControl, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(dialnorm));
+        hr = page->Apply();
+    }
+    if (SUCCEEDED(hr))
+        hr = level_settings->GetDialnormPolicy(&dialnorm_policy);
+    const bool passed = SUCCEEDED(hr) && policy == LAVOpenJocOutputPolicy::Stereo &&
+                        dialnorm_policy == LAVOpenJocDialnormPolicy::Calibrated;
+
+    DisconnectPage(page, reopen_active);
+    Release(page);
     Release(runtime);
+    Release(level_settings);
     Release(settings);
     return passed;
 }
@@ -540,7 +656,8 @@ int wmain(int argc, wchar_t **argv)
         HRESULT hr = module.CreateFilter(&filter);
         if (SUCCEEDED(hr))
             hr = filter->QueryInterface(__uuidof(ISpecifyPropertyPages2), reinterpret_cast<void **>(&pages));
-        passed = SUCCEEDED(hr) && TestSettingsPage(filter, pages, parent) && TestStatusPage(pages, parent);
+        passed = SUCCEEDED(hr) && TestSettingsPageHasNoOpenJocControls(filter, pages, parent) &&
+                 TestOpenJocPage(filter, pages, parent) && TestStatusPage(pages, parent);
         Release(pages);
         Release(filter);
     }

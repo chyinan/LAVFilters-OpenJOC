@@ -3,12 +3,15 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+// pattern: Functional Core
+
 #include "streams.h"
 #include "OpenJocStrictOutput.h"
 #include "OpenJocStrictNegotiation.h"
 #include "growarray.h"
 
 #include <cassert>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -453,10 +456,19 @@ void TestStrictIdentityIsIntegratedBeforeStockPostprocessing()
     const auto postprocess = lav_audio.find("PostProcess(&out)", decode);
     assert(decode_layout_copy < marker_commit && marker_commit < postprocess);
 
-    const auto strict_check = postprocessor.find("ValidateLAVOpenJocStrictBuffer");
+    const auto strict_branch = postprocessor.find("if (buffer->openjoc_contract)");
+    const auto strict_check = postprocessor.find("ValidateLAVOpenJocStrictBuffer", strict_branch);
+    const auto invalid_return = postprocessor.find("return E_INVALIDARG;", strict_check);
+    const auto stats_guard = postprocessor.find("if (m_bVolumeStats)", invalid_return);
+    const auto stats_update = postprocessor.find("UpdateVolumeStats(*buffer);", stats_guard);
+    const auto strict_return = postprocessor.find("return S_OK;", stats_update);
     const auto stock_validation = postprocessor.find("// Validate channel mask");
-    assert(strict_check != std::string::npos && strict_check < stock_validation);
-    assert(postprocessor.find("return ValidateLAVOpenJocStrictBuffer", strict_check - 16) != std::string::npos);
+    assert(strict_branch != std::string::npos && strict_check != std::string::npos &&
+           invalid_return != std::string::npos && stats_guard != std::string::npos &&
+           stats_update != std::string::npos && strict_return != std::string::npos &&
+           stock_validation != std::string::npos);
+    assert(strict_branch < strict_check && strict_check < invalid_return && invalid_return < stats_guard &&
+           stats_guard < stats_update && stats_update < strict_return && strict_return < stock_validation);
 }
 
 void TestStrictDeliveryPrecedesSampleAndStockFallbacks()
@@ -483,10 +495,35 @@ void TestStrictDeliveryPrecedesSampleAndStockFallbacks()
     const auto timestamp_commit = source.find("m_OutputQueue.rtStart = result.start_time", queue);
     assert(transaction != std::string::npos && timestamp_commit != std::string::npos && transaction < timestamp_commit);
 }
+
+bool RunVolumeStatsSelfTest(const char *const module_path)
+{
+    const std::string path(module_path ? module_path : "");
+    const std::size_t separator = path.find_last_of("\\/");
+    if (separator != std::string::npos)
+        SetDllDirectoryA(path.substr(0, separator).c_str());
+    HMODULE module = LoadLibraryA(module_path);
+    if (!module)
+    {
+        std::fprintf(stderr, "LoadLibrary failed: %lu\n", static_cast<unsigned long>(GetLastError()));
+        SetDllDirectoryA(nullptr);
+        return false;
+    }
+    using SelfTest = HRESULT(WINAPI *)();
+    const auto self_test = reinterpret_cast<SelfTest>(GetProcAddress(module, "LAVOpenJocVolumeStatsSelfTest"));
+    const HRESULT hr = self_test ? self_test() : HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
+    FreeLibrary(module);
+    SetDllDirectoryA(nullptr);
+    if (hr != S_OK)
+        std::fprintf(stderr, "volume-statistics self-test HRESULT: 0x%08lx\n", static_cast<unsigned long>(hr));
+    return hr == S_OK;
+}
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+    if (argc < 1 || argc > 2)
+        return 2;
     TestExactMediaTypes();
     TestMediaTypeRejections();
     TestCompleteDirectShowMediaTypeComparison();
@@ -498,5 +535,10 @@ int main()
     TestStrictBufferIdentityAndValidation();
     TestStrictIdentityIsIntegratedBeforeStockPostprocessing();
     TestStrictDeliveryPrecedesSampleAndStockFallbacks();
+    if (argc == 2 && !RunVolumeStatsSelfTest(argv[1]))
+    {
+        std::fprintf(stderr, "strict OpenJOC volume-statistics self-test failed\n");
+        return 1;
+    }
     return 0;
 }

@@ -29,6 +29,7 @@
   <PropertyGroup>
     <OpenJocDefines Condition="'$(EnableOpenJOC)'=='true'">;LAV_ENABLE_OPENJOC</OpenJocDefines>
     <OpenJocIdentityDefines Condition="'$(EnableOpenJOC)'=='true' and '$(EnableOpenJOCSideBySide)'=='true'">;LAV_OPENJOC_SIDE_BY_SIDE</OpenJocIdentityDefines>
+    <OpenJocTestingDefines Condition="'$(EnableOpenJOC)'=='true' and '$(EnableOpenJOCSideBySide)'=='true' and '$(EnableOpenJOCTesting)'=='true'">;LAV_OPENJOC_TESTING</OpenJocTestingDefines>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <Import Project="$(SolutionDir)common\platform.props" />
@@ -53,16 +54,18 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)'=='Debug'">
     <TargetExt>.ax</TargetExt>
+    <TargetName Condition="'$(EnableOpenJOC)'=='true' and '$(EnableOpenJOCSideBySide)'=='true' and '$(EnableOpenJOCTesting)'=='true'">LAVAudioTest</TargetName>
     <OutDir>$(SolutionDir)bin_$(PlatformName)d\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <TargetExt>.ax</TargetExt>
+    <TargetName Condition="'$(EnableOpenJOC)'=='true' and '$(EnableOpenJOCSideBySide)'=='true' and '$(EnableOpenJOCTesting)'=='true'">LAVAudioTest</TargetName>
     <OutDir>$(SolutionDir)bin_$(PlatformName)\$(ProjectName)\</OutDir>
     <CustomBuildAfterTargets>Build</CustomBuildAfterTargets>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;LAVAUDIO_EXPORTS;$(OpenJocDefines);$(OpenJocIdentityDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;LAVAUDIO_EXPORTS;$(OpenJocDefines);$(OpenJocIdentityDefines);$(OpenJocTestingDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories Condition="'$(EnableOpenJOC)'=='true'">$(OpenJocIncludeDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ResourceCompile>
@@ -78,7 +81,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;LAVAUDIO_EXPORTS;$(OpenJocDefines);$(OpenJocIdentityDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;LAVAUDIO_EXPORTS;$(OpenJocDefines);$(OpenJocIdentityDefines);$(OpenJocTestingDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories Condition="'$(EnableOpenJOC)'=='true'">$(OpenJocIncludeDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <ResourceCompile>
@@ -139,6 +142,7 @@
     <ClInclude Include="Media.h" />
     <ClInclude Include="OpenJocAdmission.h" />
     <ClInclude Include="OpenJocDecoder.h" />
+    <ClInclude Include="OpenJocDialnorm.h" />
     <ClInclude Include="OpenJocOutput.h" />
     <ClInclude Include="OpenJocShippedLayouts.h" />
     <ClInclude Include="OpenJocStrictOutput.h" />

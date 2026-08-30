@@ -18,8 +18,9 @@
  */
 
 /*
- * OpenJOC downstream modification (openjoc-0.12.0, 2026-08-25):
- * preserve OpenJOC-negotiated output channels outside the stock mixer limit.
+ * OpenJOC downstream modification (2026-08-30):
+ * preserve OpenJOC-negotiated output channels outside the stock mixer limit
+ * and retain read-only LAV volume statistics in the validated strict lane.
  */
 
 // pattern: Imperative Shell
@@ -28,6 +29,14 @@
 #include "PostProcessor.h"
 #include "LAVAudio.h"
 #include "Media.h"
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE) && defined(LAV_OPENJOC_TESTING)
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <utility>
+#include <vector>
+#endif
 
 extern "C"
 {
@@ -633,11 +642,15 @@ HRESULT CLAVAudio::PostProcess(BufferDetails *buffer)
 {
     if (buffer->openjoc_contract)
     {
-        return ValidateLAVOpenJocStrictBuffer(buffer->openjoc_contract, buffer->sfFormat == SampleFormat_FP32,
-                                             buffer->dwSamplesPerSec, buffer->bPlanar != FALSE, buffer->layout,
-                                             buffer->nSamples, buffer->bBuffer->GetCount())
-                   ? S_OK
-                   : E_INVALIDARG;
+        if (!ValidateLAVOpenJocStrictBuffer(buffer->openjoc_contract, buffer->sfFormat == SampleFormat_FP32,
+                                            buffer->dwSamplesPerSec, buffer->bPlanar != FALSE, buffer->layout,
+                                            buffer->nSamples, buffer->bBuffer->GetCount()))
+            return E_INVALIDARG;
+
+        if (m_bVolumeStats)
+            UpdateVolumeStats(*buffer);
+
+        return S_OK;
     }
 
     // Validate channel mask
@@ -777,3 +790,152 @@ HRESULT CLAVAudio::PostProcess(BufferDetails *buffer)
     av_channel_layout_uninit(&chMixingLayout);
     return S_OK;
 }
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE) && defined(LAV_OPENJOC_TESTING)
+HRESULT CLAVAudio::RunOpenJocVolumeStatsSelfTest()
+{
+    constexpr std::size_t kFrameSamples = 32;
+    constexpr float kTolerance = 0.002f;
+
+    const auto prepare_buffer = [=](const LAVOpenJocOutputPolicy policy,
+                                    const std::vector<float> &amplitudes,
+                                    BufferDetails *const buffer) -> bool {
+        const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
+        if (!contract || !buffer || amplitudes.size() != contract->channel_count ||
+            !BuildOpenJocAvChannelLayout(*contract, &buffer->layout))
+            return false;
+
+        buffer->sfFormat = SampleFormat_FP32;
+        buffer->wBitsPerSample = 32;
+        buffer->dwSamplesPerSec = 48000;
+        buffer->nSamples = static_cast<unsigned>(kFrameSamples);
+        buffer->bPlanar = FALSE;
+        buffer->openjoc_contract = contract;
+        const std::size_t value_count = kFrameSamples * amplitudes.size();
+        const std::size_t byte_count = value_count * sizeof(float);
+        if (byte_count > MAXDWORD || FAILED(buffer->bBuffer->SetSize(static_cast<DWORD>(byte_count))))
+            return false;
+
+        float *samples = reinterpret_cast<float *>(buffer->bBuffer->Ptr());
+        for (std::size_t frame = 0; frame < kFrameSamples; ++frame)
+        {
+            for (std::size_t channel = 0; channel < amplitudes.size(); ++channel)
+                samples[frame * amplitudes.size() + channel] = amplitudes[channel];
+        }
+        return true;
+    };
+
+    const auto expected_levels = [](const std::vector<float> &amplitudes) {
+        std::vector<float> levels;
+        const std::size_t count = (std::min)(amplitudes.size(), static_cast<std::size_t>(MAX_VOLUME_STAT_CHANNEL));
+        levels.reserve(count);
+        for (std::size_t channel = 0; channel < count; ++channel)
+        {
+            levels.push_back(amplitudes[channel] == 0.0f
+                                 ? -100.0f
+                                 : 20.0f * std::log10(std::fabs(amplitudes[channel])));
+        }
+        return levels;
+    };
+
+    const auto run_valid_case = [&](const LAVOpenJocOutputPolicy policy,
+                                    const std::vector<float> &amplitudes) -> HRESULT {
+        HRESULT constructor_hr = S_OK;
+        CLAVAudio audio(nullptr, &constructor_hr);
+        if (FAILED(constructor_hr) || FAILED(audio.EnableVolumeStats()))
+            return FAILED(constructor_hr) ? constructor_hr : E_FAIL;
+
+        BufferDetails buffer;
+        if (!prepare_buffer(policy, amplitudes, &buffer))
+            return E_FAIL;
+        const std::vector<BYTE> before(buffer.bBuffer->Ptr(), buffer.bBuffer->Ptr() + buffer.bBuffer->GetCount());
+        for (int iteration = 0; iteration < 10; ++iteration)
+        {
+            if (audio.PostProcess(&buffer) != S_OK ||
+                std::memcmp(before.data(), buffer.bBuffer->Ptr(), before.size()) != 0)
+                return E_UNEXPECTED;
+        }
+
+        const std::vector<float> expected = expected_levels(amplitudes);
+        for (std::size_t channel = 0; channel < expected.size(); ++channel)
+        {
+            if (std::fabs(audio.m_faVolume[channel].Average() - expected[channel]) > kTolerance)
+                return E_UNEXPECTED;
+        }
+        return S_OK;
+    };
+
+    const std::vector<std::pair<LAVOpenJocOutputPolicy, std::vector<float>>> cases = {
+        {LAVOpenJocOutputPolicy::Stereo, {0.0f, 0.0f}},
+        {LAVOpenJocOutputPolicy::Stereo, {0.5f, 0.5f}},
+        {LAVOpenJocOutputPolicy::Stereo, {0.01f, 0.01f}},
+        {LAVOpenJocOutputPolicy::Stereo, {0.5f, 0.125f}},
+        {LAVOpenJocOutputPolicy::Layout51, {0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f, 0.015625f}},
+        {LAVOpenJocOutputPolicy::Layout71,
+         {0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f, 0.015625f, 0.0078125f, 0.00390625f}},
+        {LAVOpenJocOutputPolicy::Layout714,
+         {0.5f, 0.25f, 0.125f, 0.0625f, 0.03125f, 0.015625f, 0.0078125f, 0.00390625f,
+          0.001953125f, 0.0009765625f, 0.00048828125f, 0.000244140625f}},
+    };
+    for (const auto &test : cases)
+    {
+        const HRESULT hr = run_valid_case(test.first, test.second);
+        if (FAILED(hr))
+            return hr;
+    }
+
+    {
+        HRESULT constructor_hr = S_OK;
+        CLAVAudio audio(nullptr, &constructor_hr);
+        BufferDetails buffer;
+        const std::vector<float> amplitudes = {0.5f, 0.125f};
+        if (FAILED(constructor_hr) || !prepare_buffer(LAVOpenJocOutputPolicy::Stereo, amplitudes, &buffer))
+            return E_FAIL;
+        const std::vector<BYTE> before(buffer.bBuffer->Ptr(), buffer.bBuffer->Ptr() + buffer.bBuffer->GetCount());
+        if (audio.PostProcess(&buffer) != S_OK ||
+            std::memcmp(before.data(), buffer.bBuffer->Ptr(), before.size()) != 0)
+            return E_UNEXPECTED;
+        for (const auto &average : audio.m_faVolume)
+        {
+            if (average.Average() != 0.0f)
+                return E_UNEXPECTED;
+        }
+    }
+
+    {
+        HRESULT constructor_hr = S_OK;
+        CLAVAudio audio(nullptr, &constructor_hr);
+        if (FAILED(constructor_hr) || FAILED(audio.EnableVolumeStats()))
+            return E_FAIL;
+        BufferDetails buffer;
+        const std::vector<float> amplitudes = {0.5f, 0.125f};
+        if (!prepare_buffer(LAVOpenJocOutputPolicy::Stereo, amplitudes, &buffer))
+            return E_FAIL;
+        for (int iteration = 0; iteration < 10; ++iteration)
+        {
+            if (audio.PostProcess(&buffer) != S_OK)
+                return E_UNEXPECTED;
+        }
+        std::array<float, MAX_VOLUME_STAT_CHANNEL> before_averages{};
+        for (std::size_t channel = 0; channel < before_averages.size(); ++channel)
+            before_averages[channel] = audio.m_faVolume[channel].Average();
+        const std::vector<BYTE> before_pcm(buffer.bBuffer->Ptr(), buffer.bBuffer->Ptr() + buffer.bBuffer->GetCount());
+        buffer.dwSamplesPerSec = 44100;
+        if (audio.PostProcess(&buffer) != E_INVALIDARG ||
+            std::memcmp(before_pcm.data(), buffer.bBuffer->Ptr(), before_pcm.size()) != 0)
+            return E_UNEXPECTED;
+        for (std::size_t channel = 0; channel < before_averages.size(); ++channel)
+        {
+            if (audio.m_faVolume[channel].Average() != before_averages[channel])
+                return E_UNEXPECTED;
+        }
+    }
+
+    return S_OK;
+}
+
+extern "C" __declspec(dllexport) HRESULT WINAPI LAVOpenJocVolumeStatsSelfTest()
+{
+    return CLAVAudio::RunOpenJocVolumeStatsSelfTest();
+}
+#endif

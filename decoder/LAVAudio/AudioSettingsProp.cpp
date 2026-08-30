@@ -52,21 +52,12 @@ HRESULT CLAVAudioSettingsProp::OnConnect(IUnknown *pUnk)
     }
     ASSERT(m_pAudioSettings == nullptr);
     HRESULT hr = pUnk->QueryInterface(&m_pAudioSettings);
-#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-    if (SUCCEEDED(hr))
-        hr = pUnk->QueryInterface(&m_pOpenJocSettings);
-    if (FAILED(hr))
-        SafeRelease(&m_pAudioSettings);
-#endif
     return hr;
 }
 
 HRESULT CLAVAudioSettingsProp::OnDisconnect()
 {
     SafeRelease(&m_pAudioSettings);
-#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-    SafeRelease(&m_pOpenJocSettings);
-#endif
     return S_OK;
 }
 
@@ -148,22 +139,6 @@ HRESULT CLAVAudioSettingsProp::OnApplyChanges()
 
     bFlag = (BOOL)SendDlgItemMessage(m_Dlg, IDC_TRAYICON, BM_GETCHECK, 0, 0);
     m_pAudioSettings->SetTrayIcon(bFlag);
-
-#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-    const LRESULT selected_index = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETCURSEL, 0, 0);
-    if (selected_index != CB_ERR)
-    {
-        const LRESULT item_data =
-            SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETITEMDATA, selected_index, 0);
-        const auto policy = static_cast<LAVOpenJocOutputPolicy>(static_cast<std::uint32_t>(item_data));
-        if (item_data == CB_ERR || !IsLAVOpenJocOutputPolicyShipped(policy) ||
-            !FindLAVOpenJocOutputContract(policy))
-            return E_UNEXPECTED;
-        const HRESULT policy_hr = m_pOpenJocSettings->SetOutputPolicy(policy);
-        if (SUCCEEDED(hr) && FAILED(policy_hr))
-            hr = policy_hr;
-    }
-#endif
 
     LoadData();
 
@@ -257,33 +232,6 @@ HRESULT CLAVAudioSettingsProp::OnActivate()
 
         SendDlgItemMessage(m_Dlg, IDC_TRAYICON, BM_SETCHECK, m_TrayIcon, 0);
 
-#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_RESETCONTENT, 0, 0);
-        std::size_t shipped_count = 0;
-        const LAVOpenJocOutputPolicy *shipped = GetLAVOpenJocShippedOutputPolicies(&shipped_count);
-        LRESULT selected_index = CB_ERR;
-        for (std::size_t index = 0; index < shipped_count; ++index)
-        {
-            const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(shipped[index]);
-            if (!contract)
-                continue;
-            ATL::CA2W label(contract->property_page_label);
-            const LRESULT combo_index =
-                SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_ADDSTRING, 0, (LPARAM)(LPCWSTR)label);
-            if (combo_index == CB_ERR || combo_index == CB_ERRSPACE)
-                return E_OUTOFMEMORY;
-            const LRESULT set_result =
-                SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_SETITEMDATA, combo_index,
-                                   static_cast<LPARAM>(static_cast<std::uint32_t>(shipped[index])));
-            const LRESULT stored_data =
-                SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETITEMDATA, combo_index, 0);
-            if (set_result == CB_ERR || stored_data != static_cast<LRESULT>(static_cast<std::uint32_t>(shipped[index])))
-                return E_UNEXPECTED;
-            if (shipped[index] == m_openJocOutputPolicy)
-                selected_index = combo_index;
-        }
-        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_SETCURSEL, selected_index, 0);
-#endif
     }
 
     return hr;
@@ -310,10 +258,6 @@ HRESULT CLAVAudioSettingsProp::LoadData()
     m_pAudioSettings->GetAudioDelay(&m_bAudioDelay, &m_iAudioDelay);
 
     m_TrayIcon = m_pAudioSettings->GetTrayIcon();
-
-#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-    hr = m_pOpenJocSettings->GetOutputPolicy(&m_openJocOutputPolicy);
-#endif
 
     return hr;
 }
@@ -476,13 +420,6 @@ INT_PTR CLAVAudioSettingsProp::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wPa
             if (bFlag != m_TrayIcon)
                 SetDirty();
         }
-#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-        else if (LOWORD(wParam) == IDC_OPENJOC_OUTPUT_POLICY && HIWORD(wParam) == CBN_SELCHANGE)
-        {
-            SetDirty();
-        }
-#endif
-
         break;
     case WM_HSCROLL:
         lValue = SendDlgItemMessage(m_Dlg, IDC_DRC_LEVEL, TBM_GETPOS, 0, 0);
@@ -498,6 +435,142 @@ INT_PTR CLAVAudioSettingsProp::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wPa
     // Let the parent class handle the message.
     return __super::OnReceiveMessage(hwnd, uMsg, wParam, lParam);
 }
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+CLAVAudioOpenJocProp::CLAVAudioOpenJocProp(LPUNKNOWN pUnk, HRESULT *phr)
+    : CBaseDSPropPage(NAME("LAVCAudioOpenJocProp"), pUnk, IDD_PROPPAGE_OPENJOC, IDS_OPENJOC)
+{
+}
+
+CLAVAudioOpenJocProp::~CLAVAudioOpenJocProp()
+{
+}
+
+HRESULT CLAVAudioOpenJocProp::OnConnect(IUnknown *pUnk)
+{
+    if (!pUnk)
+        return E_POINTER;
+    ASSERT(!m_pOpenJocSettings && !m_pOpenJocLevelSettings);
+    HRESULT hr = pUnk->QueryInterface(&m_pOpenJocSettings);
+    if (SUCCEEDED(hr))
+        hr = pUnk->QueryInterface(&m_pOpenJocLevelSettings);
+    if (FAILED(hr))
+    {
+        SafeRelease(&m_pOpenJocSettings);
+        SafeRelease(&m_pOpenJocLevelSettings);
+    }
+    return hr;
+}
+
+HRESULT CLAVAudioOpenJocProp::OnDisconnect()
+{
+    SafeRelease(&m_pOpenJocSettings);
+    SafeRelease(&m_pOpenJocLevelSettings);
+    return S_OK;
+}
+
+HRESULT CLAVAudioOpenJocProp::LoadData()
+{
+    HRESULT hr = m_pOpenJocSettings->GetOutputPolicy(&m_outputPolicy);
+    if (SUCCEEDED(hr))
+        hr = m_pOpenJocLevelSettings->GetDialnormPolicy(&m_dialnormPolicy);
+    return hr;
+}
+
+HRESULT CLAVAudioOpenJocProp::OnActivate()
+{
+    HRESULT hr = LoadData();
+    if (FAILED(hr))
+        return hr;
+
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_RESETCONTENT, 0, 0);
+    std::size_t shipped_count = 0;
+    const LAVOpenJocOutputPolicy *shipped = GetLAVOpenJocShippedOutputPolicies(&shipped_count);
+    LRESULT selected_output = CB_ERR;
+    for (std::size_t index = 0; index < shipped_count; ++index)
+    {
+        const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(shipped[index]);
+        if (!contract)
+            return E_UNEXPECTED;
+        ATL::CA2W label(contract->property_page_label);
+        const LRESULT combo_index =
+            SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_ADDSTRING, 0, (LPARAM)(LPCWSTR)label);
+        if (combo_index == CB_ERR || combo_index == CB_ERRSPACE)
+            return E_OUTOFMEMORY;
+        if (SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_SETITEMDATA, combo_index,
+                               static_cast<LPARAM>(static_cast<std::uint32_t>(shipped[index]))) == CB_ERR)
+            return E_UNEXPECTED;
+        if (shipped[index] == m_outputPolicy)
+            selected_output = combo_index;
+    }
+    if (selected_output == CB_ERR)
+        return E_UNEXPECTED;
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_SETCURSEL, selected_output, 0);
+
+    constexpr struct
+    {
+        LAVOpenJocDialnormPolicy policy;
+        const wchar_t *label;
+    } dialnorm_options[] = {
+        {LAVOpenJocDialnormPolicy::Calibrated, L"Calibrated (Recommended)"},
+        {LAVOpenJocDialnormPolicy::UnityCompatibility, L"Unity / Compatibility"},
+    };
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_DIALNORM_POLICY, CB_RESETCONTENT, 0, 0);
+    LRESULT selected_dialnorm = CB_ERR;
+    for (const auto &option : dialnorm_options)
+    {
+        const LRESULT combo_index = SendDlgItemMessage(
+            m_Dlg, IDC_OPENJOC_DIALNORM_POLICY, CB_ADDSTRING, 0, (LPARAM)option.label);
+        if (combo_index == CB_ERR || combo_index == CB_ERRSPACE)
+            return E_OUTOFMEMORY;
+        if (SendDlgItemMessage(m_Dlg, IDC_OPENJOC_DIALNORM_POLICY, CB_SETITEMDATA, combo_index,
+                               static_cast<LPARAM>(static_cast<std::uint32_t>(option.policy))) == CB_ERR)
+            return E_UNEXPECTED;
+        if (option.policy == m_dialnormPolicy)
+            selected_dialnorm = combo_index;
+    }
+    if (selected_dialnorm == CB_ERR)
+        return E_UNEXPECTED;
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_DIALNORM_POLICY, CB_SETCURSEL, selected_dialnorm, 0);
+    return S_OK;
+}
+
+HRESULT CLAVAudioOpenJocProp::OnApplyChanges()
+{
+    const LRESULT output_index = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETCURSEL, 0, 0);
+    const LRESULT dialnorm_index = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_DIALNORM_POLICY, CB_GETCURSEL, 0, 0);
+    if (output_index == CB_ERR || dialnorm_index == CB_ERR)
+        return E_UNEXPECTED;
+
+    const LRESULT output_data =
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETITEMDATA, output_index, 0);
+    const LRESULT dialnorm_data =
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_DIALNORM_POLICY, CB_GETITEMDATA, dialnorm_index, 0);
+    const auto output_policy = static_cast<LAVOpenJocOutputPolicy>(static_cast<std::uint32_t>(output_data));
+    const auto dialnorm_policy =
+        static_cast<LAVOpenJocDialnormPolicy>(static_cast<std::uint32_t>(dialnorm_data));
+    if (output_data == CB_ERR || !IsLAVOpenJocOutputPolicyShipped(output_policy) ||
+        !FindLAVOpenJocOutputContract(output_policy) || dialnorm_data == CB_ERR ||
+        (dialnorm_policy != LAVOpenJocDialnormPolicy::Calibrated &&
+         dialnorm_policy != LAVOpenJocDialnormPolicy::UnityCompatibility))
+        return E_UNEXPECTED;
+
+    HRESULT hr = m_pOpenJocSettings->SetOutputPolicy(output_policy);
+    if (SUCCEEDED(hr))
+        hr = m_pOpenJocLevelSettings->SetDialnormPolicy(dialnorm_policy);
+    if (SUCCEEDED(hr))
+        hr = LoadData();
+    return hr;
+}
+
+INT_PTR CLAVAudioOpenJocProp::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    if (uMsg == WM_COMMAND && HIWORD(wParam) == CBN_SELCHANGE &&
+        (LOWORD(wParam) == IDC_OPENJOC_OUTPUT_POLICY || LOWORD(wParam) == IDC_OPENJOC_DIALNORM_POLICY))
+        SetDirty();
+    return __super::OnReceiveMessage(hwnd, uMsg, wParam, lParam);
+}
+#endif
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Mixer Configurations

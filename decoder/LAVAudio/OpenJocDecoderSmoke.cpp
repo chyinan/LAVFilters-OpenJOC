@@ -3,9 +3,12 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+// pattern: Imperative Shell
+
 // OpenJOC C-ABI bridge smoke test.
 
 #include "OpenJocDecoder.h"
+#include "OpenJocDialnorm.h"
 #include "OpenJocOutput.h"
 
 #include <array>
@@ -13,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -172,6 +176,64 @@ static void policy_assignment_and_switch_are_safe(const std::vector<unsigned cha
     assert(decoder.StreamInputBytes() == 0);
 }
 
+static void dialnorm_assignment_and_switch_are_safe(const std::vector<unsigned char> &bytes)
+{
+    LAVOpenJocDecoder decoder;
+    assert(decoder.IsAvailable());
+    assert(decoder.DialnormPolicy() == LAVOpenJocDialnormPolicy::Calibrated);
+    assert(decoder.Process(bytes.data(), bytes.size(), INT64_MIN, true) == LAVOpenJocProcessResult::OpenJoc);
+#if defined(LAV_OPENJOC_TESTING)
+    assert(decoder.ConfigDescriptorForTesting() != nullptr);
+    assert(std::strstr(decoder.ConfigDescriptorForTesting(), "dialnorm=default") != nullptr);
+#endif
+
+    const std::size_t classified_before_noop = decoder.ClassifierInputBytes();
+    const std::size_t streamed_before_noop = decoder.StreamInputBytes();
+    assert(decoder.SetDialnormPolicy(LAVOpenJocDialnormPolicy::Calibrated));
+    assert(decoder.State() == LAVOpenJocState::OpenJoc);
+    assert(decoder.ClassifierInputBytes() == classified_before_noop);
+    assert(decoder.StreamInputBytes() == streamed_before_noop);
+
+    assert(!decoder.SetDialnormPolicy(static_cast<LAVOpenJocDialnormPolicy>(0xffffffffu)));
+    assert(decoder.DialnormPolicy() == LAVOpenJocDialnormPolicy::Calibrated);
+    assert(decoder.State() == LAVOpenJocState::OpenJoc);
+    assert(decoder.ClassifierInputBytes() == classified_before_noop);
+    assert(decoder.StreamInputBytes() == streamed_before_noop);
+
+    assert(decoder.SetDialnormPolicy(LAVOpenJocDialnormPolicy::UnityCompatibility));
+    assert(decoder.DialnormPolicy() == LAVOpenJocDialnormPolicy::UnityCompatibility);
+    assert(decoder.State() == LAVOpenJocState::Undecided);
+    assert(decoder.ClassifierInputBytes() == 0);
+    assert(decoder.StreamInputBytes() == 0);
+    LAVOpenJocFrame stale;
+    assert(!decoder.ReceiveFrame(stale));
+
+    assert(decoder.Process(bytes.data(), bytes.size(), INT64_MIN, true) == LAVOpenJocProcessResult::OpenJoc);
+#if defined(LAV_OPENJOC_TESTING)
+    assert(decoder.ConfigDescriptorForTesting() != nullptr);
+    assert(std::strstr(decoder.ConfigDescriptorForTesting(), "dialnorm=analog") != nullptr);
+#endif
+    assert_frames_match_contract(decoder, decoder.OutputContract());
+    assert(decoder.SetDialnormPolicy(LAVOpenJocDialnormPolicy::Calibrated));
+    assert(decoder.DialnormPolicy() == LAVOpenJocDialnormPolicy::Calibrated);
+    assert(decoder.State() == LAVOpenJocState::Undecided);
+}
+
+static void dialnorm_config_is_applied_before_decoder_creation()
+{
+    const std::filesystem::path source_path = std::filesystem::path(__FILE__).parent_path() / "OpenJocDecoder.cpp";
+    std::ifstream source_file(source_path, std::ios::binary);
+    const std::string source((std::istreambuf_iterator<char>(source_file)), std::istreambuf_iterator<char>());
+    const auto initializer_symbol = source.find("openjoc_decoder_config_init_v1_4");
+    const auto config_init = source.find("api.decoder_config_init_v1_4(&config)");
+    const auto map = source.find("TryMapLAVOpenJocDialnormPolicy", config_init);
+    const auto assignment = source.find("config.dialnorm_mode = dialnorm_mode", map);
+    const auto create = source.find("api.stream_decoder_create(&config, &candidate)", assignment);
+    assert(initializer_symbol != std::string::npos && config_init != std::string::npos &&
+           map != std::string::npos && assignment != std::string::npos && create != std::string::npos);
+    assert(config_init < map && map < assignment && assignment < create);
+}
+
 #if defined(LAV_OPENJOC_TESTING)
 static void failed_policy_change_is_atomic(const std::vector<unsigned char> &bytes,
                                            const bool fail_classifier_create)
@@ -231,6 +293,33 @@ static void reset_preserves_classifier_rebuild_failure_diagnostic()
     assert(decoder.ClassifierInputBytes() == 0);
     assert(decoder.StreamInputBytes() == 0);
 }
+
+static void failed_dialnorm_change_is_atomic(const std::vector<unsigned char> &bytes,
+                                             const bool fail_classifier_create)
+{
+    LAVOpenJocDecoder decoder;
+    assert(decoder.IsAvailable());
+    assert(decoder.Process(bytes.data(), bytes.size(), INT64_MIN, true) == LAVOpenJocProcessResult::OpenJoc);
+
+    const LAVOpenJocState old_state = decoder.State();
+    const std::size_t old_classifier_bytes = decoder.ClassifierInputBytes();
+    const std::size_t old_stream_bytes = decoder.StreamInputBytes();
+    if (fail_classifier_create)
+        decoder.FailNextClassifierCreateForTesting();
+    else
+        decoder.FailNextDecoderCreateForTesting();
+
+    assert(!decoder.SetDialnormPolicy(LAVOpenJocDialnormPolicy::UnityCompatibility));
+    assert(decoder.DialnormPolicy() == LAVOpenJocDialnormPolicy::Calibrated);
+    assert(decoder.State() == old_state);
+    assert(decoder.ClassifierInputBytes() == old_classifier_bytes);
+    assert(decoder.StreamInputBytes() == old_stream_bytes);
+    assert(decoder.HasError());
+
+    LAVOpenJocFrame pending;
+    assert(decoder.ReceiveFrame(pending));
+    assert(pending.output_contract == decoder.OutputContract());
+}
 #endif
 
 int main(int argc, char **argv)
@@ -240,9 +329,13 @@ int main(int argc, char **argv)
     const std::vector<unsigned char> joc = read_file(argv[2]);
     classify_and_feed_joc_for_all_policies(joc);
     policy_assignment_and_switch_are_safe(joc);
+    dialnorm_assignment_and_switch_are_safe(joc);
+    dialnorm_config_is_applied_before_decoder_creation();
 #if defined(LAV_OPENJOC_TESTING)
     failed_policy_change_is_atomic(joc, true);
     failed_policy_change_is_atomic(joc, false);
+    failed_dialnorm_change_is_atomic(joc, true);
+    failed_dialnorm_change_is_atomic(joc, false);
     reset_preserves_classifier_rebuild_failure_diagnostic();
 #endif
     return 0;

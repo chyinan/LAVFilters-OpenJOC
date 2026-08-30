@@ -34,3 +34,22 @@ interface __declspec(uuid("6B97FD1C-B463-4B5E-9349-CD8B964D6B46")) ILAVOpenJocSe
     STDMETHOD(GetOutputPolicy)(LAVOpenJocOutputPolicy * policy) = 0;
     STDMETHOD(SetOutputPolicy)(LAVOpenJocOutputPolicy policy) = 0;
 };
+
+inline constexpr std::uint32_t LAV_OPENJOC_DIALNORM_POLICY_SCHEMA_VERSION = 1;
+
+enum class LAVOpenJocDialnormPolicy : std::uint32_t
+{
+    Calibrated = 0,
+    UnityCompatibility = 1,
+};
+
+static_assert(sizeof(LAVOpenJocDialnormPolicy) == sizeof(std::uint32_t));
+
+// {82FA58E4-10B7-4C25-95E6-1098496995CA}
+DEFINE_GUID(IID_ILAVOpenJocLevelSettings, 0x82fa58e4, 0x10b7, 0x4c25, 0x95, 0xe6, 0x10, 0x98, 0x49, 0x69, 0x95, 0xca);
+
+interface __declspec(uuid("82FA58E4-10B7-4C25-95E6-1098496995CA")) ILAVOpenJocLevelSettings : public IUnknown
+{
+    STDMETHOD(GetDialnormPolicy)(LAVOpenJocDialnormPolicy * policy) = 0;
+    STDMETHOD(SetDialnormPolicy)(LAVOpenJocDialnormPolicy policy) = 0;
+};

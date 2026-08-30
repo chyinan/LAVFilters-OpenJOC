@@ -29,6 +29,9 @@
 #include "LAVAudio.h"
 #include "PostProcessor.h"
 #include "OpenJocStrictNegotiation.h"
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+#include "OpenJocDialnorm.h"
+#endif
 
 #include <MMReg.h>
 #include <assert.h>
@@ -76,6 +79,8 @@ namespace
 {
 constexpr wchar_t kOpenJocOutputPolicyVersionValue[] = L"OpenJocOutputPolicyVersion";
 constexpr wchar_t kOpenJocOutputPolicyValue[] = L"OpenJocOutputPolicy";
+constexpr wchar_t kOpenJocDialnormPolicyVersionValue[] = L"OpenJocDialnormPolicyVersion";
+constexpr wchar_t kOpenJocDialnormPolicyValue[] = L"OpenJocDialnormPolicy";
 
 bool ReadExactRegistryDword(HKEY root_key, const wchar_t *subkey, const wchar_t *value_name, DWORD *value)
 {
@@ -229,6 +234,7 @@ HRESULT CLAVAudio::LoadDefaults()
 
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     m_settings.OpenJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
+    m_settings.OpenJocDialnormPolicy = LAVOpenJocDialnormPolicy::Calibrated;
 #endif
 
     return S_OK;
@@ -244,7 +250,10 @@ HRESULT CLAVAudio::LoadSettings()
     if (m_bRuntimeConfig)
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     {
-        return ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy::Stereo, true);
+        const HRESULT output_hr = ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy::Stereo, true);
+        if (FAILED(output_hr))
+            return output_hr;
+        return ConfigureOpenJocDialnormPolicy(LAVOpenJocDialnormPolicy::Calibrated, true);
     }
 #else
         return S_FALSE;
@@ -259,6 +268,13 @@ HRESULT CLAVAudio::LoadSettings()
     {
         m_settings.OpenJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
         ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy::Stereo, true);
+    }
+    LoadOpenJocDialnormPolicySettings();
+    const HRESULT dialnorm_hr = ConfigureOpenJocDialnormPolicy(m_settings.OpenJocDialnormPolicy, true);
+    if (FAILED(dialnorm_hr))
+    {
+        m_settings.OpenJocDialnormPolicy = LAVOpenJocDialnormPolicy::Calibrated;
+        ConfigureOpenJocDialnormPolicy(LAVOpenJocDialnormPolicy::Calibrated, true);
     }
 #endif
     return settings_hr;
@@ -316,6 +332,69 @@ HRESULT CLAVAudio::ConfigureOpenJocOutputPolicy(const LAVOpenJocOutputPolicy pol
     }
 
     m_settings.OpenJocOutputPolicy = policy;
+    if (changed && clear_queues)
+    {
+        m_buff.Clear();
+        FlushOutput(FALSE);
+        m_bQueueResync = TRUE;
+        m_bResyncTimestamp = FALSE;
+    }
+
+    return S_OK;
+}
+
+HRESULT CLAVAudio::LoadOpenJocDialnormPolicySettings()
+{
+    m_settings.OpenJocDialnormPolicy = LAVOpenJocDialnormPolicy::Calibrated;
+    DWORD version = 0;
+    DWORD policy_value = 0;
+    if (!ReadExactRegistryDword(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY,
+                                kOpenJocDialnormPolicyVersionValue, &version) ||
+        version != LAV_OPENJOC_DIALNORM_POLICY_SCHEMA_VERSION ||
+        !ReadExactRegistryDword(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY,
+                                kOpenJocDialnormPolicyValue, &policy_value))
+        return S_FALSE;
+
+    const auto policy = static_cast<LAVOpenJocDialnormPolicy>(policy_value);
+    if (!IsLAVOpenJocDialnormPolicy(policy))
+        return S_FALSE;
+    m_settings.OpenJocDialnormPolicy = policy;
+    return S_OK;
+}
+
+HRESULT CLAVAudio::SaveOpenJocDialnormPolicySettings(const LAVOpenJocDialnormPolicy policy)
+{
+    if (m_bRuntimeConfig)
+        return S_FALSE;
+    if (!CreateRegistryKey(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY))
+        return HRESULT_FROM_WIN32(GetLastError());
+
+    HRESULT hr = S_OK;
+    CRegistry registry(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY, hr);
+    if (FAILED(hr))
+        return hr;
+    hr = registry.WriteDWORD(kOpenJocDialnormPolicyVersionValue,
+                             LAV_OPENJOC_DIALNORM_POLICY_SCHEMA_VERSION);
+    if (FAILED(hr))
+        return hr;
+    return registry.WriteDWORD(kOpenJocDialnormPolicyValue, static_cast<DWORD>(policy));
+}
+
+HRESULT CLAVAudio::ConfigureOpenJocDialnormPolicy(const LAVOpenJocDialnormPolicy policy,
+                                                  const bool clear_queues)
+{
+    if (!IsLAVOpenJocDialnormPolicy(policy))
+        return E_INVALIDARG;
+
+    const LAVOpenJocDialnormPolicy current_policy = m_openJoc.DialnormPolicy();
+    const bool changed = current_policy != policy;
+    if (!m_openJoc.SetDialnormPolicy(policy))
+    {
+        m_settings.OpenJocDialnormPolicy = current_policy;
+        return E_FAIL;
+    }
+
+    m_settings.OpenJocDialnormPolicy = policy;
     if (changed && clear_queues)
     {
         m_buff.Clear();
@@ -585,7 +664,7 @@ STDMETHODIMP CLAVAudio::NonDelegatingQueryInterface(REFIID riid, void **ppv)
     return QI(ISpecifyPropertyPages) QI(ISpecifyPropertyPages2) QI2(ILAVAudioSettings)
         QI2(ILAVAudioStatus) QI2(ILAVOpenJocStatus)
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-            QI2(ILAVOpenJocSettings) QI2(ILAVOpenJocDiagnostics)
+            QI2(ILAVOpenJocSettings) QI2(ILAVOpenJocLevelSettings) QI2(ILAVOpenJocDiagnostics)
 #endif
                 __super::NonDelegatingQueryInterface(riid, ppv);
 }
@@ -595,17 +674,29 @@ STDMETHODIMP CLAVAudio::GetPages(CAUUID *pPages)
 {
     CheckPointer(pPages, E_POINTER);
     BOOL bShowStatusPage = m_pInput && m_pInput->IsConnected();
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    pPages->cElems = bShowStatusPage ? 5 : 4;
+#else
     pPages->cElems = bShowStatusPage ? 4 : 3;
+#endif
     pPages->pElems = (GUID *)CoTaskMemAlloc(sizeof(GUID) * pPages->cElems);
     if (pPages->pElems == nullptr)
     {
         return E_OUTOFMEMORY;
     }
     pPages->pElems[0] = CLSID_LAVAudioSettingsProp;
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    pPages->pElems[1] = CLSID_LAVAudioOpenJocProp;
+    pPages->pElems[2] = CLSID_LAVAudioMixingProp;
+    pPages->pElems[3] = CLSID_LAVAudioFormatsProp;
+    if (bShowStatusPage)
+        pPages->pElems[4] = CLSID_LAVAudioStatusProp;
+#else
     pPages->pElems[1] = CLSID_LAVAudioMixingProp;
     pPages->pElems[2] = CLSID_LAVAudioFormatsProp;
     if (bShowStatusPage)
         pPages->pElems[3] = CLSID_LAVAudioStatusProp;
+#endif
     return S_OK;
 }
 
@@ -619,6 +710,10 @@ STDMETHODIMP CLAVAudio::CreatePage(const GUID &guid, IPropertyPage **ppPage)
 
     if (guid == CLSID_LAVAudioSettingsProp)
         *ppPage = new CLAVAudioSettingsProp(nullptr, &hr);
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    else if (guid == CLSID_LAVAudioOpenJocProp)
+        *ppPage = new CLAVAudioOpenJocProp(nullptr, &hr);
+#endif
     else if (guid == CLSID_LAVAudioMixingProp)
         *ppPage = new CLAVAudioMixingProp(nullptr, &hr);
     else if (guid == CLSID_LAVAudioFormatsProp)
@@ -696,6 +791,29 @@ HRESULT CLAVAudio::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
     if (FAILED(hr))
         return hr;
     const HRESULT save_hr = SaveOpenJocOutputPolicySettings(policy);
+    return save_hr == S_FALSE ? S_OK : save_hr;
+}
+
+HRESULT CLAVAudio::GetDialnormPolicy(LAVOpenJocDialnormPolicy *policy)
+{
+    CheckPointer(policy, E_POINTER);
+    CAutoLock receive_lock(&m_csReceive);
+    *policy = m_settings.OpenJocDialnormPolicy;
+    return S_OK;
+}
+
+HRESULT CLAVAudio::SetDialnormPolicy(const LAVOpenJocDialnormPolicy policy)
+{
+    if (!IsLAVOpenJocDialnormPolicy(policy))
+        return E_INVALIDARG;
+    HRESULT hr = S_OK;
+    {
+        CAutoLock receive_lock(&m_csReceive);
+        hr = ConfigureOpenJocDialnormPolicy(policy, true);
+    }
+    if (FAILED(hr))
+        return hr;
+    const HRESULT save_hr = SaveOpenJocDialnormPolicySettings(policy);
     return save_hr == S_FALSE ? S_OK : save_hr;
 }
 #endif

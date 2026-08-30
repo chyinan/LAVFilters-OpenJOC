@@ -5,6 +5,8 @@
 
 // RT_DIALOG identity control for guarded target-only property-page resources.
 
+// pattern: Imperative Shell
+
 #include <windows.h>
 
 #include <cstdio>
@@ -72,14 +74,15 @@ int wmain(int argc, wchar_t **argv)
         }
     }
 
-    if (target.Dialog(10) != stock.Dialog(10) || target.Dialog(11) != stock.Dialog(11))
+    if (target.Dialog(9) != stock.Dialog(9) || target.Dialog(10) != stock.Dialog(10) ||
+        target.Dialog(11) != stock.Dialog(11))
     {
         std::fwprintf(stderr, L"unguarded target RT_DIALOG changed\n");
         return 1;
     }
-    if (target.Dialog(9) == stock.Dialog(9) || target.Dialog(12) == stock.Dialog(12))
+    if (target.Dialog(12) == stock.Dialog(12) || target.Dialog(13).empty() || !stock.Dialog(13).empty())
     {
-        std::fwprintf(stderr, L"target-only settings/status RT_DIALOG was not emitted\n");
+        std::fwprintf(stderr, L"target-only OpenJOC/status RT_DIALOG was not emitted\n");
         return 1;
     }
 

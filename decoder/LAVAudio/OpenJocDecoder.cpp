@@ -7,6 +7,7 @@
 
 #include "stdafx.h"
 #include "OpenJocDecoder.h"
+#include "OpenJocDialnorm.h"
 
 #include <array>
 #include <deque>
@@ -69,6 +70,7 @@ struct LAVOpenJocDecoder::Impl
     bool available = false;
     const LAVOpenJocOutputContract *output_contract =
         FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Stereo);
+    LAVOpenJocDialnormPolicy dialnorm_policy = LAVOpenJocDialnormPolicy::Calibrated;
 
 #if defined(LAV_OPENJOC_TESTING)
     bool fail_next_classifier_create = false;
@@ -82,7 +84,7 @@ struct LAVOpenJocDecoder::Impl
         HMODULE module = nullptr;
 
         std::uint32_t (*get_abi_version)() = nullptr;
-        openjoc_status (*decoder_config_init)(openjoc_decoder_config *) = nullptr;
+        openjoc_status (*decoder_config_init_v1_4)(openjoc_decoder_config *) = nullptr;
         openjoc_status (*stream_decoder_create)(const openjoc_decoder_config *, openjoc_stream_decoder **) = nullptr;
         void (*stream_decoder_destroy)(openjoc_stream_decoder *) = nullptr;
         openjoc_status (*stream_decoder_send_chunk)(openjoc_stream_decoder *, const std::uint8_t *, std::size_t,
@@ -92,6 +94,9 @@ struct LAVOpenJocDecoder::Impl
         openjoc_status (*stream_decoder_reset)(openjoc_stream_decoder *) = nullptr;
         const char *(*stream_decoder_last_error)(const openjoc_stream_decoder *) = nullptr;
         const char *(*stream_decoder_get_channel_label)(const openjoc_stream_decoder *, std::size_t) = nullptr;
+#if defined(LAV_OPENJOC_TESTING)
+        const char *(*stream_decoder_get_config_descriptor)(const openjoc_stream_decoder *) = nullptr;
+#endif
         openjoc_status (*pcm_frame_init)(openjoc_pcm_frame *) = nullptr;
         openjoc_status (*classifier_create)(openjoc_classifier **) = nullptr;
         void (*classifier_destroy)(openjoc_classifier *) = nullptr;
@@ -108,7 +113,7 @@ struct LAVOpenJocDecoder::Impl
                 return false;
 
             if (!LoadOpenJocSymbol(module, "openjoc_get_abi_version", get_abi_version) ||
-                !LoadOpenJocSymbol(module, "openjoc_decoder_config_init", decoder_config_init) ||
+                !LoadOpenJocSymbol(module, "openjoc_decoder_config_init_v1_4", decoder_config_init_v1_4) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_create", stream_decoder_create) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_destroy", stream_decoder_destroy) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_send_chunk", stream_decoder_send_chunk) ||
@@ -118,6 +123,10 @@ struct LAVOpenJocDecoder::Impl
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_last_error", stream_decoder_last_error) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_get_channel_label",
                                    stream_decoder_get_channel_label) ||
+#if defined(LAV_OPENJOC_TESTING)
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_get_config_descriptor",
+                                   stream_decoder_get_config_descriptor) ||
+#endif
                 !LoadOpenJocSymbol(module, "openjoc_pcm_frame_init", pcm_frame_init) ||
                 !LoadOpenJocSymbol(module, "openjoc_classifier_create", classifier_create) ||
                 !LoadOpenJocSymbol(module, "openjoc_classifier_destroy", classifier_destroy) ||
@@ -220,6 +229,7 @@ struct LAVOpenJocDecoder::Impl
     }
 
     bool CreateDecoderForContract(const LAVOpenJocOutputContract *contract,
+                                  const LAVOpenJocDialnormPolicy dialnorm_policy,
                                   openjoc_stream_decoder **output_decoder)
     {
         if (!output_decoder)
@@ -238,7 +248,7 @@ struct LAVOpenJocDecoder::Impl
 #endif
 
         openjoc_decoder_config config{};
-        if (!api.decoder_config_init || api.decoder_config_init(&config) != OPENJOC_STATUS_OK)
+        if (!api.decoder_config_init_v1_4 || api.decoder_config_init_v1_4(&config) != OPENJOC_STATUS_OK)
         {
             SetApiError("failed to initialize OpenJOC decoder configuration");
             return false;
@@ -263,6 +273,13 @@ struct LAVOpenJocDecoder::Impl
             config.render_mode = OPENJOC_RENDER_SPEAKER;
             config.speaker_layout = contract->abi_preset_name;
         }
+        std::uint32_t dialnorm_mode = 0;
+        if (!TryMapLAVOpenJocDialnormPolicy(dialnorm_policy, &dialnorm_mode))
+        {
+            SetApiError("invalid OpenJOC dialnorm policy");
+            return false;
+        }
+        config.dialnorm_mode = dialnorm_mode;
 
         openjoc_stream_decoder *candidate = nullptr;
         if (!api.stream_decoder_create)
@@ -284,7 +301,7 @@ struct LAVOpenJocDecoder::Impl
 
     bool CreateDecoder()
     {
-        return decoder || CreateDecoderForContract(output_contract, &decoder);
+        return decoder || CreateDecoderForContract(output_contract, dialnorm_policy, &decoder);
     }
 
     bool ValidateAndCopyFrame(const openjoc_pcm_frame &pcm, LAVOpenJocFrame &output)
@@ -484,7 +501,22 @@ bool LAVOpenJocDecoder::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
     const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
     if (!contract)
         return false;
-    if (contract == m_impl->output_contract)
+    return SetConfiguration(contract, m_impl->dialnorm_policy);
+}
+
+bool LAVOpenJocDecoder::SetDialnormPolicy(const LAVOpenJocDialnormPolicy policy)
+{
+    if (!IsLAVOpenJocDialnormPolicy(policy))
+        return false;
+    return SetConfiguration(m_impl->output_contract, policy);
+}
+
+bool LAVOpenJocDecoder::SetConfiguration(const LAVOpenJocOutputContract *const contract,
+                                         const LAVOpenJocDialnormPolicy dialnorm_policy)
+{
+    if (!contract || !IsLAVOpenJocDialnormPolicy(dialnorm_policy))
+        return false;
+    if (contract == m_impl->output_contract && dialnorm_policy == m_impl->dialnorm_policy)
         return true;
 
 #if defined(LAV_ENABLE_OPENJOC)
@@ -494,7 +526,7 @@ bool LAVOpenJocDecoder::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
         return false;
 
     openjoc_stream_decoder *next_decoder = nullptr;
-    if (!m_impl->CreateDecoderForContract(contract, &next_decoder))
+    if (!m_impl->CreateDecoderForContract(contract, dialnorm_policy, &next_decoder))
     {
         m_impl->api.classifier_destroy(next_classifier);
         return false;
@@ -505,6 +537,7 @@ bool LAVOpenJocDecoder::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
     m_impl->classifier = next_classifier;
     m_impl->decoder = next_decoder;
     m_impl->output_contract = contract;
+    m_impl->dialnorm_policy = dialnorm_policy;
     m_impl->available = true;
     if (old_decoder)
         m_impl->api.stream_decoder_destroy(old_decoder);
@@ -513,6 +546,7 @@ bool LAVOpenJocDecoder::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
     m_impl->pending_frames.clear();
 #else
     m_impl->output_contract = contract;
+    m_impl->dialnorm_policy = dialnorm_policy;
 #endif
     m_impl->admission.reset();
     m_impl->admission_pts_samples = kNoPts;
@@ -525,6 +559,11 @@ bool LAVOpenJocDecoder::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
 const LAVOpenJocOutputContract *LAVOpenJocDecoder::OutputContract() const
 {
     return m_impl->output_contract;
+}
+
+LAVOpenJocDialnormPolicy LAVOpenJocDecoder::DialnormPolicy() const
+{
+    return m_impl->dialnorm_policy;
 }
 
 LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, const std::size_t data_size,
@@ -749,5 +788,16 @@ void LAVOpenJocDecoder::FailNextDecoderCreateForTesting()
 void LAVOpenJocDecoder::FailNextClassifierResetForTesting()
 {
     m_impl->fail_next_classifier_reset = true;
+}
+
+const char *LAVOpenJocDecoder::ConfigDescriptorForTesting() const
+{
+#if defined(LAV_ENABLE_OPENJOC)
+    return m_impl->decoder && m_impl->api.stream_decoder_get_config_descriptor
+               ? m_impl->api.stream_decoder_get_config_descriptor(m_impl->decoder)
+               : nullptr;
+#else
+    return nullptr;
+#endif
 }
 #endif

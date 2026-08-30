@@ -45,7 +45,9 @@ class LAVOpenJocDecoder final
     bool IsAvailable() const;
     LAVOpenJocState State() const;
     bool SetOutputPolicy(LAVOpenJocOutputPolicy policy);
+    bool SetDialnormPolicy(LAVOpenJocDialnormPolicy policy);
     const LAVOpenJocOutputContract *OutputContract() const;
+    LAVOpenJocDialnormPolicy DialnormPolicy() const;
     LAVOpenJocProcessResult Process(const unsigned char *data, std::size_t data_size, std::int64_t pts_samples,
                                     bool end_of_stream);
     bool ReceiveFrame(LAVOpenJocFrame &frame);
@@ -61,9 +63,11 @@ class LAVOpenJocDecoder final
     void FailNextClassifierCreateForTesting();
     void FailNextDecoderCreateForTesting();
     void FailNextClassifierResetForTesting();
+    const char *ConfigDescriptorForTesting() const;
 #endif
 
   private:
+    bool SetConfiguration(const LAVOpenJocOutputContract *contract, LAVOpenJocDialnormPolicy dialnorm_policy);
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };

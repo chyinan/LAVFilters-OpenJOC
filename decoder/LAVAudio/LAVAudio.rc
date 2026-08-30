@@ -1,7 +1,7 @@
 // Microsoft Visual C++ generated resource script.
 //
-// OpenJOC downstream modification (openjoc-0.12.0, 2026-08-25):
-// add controls and sizing for explicit OpenJOC output-policy selection.
+// OpenJOC downstream modification (2026-08-30):
+// add a guarded dedicated OpenJOC output and programme-level settings page.
 //
 // pattern: Imperative Shell
 #include "resource.h"
@@ -121,11 +121,23 @@ BEGIN
     EDITTEXT        IDC_DELAY,261,35,46,13,ES_AUTOHSCROLL,WS_EX_RIGHT
     CONTROL         "",IDC_DELAYSPIN,"msctls_updown32",UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_AUTOBUDDY | UDS_ARROWKEYS | UDS_NOTHOUSANDS | UDS_HOTTRACK,305,35,11,13
     CONTROL         "Enable System Tray Icon", IDC_TRAYICON, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 7, 219, 192, 10
-#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-    LTEXT           "OpenJOC output:",IDC_LBL_OPENJOC_OUTPUT_POLICY,209,200,62,8
-    COMBOBOX        IDC_OPENJOC_OUTPUT_POLICY,274,197,84,48,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-#endif
 END
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+IDD_PROPPAGE_OPENJOC DIALOGEX 0, 0, 369, 145
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD
+FONT 8, "MS Shell Dlg", 400, 0, 0x0
+BEGIN
+    GROUPBOX        "Output",IDC_STATIC,7,7,355,40
+    LTEXT           "OpenJOC output:",IDC_LBL_OPENJOC_OUTPUT_POLICY,17,24,66,8
+    COMBOBOX        IDC_OPENJOC_OUTPUT_POLICY,91,21,118,68,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    GROUPBOX        "Program Level",IDC_STATIC,7,53,355,82
+    LTEXT           "Dialnorm:",IDC_LBL_OPENJOC_DIALNORM_POLICY,17,71,66,8
+    COMBOBOX        IDC_OPENJOC_DIALNORM_POLICY,91,68,144,36,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Calibrated respects the programme dialnorm carried by E-AC-3.",IDC_OPENJOC_DIALNORM_HELP_CALIBRATED,17,91,335,10
+    LTEXT           "Unity disables dialnorm gain for compatibility and may sound louder.",IDC_OPENJOC_DIALNORM_HELP_UNITY,17,107,335,10
+END
+#endif
 
 IDD_PROPPAGE_AUDIO_MIXING DIALOGEX 0, 0, 369, 215
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD
@@ -264,6 +276,9 @@ BEGIN
     IDS_STATUS              "Status"
     IDS_FORMATS             "Formats"
     IDS_MIXER               "Mixing"
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    IDS_OPENJOC             "OpenJOC"
+#endif
 END
 
 #endif    // English (United States) resources

@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+// pattern: Functional Core
+
 #include "OpenJocShippedLayouts.h"
 #include "OpenJocOutput.h"
 
@@ -48,8 +50,13 @@ int main(const int argc, char **argv)
     const std::string source((std::istreambuf_iterator<char>(source_file)), std::istreambuf_iterator<char>());
     assert(source.find("CB_SETITEMDATA") != std::string::npos);
     assert(source.find("CB_GETITEMDATA") != std::string::npos);
-    assert(source.find("selected_index != CB_ERR") != std::string::npos);
+    assert(source.find("CLAVAudioOpenJocProp::OnActivate") != std::string::npos);
+    assert(source.find("selected_output == CB_ERR") != std::string::npos);
     assert(source.find("SetOutputPolicy") != std::string::npos);
+    const auto settings_apply = source.find("HRESULT CLAVAudioSettingsProp::OnApplyChanges()");
+    const auto openjoc_page = source.find("CLAVAudioOpenJocProp::CLAVAudioOpenJocProp");
+    assert(settings_apply != std::string::npos && openjoc_page != std::string::npos && settings_apply < openjoc_page);
+    assert(source.substr(settings_apply, openjoc_page - settings_apply).find("SetOutputPolicy") == std::string::npos);
     assert(source.find("ParseOpenJoc") == std::string::npos);
     assert(source.find("endpoint") == std::string::npos);
     assert(source.find("product name") == std::string::npos);

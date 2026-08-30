@@ -9,11 +9,17 @@
 #define IDD_PROPPAGE_AUDIO_MIXING       10
 #define IDD_PROPPAGE_FORMATS            11
 #define IDD_PROPPAGE_STATUS             12
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+#define IDD_PROPPAGE_OPENJOC            13
+#endif
 #define IDS_SETTINGS                    101
 #define IDS_STATUS                      102
 #define IDS_FORMATS                     103
 #define IDI_ICON1                       104
 #define IDS_MIXER                       105
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+#define IDS_OPENJOC                     106
+#endif
 #define IDC_INPUT_STATUS                1013
 #define IDC_OUTPUT_STATUS               1026
 #define IDC_DRC                         1034
@@ -116,14 +122,20 @@
 #define IDC_LBL_OPENJOC_OUTPUT_POLICY   1137
 #define IDC_OPENJOC_STATUS_POLICY       1138
 #define IDC_OPENJOC_STATUS_ADMISSION    1139
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+#define IDC_OPENJOC_DIALNORM_POLICY     1140
+#define IDC_LBL_OPENJOC_DIALNORM_POLICY 1141
+#define IDC_OPENJOC_DIALNORM_HELP_CALIBRATED 1142
+#define IDC_OPENJOC_DIALNORM_HELP_UNITY 1143
+#endif
 
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        106
+#define _APS_NEXT_RESOURCE_VALUE        107
 #define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1140
+#define _APS_NEXT_CONTROL_VALUE         1144
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

@@ -5,6 +5,8 @@
 
 // Isolated COM/settings/registry integration smoke test.
 
+// pattern: Imperative Shell
+
 #include <windows.h>
 
 #include <cstdint>
@@ -24,11 +26,15 @@ constexpr wchar_t kPolicyKey[] = L"Software\\LAV\\Audio\\OpenJOC";
 constexpr wchar_t kParentAudioKey[] = L"Software\\LAV\\Audio";
 constexpr wchar_t kPolicyVersionValue[] = L"OpenJocOutputPolicyVersion";
 constexpr wchar_t kPolicyValue[] = L"OpenJocOutputPolicy";
+constexpr wchar_t kDialnormVersionValue[] = L"OpenJocDialnormPolicyVersion";
+constexpr wchar_t kDialnormValue[] = L"OpenJocDialnormPolicy";
 
 constexpr GUID kOpenJocLavAudio = {
     0x27247580, 0xc701, 0x40cd, {0x88, 0x6d, 0xe6, 0x18, 0xfc, 0x8c, 0x9f, 0xff}};
 constexpr GUID kOpenJocSettingsIidOracle = {
     0x6b97fd1c, 0xb463, 0x4b5e, {0x93, 0x49, 0xcd, 0x8b, 0x96, 0x4d, 0x6b, 0x46}};
+constexpr GUID kOpenJocLevelSettingsIidOracle = {
+    0x82fa58e4, 0x10b7, 0x4c25, {0x95, 0xe6, 0x10, 0x98, 0x49, 0x69, 0x95, 0xca}};
 constexpr GUID kAudioSettings = {
     0x4158a22b, 0x6553, 0x45d0, {0x80, 0x69, 0x24, 0x71, 0x6f, 0x8f, 0xf1, 0x71}};
 
@@ -173,6 +179,33 @@ class FilterModule final
         return hr;
     }
 
+    HRESULT CreateLevel(ILAVOpenJocLevelSettings **settings, ITestRuntimeSettings **runtime = nullptr) const
+    {
+        if (!settings)
+            return E_POINTER;
+        *settings = nullptr;
+        if (runtime)
+            *runtime = nullptr;
+        if (FAILED(status_) || !factory_)
+            return FAILED(status_) ? status_ : E_FAIL;
+
+        IBaseFilter *filter = nullptr;
+        HRESULT hr = factory_->CreateInstance(nullptr, IID_IBaseFilter,
+                                              reinterpret_cast<void **>(&filter));
+        if (SUCCEEDED(hr))
+            hr = filter->QueryInterface(__uuidof(ILAVOpenJocLevelSettings), reinterpret_cast<void **>(settings));
+        if (SUCCEEDED(hr) && runtime)
+            hr = filter->QueryInterface(kAudioSettings, reinterpret_cast<void **>(runtime));
+        Release(filter);
+        if (FAILED(hr))
+        {
+            Release(*settings);
+            if (runtime)
+                Release(*runtime);
+        }
+        return hr;
+    }
+
   private:
     HMODULE module_ = nullptr;
     IClassFactory *factory_ = nullptr;
@@ -187,6 +220,19 @@ bool ResetPolicyKey()
         return false;
     const LONG version_status = RegDeleteValueW(key, kPolicyVersionValue);
     const LONG policy_status = RegDeleteValueW(key, kPolicyValue);
+    RegCloseKey(key);
+    return (version_status == ERROR_SUCCESS || version_status == ERROR_FILE_NOT_FOUND) &&
+           (policy_status == ERROR_SUCCESS || policy_status == ERROR_FILE_NOT_FOUND);
+}
+
+bool ResetDialnormKey()
+{
+    HKEY key = nullptr;
+    const LONG open_status = RegOpenKeyExW(HKEY_CURRENT_USER, kPolicyKey, 0, KEY_SET_VALUE, &key);
+    if (open_status != ERROR_SUCCESS)
+        return false;
+    const LONG version_status = RegDeleteValueW(key, kDialnormVersionValue);
+    const LONG policy_status = RegDeleteValueW(key, kDialnormValue);
     RegCloseKey(key);
     return (version_status == ERROR_SUCCESS || version_status == ERROR_FILE_NOT_FOUND) &&
            (policy_status == ERROR_SUCCESS || policy_status == ERROR_FILE_NOT_FOUND);
@@ -242,6 +288,149 @@ bool ExpectLoadedPolicy(const FilterModule &module, const LAVOpenJocOutputPolicy
         hr = settings->GetOutputPolicy(&actual);
     Release(settings);
     return SUCCEEDED(hr) && actual == expected;
+}
+
+bool ExpectLoadedDialnorm(const FilterModule &module, const LAVOpenJocDialnormPolicy expected)
+{
+    ILAVOpenJocLevelSettings *settings = nullptr;
+    HRESULT hr = module.CreateLevel(&settings);
+    LAVOpenJocDialnormPolicy actual = LAVOpenJocDialnormPolicy::UnityCompatibility;
+    if (SUCCEEDED(hr))
+        hr = settings->GetDialnormPolicy(&actual);
+    Release(settings);
+    return SUCCEEDED(hr) && actual == expected;
+}
+
+bool TestDialnormDefaultAndSetters(const FilterModule &module)
+{
+    if (!ResetDialnormKey())
+        return false;
+
+    ILAVOpenJocLevelSettings *settings = nullptr;
+    HRESULT hr = module.CreateLevel(&settings);
+    LAVOpenJocDialnormPolicy actual = LAVOpenJocDialnormPolicy::UnityCompatibility;
+    if (SUCCEEDED(hr))
+        hr = settings->GetDialnormPolicy(&actual);
+    if (FAILED(hr) || actual != LAVOpenJocDialnormPolicy::Calibrated ||
+        settings->GetDialnormPolicy(nullptr) != E_POINTER)
+    {
+        Release(settings);
+        return false;
+    }
+
+    for (const auto policy : {LAVOpenJocDialnormPolicy::Calibrated,
+                              LAVOpenJocDialnormPolicy::UnityCompatibility})
+    {
+        if (settings->SetDialnormPolicy(policy) != S_OK ||
+            settings->GetDialnormPolicy(&actual) != S_OK || actual != policy)
+        {
+            Release(settings);
+            return false;
+        }
+    }
+
+    const HRESULT invalid_hr = settings->SetDialnormPolicy(
+        static_cast<LAVOpenJocDialnormPolicy>(0xffffffffu));
+    const HRESULT get_hr = settings->GetDialnormPolicy(&actual);
+    Release(settings);
+    return invalid_hr == E_INVALIDARG && get_hr == S_OK &&
+           actual == LAVOpenJocDialnormPolicy::UnityCompatibility &&
+           ValueIsExactDword(kPolicyKey, kDialnormVersionValue, 1) &&
+           ValueIsExactDword(kPolicyKey, kDialnormValue, 1) &&
+           ExpectLoadedDialnorm(module, LAVOpenJocDialnormPolicy::UnityCompatibility);
+}
+
+bool TestDialnormPersistenceMatrix(const FilterModule &module)
+{
+    if (!ResetDialnormKey() || !ExpectLoadedDialnorm(module, LAVOpenJocDialnormPolicy::Calibrated))
+        return false;
+    if (!ResetDialnormKey() || !WriteDword(kDialnormValue, 1) ||
+        !ExpectLoadedDialnorm(module, LAVOpenJocDialnormPolicy::Calibrated))
+        return false;
+    if (!ResetDialnormKey() || !WriteDword(kDialnormVersionValue, 1) ||
+        !ExpectLoadedDialnorm(module, LAVOpenJocDialnormPolicy::Calibrated))
+        return false;
+
+    struct Case
+    {
+        DWORD version;
+        DWORD policy;
+    };
+    constexpr Case fallback_cases[] = {{0, 1}, {2, 1}, {1, 2}, {1, 0xffffffffu}};
+    for (const auto &test : fallback_cases)
+    {
+        if (!ResetDialnormKey() || !WriteDword(kDialnormVersionValue, test.version) ||
+            !WriteDword(kDialnormValue, test.policy) ||
+            !ExpectLoadedDialnorm(module, LAVOpenJocDialnormPolicy::Calibrated))
+            return false;
+    }
+
+    const DWORD version = 1;
+    const DWORD unity = 1;
+    const WORD truncated = 1;
+    if (!ResetDialnormKey() ||
+        !WriteRawValue(kDialnormVersionValue, REG_BINARY, &version, sizeof(version)) ||
+        !WriteDword(kDialnormValue, unity) ||
+        !ExpectLoadedDialnorm(module, LAVOpenJocDialnormPolicy::Calibrated))
+        return false;
+    if (!ResetDialnormKey() || !WriteDword(kDialnormVersionValue, version) ||
+        !WriteRawValue(kDialnormValue, REG_BINARY, &unity, sizeof(unity)) ||
+        !ExpectLoadedDialnorm(module, LAVOpenJocDialnormPolicy::Calibrated))
+        return false;
+    if (!ResetDialnormKey() ||
+        !WriteRawValue(kDialnormVersionValue, REG_DWORD, &truncated, sizeof(truncated)) ||
+        !WriteDword(kDialnormValue, unity) ||
+        !ExpectLoadedDialnorm(module, LAVOpenJocDialnormPolicy::Calibrated))
+        return false;
+    if (!ResetDialnormKey() || !WriteDword(kDialnormVersionValue, version) ||
+        !WriteRawValue(kDialnormValue, REG_DWORD, &truncated, sizeof(truncated)) ||
+        !ExpectLoadedDialnorm(module, LAVOpenJocDialnormPolicy::Calibrated))
+        return false;
+
+    for (const auto policy : {LAVOpenJocDialnormPolicy::Calibrated,
+                              LAVOpenJocDialnormPolicy::UnityCompatibility})
+    {
+        ILAVOpenJocLevelSettings *settings = nullptr;
+        HRESULT hr = ResetDialnormKey() ? module.CreateLevel(&settings) : E_FAIL;
+        if (SUCCEEDED(hr))
+            hr = settings->SetDialnormPolicy(policy);
+        Release(settings);
+        if (FAILED(hr) ||
+            !ValueIsExactDword(kPolicyKey, kDialnormVersionValue, 1) ||
+            !ValueIsExactDword(kPolicyKey, kDialnormValue, static_cast<DWORD>(policy)) ||
+            !ExpectLoadedDialnorm(module, policy))
+            return false;
+    }
+    return true;
+}
+
+bool TestDialnormNamespaceAndRuntimeIsolation(const FilterModule &module)
+{
+    if (!ResetDialnormKey() || !WriteDword(kDialnormVersionValue, 1) || !WriteDword(kDialnormValue, 0))
+        return false;
+    ILAVOpenJocLevelSettings *settings = nullptr;
+    ITestRuntimeSettings *runtime = nullptr;
+    HRESULT hr = module.CreateLevel(&settings, &runtime);
+    if (SUCCEEDED(hr))
+        hr = runtime->SetRuntimeConfig(TRUE);
+    if (SUCCEEDED(hr))
+        hr = settings->SetDialnormPolicy(LAVOpenJocDialnormPolicy::UnityCompatibility);
+    LAVOpenJocDialnormPolicy actual = LAVOpenJocDialnormPolicy::Calibrated;
+    if (SUCCEEDED(hr))
+        hr = settings->GetDialnormPolicy(&actual);
+    if (SUCCEEDED(hr) && actual != LAVOpenJocDialnormPolicy::UnityCompatibility)
+        hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr))
+        hr = runtime->SetRuntimeConfig(FALSE);
+    if (SUCCEEDED(hr))
+        hr = settings->GetDialnormPolicy(&actual);
+    Release(runtime);
+    Release(settings);
+    return SUCCEEDED(hr) && actual == LAVOpenJocDialnormPolicy::Calibrated &&
+           ValueIsExactDword(kPolicyKey, kDialnormVersionValue, 1) &&
+           ValueIsExactDword(kPolicyKey, kDialnormValue, 0) &&
+           ValueIsAbsent(kParentAudioKey, kDialnormVersionValue) &&
+           ValueIsAbsent(kParentAudioKey, kDialnormValue);
 }
 
 bool TestDefaultAndSetters(const FilterModule &module)
@@ -401,7 +590,9 @@ bool TestPolicyReloadClearsIncompatibleQueues()
         return false;
     const std::string load = source.substr(load_begin, load_end - load_begin);
     if (load.find("ConfigureOpenJocOutputPolicy(m_settings.OpenJocOutputPolicy, true)") == std::string::npos ||
-        load.find("ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy::Stereo, true)") == std::string::npos)
+        load.find("ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy::Stereo, true)") == std::string::npos ||
+        load.find("ConfigureOpenJocDialnormPolicy(m_settings.OpenJocDialnormPolicy, true)") == std::string::npos ||
+        load.find("ConfigureOpenJocDialnormPolicy(LAVOpenJocDialnormPolicy::Calibrated, true)") == std::string::npos)
         return false;
 
     const std::size_t configure_begin = source.find("HRESULT CLAVAudio::ConfigureOpenJocOutputPolicy(");
@@ -422,6 +613,22 @@ bool TestPolicyReloadClearsIncompatibleQueues()
           clear_output < queue_resync && queue_resync < timestamp_resync))
         return false;
 
+    const std::size_t dialnorm_configure_begin = source.find("HRESULT CLAVAudio::ConfigureOpenJocDialnormPolicy(");
+    const std::size_t dialnorm_configure_end = source.find("HRESULT CLAVAudio::ReadSettings(", dialnorm_configure_begin);
+    if (dialnorm_configure_begin == std::string::npos || dialnorm_configure_end == std::string::npos)
+        return false;
+    const std::string dialnorm_configure =
+        source.substr(dialnorm_configure_begin, dialnorm_configure_end - dialnorm_configure_begin);
+    const std::size_t dialnorm_transition = dialnorm_configure.find("m_openJoc.SetDialnormPolicy(policy)");
+    const std::size_t dialnorm_changed = dialnorm_configure.find("if (changed && clear_queues)");
+    const std::size_t dialnorm_clear_input = dialnorm_configure.find("m_buff.Clear();", dialnorm_changed);
+    const std::size_t dialnorm_clear_output = dialnorm_configure.find("FlushOutput(FALSE);", dialnorm_clear_input);
+    if (dialnorm_transition == std::string::npos || dialnorm_changed == std::string::npos ||
+        dialnorm_clear_input == std::string::npos || dialnorm_clear_output == std::string::npos ||
+        !(dialnorm_transition < dialnorm_changed && dialnorm_changed < dialnorm_clear_input &&
+          dialnorm_clear_input < dialnorm_clear_output))
+        return false;
+
     const std::size_t flush_begin = source.find("HRESULT CLAVAudio::FlushOutput(BOOL bDeliver)");
     const std::size_t flush_end = source.find("static HRESULT CreateOpenJocStrictDirectShowMediaType", flush_begin);
     if (flush_begin == std::string::npos || flush_end == std::string::npos)
@@ -437,9 +644,15 @@ bool TestPolicyReloadClearsIncompatibleQueues()
 int wmain(int argc, wchar_t **argv)
 {
     static_assert(sizeof(LAVOpenJocOutputPolicy) == sizeof(std::uint32_t));
+    static_assert(sizeof(LAVOpenJocDialnormPolicy) == sizeof(std::uint32_t));
     if (!IsEqualGUID(__uuidof(ILAVOpenJocSettings), kOpenJocSettingsIidOracle))
     {
         std::fwprintf(stderr, L"ILAVOpenJocSettings IID oracle mismatch\n");
+        return 1;
+    }
+    if (!IsEqualGUID(__uuidof(ILAVOpenJocLevelSettings), kOpenJocLevelSettingsIidOracle))
+    {
+        std::fwprintf(stderr, L"ILAVOpenJocLevelSettings IID oracle mismatch\n");
         return 1;
     }
     if (argc != 2)
@@ -481,6 +694,21 @@ int wmain(int argc, wchar_t **argv)
         else if (!TestRuntimeConfigDoesNotWrite(module))
         {
             std::fwprintf(stderr, L"runtime-config registry isolation failed\n");
+            test_result = 1;
+        }
+        else if (!TestDialnormDefaultAndSetters(module))
+        {
+            std::fwprintf(stderr, L"default/setter dialnorm contract failed\n");
+            test_result = 1;
+        }
+        else if (!TestDialnormPersistenceMatrix(module))
+        {
+            std::fwprintf(stderr, L"strict registry dialnorm matrix failed\n");
+            test_result = 1;
+        }
+        else if (!TestDialnormNamespaceAndRuntimeIsolation(module))
+        {
+            std::fwprintf(stderr, L"dialnorm namespace/runtime isolation failed\n");
             test_result = 1;
         }
     }

@@ -78,11 +78,6 @@ class CLAVAudioSettingsProp : public CBaseDSPropPage
 
   private:
     ILAVAudioSettings *m_pAudioSettings = nullptr;
-#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-    ILAVOpenJocSettings *m_pOpenJocSettings = nullptr;
-    LAVOpenJocOutputPolicy m_openJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
-#endif
-
     BOOL m_bDRCEnabled;
     int m_iDRCLevel;
 
@@ -100,6 +95,39 @@ class CLAVAudioSettingsProp : public CBaseDSPropPage
     int m_iAudioDelay;
     BOOL m_TrayIcon;
 };
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+// {B316B03C-8C27-4ADB-B42B-00DEC78225DF}
+DEFINE_GUID(CLSID_LAVAudioOpenJocProp, 0xb316b03c, 0x8c27, 0x4adb, 0xb4, 0x2b, 0x00, 0xde, 0xc7, 0x82, 0x25, 0xdf);
+
+class CLAVAudioOpenJocProp : public CBaseDSPropPage
+{
+  public:
+    CLAVAudioOpenJocProp(LPUNKNOWN pUnk, HRESULT *phr);
+    ~CLAVAudioOpenJocProp();
+
+    HRESULT OnActivate();
+    HRESULT OnConnect(IUnknown *pUnk);
+    HRESULT OnDisconnect();
+    HRESULT OnApplyChanges();
+    INT_PTR OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+  private:
+    HRESULT LoadData();
+
+    void SetDirty()
+    {
+        m_bDirty = TRUE;
+        if (m_pPageSite)
+            m_pPageSite->OnStatusChange(PROPPAGESTATUS_DIRTY);
+    }
+
+    ILAVOpenJocSettings *m_pOpenJocSettings = nullptr;
+    ILAVOpenJocLevelSettings *m_pOpenJocLevelSettings = nullptr;
+    LAVOpenJocOutputPolicy m_outputPolicy = LAVOpenJocOutputPolicy::Stereo;
+    LAVOpenJocDialnormPolicy m_dialnormPolicy = LAVOpenJocDialnormPolicy::Calibrated;
+};
+#endif
 
 class CLAVAudioMixingProp : public CBaseDSPropPage
 {

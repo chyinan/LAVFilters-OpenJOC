@@ -109,6 +109,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     , public ILAVOpenJocStatus
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     , public ILAVOpenJocSettings
+    , public ILAVOpenJocLevelSettings
     , public ILAVOpenJocDiagnostics
 #endif
 {
@@ -187,9 +188,17 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     STDMETHODIMP GetOutputPolicy(LAVOpenJocOutputPolicy *policy);
     STDMETHODIMP SetOutputPolicy(LAVOpenJocOutputPolicy policy);
 
+    // ILAVOpenJocLevelSettings
+    STDMETHODIMP GetDialnormPolicy(LAVOpenJocDialnormPolicy *policy);
+    STDMETHODIMP SetDialnormPolicy(LAVOpenJocDialnormPolicy policy);
+
     // ILAVOpenJocDiagnostics
     STDMETHODIMP GetOpenJocInputByteCounts(ULONGLONG *classifier_input_bytes,
                                            ULONGLONG *stream_input_bytes);
+#endif
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE) && defined(LAV_OPENJOC_TESTING)
+    static HRESULT RunOpenJocVolumeStatsSelfTest();
 #endif
 
     // CTransformFilter
@@ -237,6 +246,9 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     HRESULT LoadOpenJocOutputPolicySettings();
     HRESULT SaveOpenJocOutputPolicySettings(LAVOpenJocOutputPolicy policy);
     HRESULT ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy policy, bool clear_queues);
+    HRESULT LoadOpenJocDialnormPolicySettings();
+    HRESULT SaveOpenJocDialnormPolicySettings(LAVOpenJocDialnormPolicy policy);
+    HRESULT ConfigureOpenJocDialnormPolicy(LAVOpenJocDialnormPolicy policy, bool clear_queues);
 #endif
 
     STDMETHODIMP CreateTrayIcon();
@@ -370,6 +382,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
         BOOL SuppressFormatChanges;
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
         LAVOpenJocOutputPolicy OpenJocOutputPolicy;
+        LAVOpenJocDialnormPolicy OpenJocDialnormPolicy;
 #endif
     } m_settings;
     BOOL m_bRuntimeConfig = FALSE;

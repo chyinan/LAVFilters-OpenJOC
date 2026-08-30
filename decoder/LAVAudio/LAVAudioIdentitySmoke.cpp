@@ -5,9 +5,12 @@
 
 // Side-by-side COM identity smoke test.
 
+// pattern: Imperative Shell
+
 #include <windows.h>
 
 #include <cstdio>
+#include <algorithm>
 #include <string>
 
 #include <dshow.h>
@@ -33,6 +36,10 @@ int wmain(int argc, wchar_t **argv)
         0x4158a22b, 0x6553, 0x45d0, {0x80, 0x69, 0x24, 0x71, 0x6f, 0x8f, 0xf1, 0x71}};
     static const GUID kOpenJocSettings = {
         0x6b97fd1c, 0xb463, 0x4b5e, {0x93, 0x49, 0xcd, 0x8b, 0x96, 0x4d, 0x6b, 0x46}};
+    static const GUID kOpenJocLevelSettings = {
+        0x82fa58e4, 0x10b7, 0x4c25, {0x95, 0xe6, 0x10, 0x98, 0x49, 0x69, 0x95, 0xca}};
+    static const GUID kOpenJocPage = {
+        0xb316b03c, 0x8c27, 0x4adb, {0xb4, 0x2b, 0x00, 0xde, 0xc7, 0x82, 0x25, 0xdf}};
 
     if (argc < 2 || argc > 3)
     {
@@ -87,6 +94,30 @@ int wmain(int argc, wchar_t **argv)
         if ((!expect_stock && settings_hr != S_OK) || (expect_stock && settings_hr != E_NOINTERFACE))
             hr = E_UNEXPECTED;
         Release(openjoc_settings);
+    }
+    if (SUCCEEDED(hr))
+    {
+        IUnknown *openjoc_level_settings = nullptr;
+        const HRESULT settings_hr =
+            filter->QueryInterface(kOpenJocLevelSettings, reinterpret_cast<void **>(&openjoc_level_settings));
+        if ((!expect_stock && settings_hr != S_OK) || (expect_stock && settings_hr != E_NOINTERFACE))
+            hr = E_UNEXPECTED;
+        Release(openjoc_level_settings);
+    }
+    if (SUCCEEDED(hr))
+    {
+        ISpecifyPropertyPages *pages = nullptr;
+        hr = filter->QueryInterface(IID_ISpecifyPropertyPages, reinterpret_cast<void **>(&pages));
+        CAUUID page_ids{};
+        if (SUCCEEDED(hr))
+            hr = pages->GetPages(&page_ids);
+        const bool contains_openjoc =
+            SUCCEEDED(hr) && std::find(page_ids.pElems, page_ids.pElems + page_ids.cElems, kOpenJocPage) !=
+                                 page_ids.pElems + page_ids.cElems;
+        if (SUCCEEDED(hr) && contains_openjoc == expect_stock)
+            hr = E_UNEXPECTED;
+        CoTaskMemFree(page_ids.pElems);
+        Release(pages);
     }
 
     if (FAILED(hr))

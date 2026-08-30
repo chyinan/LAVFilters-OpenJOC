@@ -70,6 +70,9 @@ CFactoryTemplate g_Templates[] = {
     {sudFilterReg.strName, sudFilterReg.clsID, CreateInstance<CLAVAudio>, nullptr, &sudFilterReg},
     // This entry is for the property page.
     {L"LAV Audio Properties", &CLSID_LAVAudioSettingsProp, CreateInstance<CLAVAudioSettingsProp>, nullptr, nullptr},
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    {L"OpenJOC", &CLSID_LAVAudioOpenJocProp, CreateInstance<CLAVAudioOpenJocProp>, nullptr, nullptr},
+#endif
     {L"LAV Audio Mixer", &CLSID_LAVAudioMixingProp, CreateInstance<CLAVAudioMixingProp>, nullptr, nullptr},
     {L"LAV Audio Format Settings", &CLSID_LAVAudioFormatsProp, CreateInstance<CLAVAudioFormatsProp>, nullptr, nullptr},
     {L"LAV Audio Status", &CLSID_LAVAudioStatusProp, CreateInstance<CLAVAudioStatusProp>, nullptr, nullptr}};
