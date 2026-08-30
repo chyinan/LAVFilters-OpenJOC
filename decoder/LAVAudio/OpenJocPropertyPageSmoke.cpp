@@ -37,6 +37,8 @@ constexpr GUID kAudioSettings = {
     0x4158a22b, 0x6553, 0x45d0, {0x80, 0x69, 0x24, 0x71, 0x6f, 0x8f, 0xf1, 0x71}};
 
 constexpr int kOpenJocOutputPolicyControl = 1136;
+constexpr int kOpenJocOutputGuidanceControl = 1144;
+constexpr int kOpenJocOutputCompatControl = 1145;
 constexpr int kOpenJocDialnormPolicyControl = 1140;
 constexpr int kOpenJocStatusPolicyControl = 1138;
 constexpr int kOpenJocStatusAdmissionControl = 1139;
@@ -175,7 +177,7 @@ HWND FindControl(HWND parent, const int id)
 
 std::wstring WindowText(HWND window)
 {
-    wchar_t text[128] = {};
+    wchar_t text[512] = {};
     GetWindowTextW(window, text, static_cast<int>(std::size(text)));
     return text;
 }
@@ -423,8 +425,15 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     const bool active = SUCCEEDED(hr);
 
     HWND combo = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputPolicyControl) : nullptr;
+    HWND output_guidance = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputGuidanceControl) : nullptr;
+    HWND output_compat = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputCompatControl) : nullptr;
     HWND dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
-    if (!combo || !dialnorm || SendMessageW(combo, CB_GETCOUNT, 0, 0) != std::size(expected_policies) ||
+    if (!combo || !output_guidance || !output_compat || !dialnorm ||
+        WindowText(output_guidance) !=
+            L"Choose a layout supported by your downstream audio renderer/device." ||
+        WindowText(output_compat) !=
+            L"Selecting an unsupported multichannel layout may cause playback failure, stuttering, or downstream conversion. For stereo headphones or 2.0 speakers, use Stereo." ||
+        SendMessageW(combo, CB_GETCOUNT, 0, 0) != std::size(expected_policies) ||
         SendMessageW(combo, CB_GETCURSEL, 0, 0) != 6 ||
         SendMessageW(dialnorm, CB_GETCOUNT, 0, 0) != std::size(expected_dialnorm) ||
         SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0)

@@ -124,18 +124,20 @@ BEGIN
 END
 
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-IDD_PROPPAGE_OPENJOC DIALOGEX 0, 0, 369, 145
+IDD_PROPPAGE_OPENJOC DIALOGEX 0, 0, 369, 160
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x0
 BEGIN
-    GROUPBOX        "Output",IDC_STATIC,7,7,355,40
+    GROUPBOX        "Output",IDC_STATIC,7,7,355,65
     LTEXT           "OpenJOC output:",IDC_LBL_OPENJOC_OUTPUT_POLICY,17,24,66,8
     COMBOBOX        IDC_OPENJOC_OUTPUT_POLICY,91,21,118,68,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    GROUPBOX        "Program Level",IDC_STATIC,7,53,355,82
-    LTEXT           "Dialnorm:",IDC_LBL_OPENJOC_DIALNORM_POLICY,17,71,66,8
-    COMBOBOX        IDC_OPENJOC_DIALNORM_POLICY,91,68,144,36,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Calibrated respects the programme dialnorm carried by E-AC-3.",IDC_OPENJOC_DIALNORM_HELP_CALIBRATED,17,91,335,10
-    LTEXT           "Unity disables dialnorm gain for compatibility and may sound louder.",IDC_OPENJOC_DIALNORM_HELP_UNITY,17,107,335,10
+    LTEXT           "Choose a layout supported by your downstream audio renderer/device.",IDC_LBL_OPENJOC_OUTPUT_GUIDANCE,17,37,335,8
+    LTEXT           "Selecting an unsupported multichannel layout may cause playback failure, stuttering, or downstream conversion. For stereo headphones or 2.0 speakers, use Stereo.",IDC_LBL_OPENJOC_OUTPUT_COMPAT,17,47,335,17
+    GROUPBOX        "Program Level",IDC_STATIC,7,77,355,74
+    LTEXT           "Dialnorm:",IDC_LBL_OPENJOC_DIALNORM_POLICY,17,95,66,8
+    COMBOBOX        IDC_OPENJOC_DIALNORM_POLICY,91,92,144,36,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Calibrated respects the programme dialnorm carried by E-AC-3.",IDC_OPENJOC_DIALNORM_HELP_CALIBRATED,17,115,335,10
+    LTEXT           "Unity disables dialnorm gain for compatibility and may sound louder.",IDC_OPENJOC_DIALNORM_HELP_UNITY,17,131,335,10
 END
 #endif
 
