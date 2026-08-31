@@ -6,6 +6,7 @@
 // OpenJOC admission state-machine tests.
 
 #include "OpenJocAdmission.h"
+#include "OpenJocCandidate.h"
 
 #include <cassert>
 #include <initializer_list>
@@ -47,9 +48,9 @@ static void test_non_joc_and_errors_preserve_stock_path()
     {
         LAVOpenJocAdmission admission;
         const LAVOpenJocAdmissionAction action = admission.resolve(classification, 512);
-        assert(action.kind == LAVOpenJocActionKind::UseStockEac3);
+        assert(action.kind == LAVOpenJocActionKind::UseStockDecoder);
         assert(action.bytes_to_feed == 0);
-        assert(admission.state() == LAVOpenJocState::StockEac3);
+        assert(admission.state() == LAVOpenJocState::StockCodec);
     }
 }
 
@@ -60,8 +61,8 @@ static void test_retention_limit_falls_back_without_unbounded_growth()
         admission.resolve(LAVOpenJocClassification::Unknown,
                           LAVOpenJocAdmission::MaxRetainedBytes + 1);
 
-    assert(action.kind == LAVOpenJocActionKind::UseStockEac3);
-    assert(admission.state() == LAVOpenJocState::StockEac3);
+    assert(action.kind == LAVOpenJocActionKind::UseStockDecoder);
+    assert(admission.state() == LAVOpenJocState::StockCodec);
 }
 
 static void test_reset_reopens_admission_for_a_new_timeline()
@@ -75,6 +76,23 @@ static void test_reset_reopens_admission_for_a_new_timeline()
     assert(admission.classification_offset(64) == 0);
 }
 
+static void test_only_ac3_codec_families_enter_the_openjoc_candidate_lane()
+{
+    assert(IsLAVOpenJocCandidate(AV_CODEC_ID_AC3, false, true, false));
+    assert(IsLAVOpenJocCandidate(AV_CODEC_ID_EAC3, false, true, false));
+    assert(!IsLAVOpenJocCandidate(AV_CODEC_ID_AAC, false, true, false));
+    assert(!IsLAVOpenJocCandidate(AV_CODEC_ID_NONE, false, true, false));
+}
+
+static void test_passthrough_and_spdif_precede_openjoc_candidate_probing()
+{
+    assert(!IsLAVOpenJocCandidate(AV_CODEC_ID_AC3, true, true, false));
+    assert(!IsLAVOpenJocCandidate(AV_CODEC_ID_EAC3, true, true, false));
+    assert(!IsLAVOpenJocCandidate(AV_CODEC_ID_AC3, false, true, true));
+    assert(!IsLAVOpenJocCandidate(AV_CODEC_ID_EAC3, false, true, true));
+    assert(!IsLAVOpenJocCandidate(AV_CODEC_ID_AC3, false, false, false));
+}
+
 int wmain()
 {
     test_classification_cursor_tracks_only_new_retained_bytes();
@@ -82,5 +100,7 @@ int wmain()
     test_non_joc_and_errors_preserve_stock_path();
     test_retention_limit_falls_back_without_unbounded_growth();
     test_reset_reopens_admission_for_a_new_timeline();
+    test_only_ac3_codec_families_enter_the_openjoc_candidate_lane();
+    test_passthrough_and_spdif_precede_openjoc_candidate_probing();
     return 0;
 }

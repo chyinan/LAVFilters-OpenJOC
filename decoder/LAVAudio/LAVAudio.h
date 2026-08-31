@@ -259,6 +259,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     CMediaType CreateMediaType(LAVAudioSampleFormat outputFormat, DWORD nSamplesPerSec, WORD nChannels,
                                DWORD dwChannelMask, WORD wBitsPerSample = 0) const;
     HRESULT ReconnectOutput(long cbBuffer, CMediaType &mt);
+    bool IsOpenJocCandidate() const;
     HRESULT ProcessBuffer(IMediaSample *pMediaSample, BOOL bEOF = FALSE);
     HRESULT Decode(const BYTE *p, int buffsize, int &consumed, HRESULT *hrDeliver, IMediaSample *pMediaSample);
     HRESULT DecodeReceive(HRESULT *hrDeliver);

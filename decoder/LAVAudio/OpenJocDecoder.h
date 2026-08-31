@@ -28,7 +28,7 @@ struct LAVOpenJocFrame
 enum class LAVOpenJocProcessResult
 {
     Waiting,
-    UseStockEac3,
+    UseStockDecoder,
     OpenJoc,
     Error,
 };

@@ -3,9 +3,12 @@
 This repository is a downstream fork of [Nevcairiel/LAVFilters](https://github.com/Nevcairiel/LAVFilters).
 
 - Upstream base: LAV Filters 0.83 (`fefb6987994ed56e4525e8a125f5fbb53707bc52`)
-- Purpose: optional OpenJOC E-AC-3 JOC decoding in the LAV Audio Decoder
+- Purpose: optional OpenJOC JOC decoding in the LAV Audio Decoder
 - Ordinary E-AC-3: stock LAV/FFmpeg decoding
-- Confirmed JOC: OpenJOC admission and decoding
+- Ordinary AC-3: stock LAV/FFmpeg decoding
+- Confirmed JOC: OpenJOC admission and decoding, including the standards-defined
+  legacy AC-3 core + dependent E-AC-3 D0 carriage
+- Malformed or unsupported streams remain fail-closed; no user toggle is required
 - E-AC-3 passthrough: existing LAV bitstream path takes precedence
 - OpenJOC DirectShow output in this integration: explicit fixed 48 kHz IEEE
   float PCM policies for Stereo, 5.1, 7.1, 5.1.2, 5.1.4, 7.1.2, and 7.1.4

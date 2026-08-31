@@ -111,6 +111,9 @@
     <ClCompile Include="OpenJocAdmission.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="OpenJocCandidate.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="OpenJocDecoder.cpp" />
     <ClCompile Include="OpenJocOutput.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -141,6 +144,7 @@
     <ClInclude Include="AudioSettingsProp.h" />
     <ClInclude Include="Media.h" />
     <ClInclude Include="OpenJocAdmission.h" />
+    <ClInclude Include="OpenJocCandidate.h" />
     <ClInclude Include="OpenJocDecoder.h" />
     <ClInclude Include="OpenJocDialnorm.h" />
     <ClInclude Include="OpenJocOutput.h" />

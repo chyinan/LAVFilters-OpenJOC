@@ -47,8 +47,8 @@ static void classify_as_stock(const std::vector<unsigned char> &bytes)
     assert(decoder.OutputContract() == FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Stereo));
 
     assert(decoder.Process(bytes.data(), bytes.size(), INT64_MIN, true) ==
-           LAVOpenJocProcessResult::UseStockEac3);
-    assert(decoder.State() == LAVOpenJocState::StockEac3);
+           LAVOpenJocProcessResult::UseStockDecoder);
+    assert(decoder.State() == LAVOpenJocState::StockCodec);
     assert(decoder.StreamInputBytes() == 0);
     assert(decoder.ClassifierInputBytes() > 0);
     assert(decoder.ClassifierInputBytes() <= LAVOpenJocAdmission::MaxRetainedBytes);

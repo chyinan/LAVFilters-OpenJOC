@@ -2367,6 +2367,38 @@ bool BuildOracleBytes(const std::filesystem::path &raw_fixture,
                openjoc_harness_core::InterleavedFingerprints(*bytes, contract->channel_count));
 }
 
+bool BuildLegacyCoreOracleBytes(const std::filesystem::path &raw_fixture,
+                                const LAVOpenJocOutputPolicy policy, std::vector<BYTE> *bytes)
+{
+    if (!bytes)
+        return false;
+    bytes->clear();
+    std::vector<unsigned char> input;
+    if (!ReadFixtureBytes(raw_fixture, &input))
+        return false;
+    LAVOpenJocDecoder decoder;
+    const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
+    if (!contract || !decoder.IsAvailable() || !decoder.SetOutputPolicy(policy))
+        return false;
+    const LAVOpenJocProcessResult process = decoder.Process(
+        input.data(), input.size(), (std::numeric_limits<std::int64_t>::min)(), true);
+    if (process != LAVOpenJocProcessResult::OpenJoc)
+        return false;
+    LAVOpenJocFrame frame;
+    while (decoder.ReceiveFrame(frame))
+    {
+        if (frame.output_contract != contract || frame.sample_rate != 48000 ||
+            frame.channel_count != contract->channel_count || frame.sample_count == 0 ||
+            frame.samples.size() != frame.sample_count * frame.channel_count ||
+            frame.samples.size() > ((std::numeric_limits<std::size_t>::max)() - bytes->size()) /
+                                       sizeof(float))
+            return false;
+        const BYTE *begin = reinterpret_cast<const BYTE *>(frame.samples.data());
+        bytes->insert(bytes->end(), begin, begin + frame.samples.size() * sizeof(float));
+    }
+    return !decoder.HasError() && decoder.StreamInputBytes() == input.size() && !bytes->empty();
+}
+
 HRESULT BindRendererMoniker(const wchar_t *display_name, IBaseFilter **renderer)
 {
     if (!display_name || !*display_name || !renderer)
@@ -2488,16 +2520,17 @@ bool WaitForSinkQuiescence(StrictCaptureSink *sink, std::uint64_t *stable_serial
     return true;
 }
 
-bool IsExactEac3MediaType(const AM_MEDIA_TYPE &media_type)
+bool IsExactDolbyCompressedMediaType(const AM_MEDIA_TYPE &media_type)
 {
     return media_type.majortype == MEDIATYPE_Audio &&
-           media_type.subtype == kDolbyDdPlus &&
+           (media_type.subtype == kDolbyDdPlus ||
+            media_type.subtype == MEDIASUBTYPE_DOLBY_AC3) &&
            media_type.formattype != GUID_NULL && media_type.cbFormat >= sizeof(WAVEFORMATEX) &&
            media_type.pbFormat != nullptr;
 }
 
-HRESULT FindSingleEac3SourcePin(IBaseFilter *source, IPin **result,
-                                CMediaType *enumerated_type)
+HRESULT FindSingleDolbyCompressedSourcePin(IBaseFilter *source, IPin **result,
+                                           CMediaType *enumerated_type)
 {
     if (!source || !result || !enumerated_type)
         return E_POINTER;
@@ -2531,7 +2564,7 @@ HRESULT FindSingleEac3SourcePin(IBaseFilter *source, IPin **result,
                 ULONG type_fetched = 0;
                 if (types->Next(1, &candidate, &type_fetched) != S_OK)
                     break;
-                if (IsExactEac3MediaType(*candidate))
+                if (IsExactDolbyCompressedMediaType(*candidate))
                 {
                     selected = *candidate;
                     DeleteMediaType(candidate);
@@ -2738,7 +2771,7 @@ class LiveStatusPageBinding final
         const std::wstring expected_policy =
             contract ? Utf8ToWide(contract->property_page_label) : std::wstring{};
         const std::wstring expected_admission =
-            admission == LAVOpenJocAdmissionOpenJoc ? L"OpenJoc" : L"StockEac3";
+        admission == LAVOpenJocAdmissionOpenJoc ? L"OpenJoc" : L"Stock decoder";
         return WindowText(GetDlgItem(page_window_, IDC_OPENJOC_STATUS_POLICY)) == expected_policy &&
                WindowText(GetDlgItem(page_window_, IDC_OPENJOC_STATUS_ADMISSION)) == expected_admission &&
                WindowText(GetDlgItem(page_window_, IDC_OUTPUT_CHANNEL)) == channel_text &&
@@ -2767,7 +2800,8 @@ class LiveStatusPageBinding final
     ComOwner<IPropertyPage> page_;
 };
 
-HRESULT ConfigureTargetAudio(IBaseFilter *audio_filter, const bool eac3_passthrough = false)
+HRESULT ConfigureTargetAudio(IBaseFilter *audio_filter, const bool eac3_passthrough = false,
+                            const bool ac3_passthrough = false)
 {
     ComOwner<ILAVAudioSettings> settings;
     HRESULT status = audio_filter
@@ -2776,7 +2810,10 @@ HRESULT ConfigureTargetAudio(IBaseFilter *audio_filter, const bool eac3_passthro
                                reinterpret_cast<void **>(settings.put()))
                          : E_POINTER;
     if (FAILED(status) || FAILED(status = settings->SetRuntimeConfig(TRUE)) ||
+        FAILED(status = settings->SetFormatConfiguration(Codec_AC3, TRUE)) ||
         FAILED(status = settings->SetFormatConfiguration(Codec_EAC3, TRUE)) ||
+        FAILED(status = settings->SetBitstreamConfig(Bitstream_AC3,
+                                                     ac3_passthrough ? TRUE : FALSE)) ||
         FAILED(status = settings->SetBitstreamConfig(Bitstream_EAC3,
                                                      eac3_passthrough ? TRUE : FALSE)) ||
         FAILED(status = settings->SetSampleFormat(SampleFormat_FP32, TRUE)) ||
@@ -2786,7 +2823,9 @@ HRESULT ConfigureTargetAudio(IBaseFilter *audio_filter, const bool eac3_passthro
         FAILED(status = settings->SetSuppressFormatChanges(FALSE)) ||
         FAILED(status = settings->SetBitstreamingFallback(FALSE)))
         return status;
-    return settings->GetFormatConfiguration(Codec_EAC3) &&
+    return settings->GetFormatConfiguration(Codec_AC3) && settings->GetFormatConfiguration(Codec_EAC3) &&
+                   settings->GetBitstreamConfig(Bitstream_AC3) ==
+                       (ac3_passthrough ? TRUE : FALSE) &&
                     settings->GetBitstreamConfig(Bitstream_EAC3) ==
                         (eac3_passthrough ? TRUE : FALSE) &&
                    settings->GetSampleFormat(SampleFormat_FP32) &&
@@ -2834,10 +2873,11 @@ HRESULT CreateGraphForFixture(const PrivateComModule &audio_module,
                               const LAVOpenJocOutputPolicy policy,
                                const bool configure_policy, IGraphBuilder **graph,
                               IBaseFilter **source_filter, IBaseFilter **audio_filter,
-                               IPin **source_output_pin, IPin **audio_input_pin,
-                               IPin **audio_output, CMediaType *exact_eac3_type,
-                               const bool eac3_passthrough = false,
-                               const bool configure_runtime = true)
+                              IPin **source_output_pin, IPin **audio_input_pin,
+                              IPin **audio_output, CMediaType *exact_eac3_type,
+                              const bool eac3_passthrough = false,
+                               const bool configure_runtime = true,
+                               const bool ac3_passthrough = false)
 {
     if (!graph || !source_filter || !audio_filter || !source_output_pin || !audio_input_pin ||
         !audio_output || !exact_eac3_type || !fixture.is_absolute())
@@ -2867,7 +2907,8 @@ HRESULT CreateGraphForFixture(const PrivateComModule &audio_module,
                                                reinterpret_cast<void **>(splitter_settings.put()));
     if (FAILED(status) || FAILED(status = splitter_settings->SetRuntimeConfig(TRUE)) ||
          (configure_runtime &&
-          FAILED(status = ConfigureTargetAudio(*audio_filter, eac3_passthrough))) ||
+          FAILED(status = ConfigureTargetAudio(*audio_filter, eac3_passthrough,
+                                               ac3_passthrough))) ||
         (configure_policy && FAILED(status = SetOpenJocPolicy(*audio_filter, policy))))
         return status;
 
@@ -2879,8 +2920,8 @@ HRESULT CreateGraphForFixture(const PrivateComModule &audio_module,
     if (!CurrentFileMatches(file_source.get(), fixture))
         return E_UNEXPECTED;
 
-    if (FAILED(status = FindSingleEac3SourcePin(*source_filter, source_output_pin,
-                                                exact_eac3_type)) ||
+    if (FAILED(status = FindSingleDolbyCompressedSourcePin(*source_filter, source_output_pin,
+                                                           exact_eac3_type)) ||
         FAILED(status = FindSingleOwnedPin(*audio_filter, PINDIR_INPUT, audio_input_pin)) ||
         FAILED(status = (*graph)->ConnectDirect(*source_output_pin, *audio_input_pin,
                                                 exact_eac3_type)) ||
@@ -2932,6 +2973,19 @@ bool IsIec61937Eac3Type(const AM_MEDIA_TYPE &media_type)
            wave->Format.nAvgBytesPerSec == 768000 &&
            wave->Samples.wValidBitsPerSample == 16 && wave->dwChannelMask == 3 &&
            wave->SubFormat == KSDATAFORMAT_SUBTYPE_IEC61937_DOLBY_DIGITAL_PLUS;
+}
+
+bool IsIec61937Ac3Type(const AM_MEDIA_TYPE &media_type)
+{
+    if (media_type.majortype != MEDIATYPE_Audio || media_type.subtype != MEDIASUBTYPE_PCM ||
+        media_type.formattype != FORMAT_WaveFormatEx || !media_type.pbFormat ||
+        media_type.cbFormat < sizeof(WAVEFORMATEX))
+        return false;
+    const auto *wave = reinterpret_cast<const WAVEFORMATEX *>(media_type.pbFormat);
+    return wave->wFormatTag == WAVE_FORMAT_DOLBY_AC3_SPDIF && wave->nChannels == 2 &&
+           wave->nSamplesPerSec == 48000 && wave->wBitsPerSample == 16 &&
+           wave->nBlockAlign == 4 && wave->nAvgBytesPerSec == 192000 &&
+           media_type.lSampleSize == 1;
 }
 
 bool PairwiseDistinctPcmChannelDigests(const AM_MEDIA_TYPE &media_type,
@@ -3305,14 +3359,16 @@ bool ParseTask3Evidence(const std::filesystem::path &path, const bool expect_tar
                                         : (SameText(fixture_basename,
                                                     L"ordinary.fingerprint.eac3") ||
                                            SameText(fixture_basename,
-                                                    L"ordinary.fingerprint.mp4"));
+                                                    L"ordinary.fingerprint.mp4") ||
+                                           SameText(fixture_basename,
+                                                    L"ordinary.fingerprint.ac3"));
     if (!fixture_name_valid || !require_fields("MODE", 2, &fields) ||
         fields[1] != (expected_passthrough ? "EAC3_PASSTHROUGH" : "STOCK_EAC3_PCM"))
         return false;
     CMediaType source_type;
     if (!require_fields("SOURCE_MEDIA_TYPE", 2, &fields) ||
         !ParseSerializedMediaType(fields[1], &source_type) ||
-        !IsExactEac3MediaType(source_type))
+        !IsExactDolbyCompressedMediaType(source_type))
         return false;
     CMediaType output_type;
     if (!require_fields("OUTPUT_MEDIA_TYPE", 2, &fields) ||
@@ -3441,10 +3497,18 @@ bool CompareTask3Evidence(const std::filesystem::path &target_path,
         return false;
     ParsedTask3Evidence target;
     ParsedTask3Evidence pristine;
-    return ParseTask3Evidence(target_path, true, expected_policy, expected_passthrough, &target) &&
-           ParseTask3Evidence(pristine_path, false, LAVOpenJocOutputPolicy::Stereo,
-                              expected_passthrough, &pristine) &&
-           target.behavioral_payload == pristine.behavioral_payload;
+    const bool target_valid =
+        ParseTask3Evidence(target_path, true, expected_policy, expected_passthrough, &target);
+    const bool pristine_valid =
+        ParseTask3Evidence(pristine_path, false, LAVOpenJocOutputPolicy::Stereo,
+                           expected_passthrough, &pristine);
+    if (!target_valid || !pristine_valid)
+        std::fwprintf(stderr, L"TASK3_EVIDENCE_PARSE target=%d pristine=%d\n",
+                      target_valid ? 1 : 0, pristine_valid ? 1 : 0);
+    else if (target.behavioral_payload != pristine.behavioral_payload)
+        std::fwprintf(stderr, L"TASK3_EVIDENCE_BEHAVIOR_MISMATCH target_bytes=%zu pristine_bytes=%zu\n",
+                      target.behavioral_payload.size(), pristine.behavioral_payload.size());
+    return target_valid && pristine_valid && target.behavioral_payload == pristine.behavioral_payload;
 }
 
 HRESULT RunTask3StockOrPassthroughWorker(const std::filesystem::path &runtime_dir,
@@ -3780,8 +3844,8 @@ HRESULT WaitForLifecycleEpoch(IMediaControl *control, IMediaEvent *events, IMedi
         }
         std::wprintf(L"TASK3_LIFECYCLE_UNSUPPORTED operation=raw-container-absolute-seek "
                      L"label=%ls position=%lld samples=0 bytes=0 classifier_input_bytes=0 "
-                     L"stream_input_bytes=0 admission=StockEac3 "
-                     L"empty_eos_resolution=StockEac3 no_stock_sample_delivered=1 events=%hs "
+                     L"stream_input_bytes=0 admission=Stock decoder "
+                     L"empty_eos_resolution=Stock decoder no_stock_sample_delivered=1 events=%hs "
                      L"source_type=%hs output_type=%hs\n",
                      epoch_label, static_cast<long long>(position), event_trace.c_str(),
                      SerializeMediaType(source_type).c_str(),
@@ -4194,8 +4258,8 @@ HRESULT RunLiveStatusSourceSwap(const PrivateComModule &audio,
     if (SUCCEEDED(status) && !CurrentFileMatches(file_source.get(), ordinary_fixture.final_path))
         status = E_UNEXPECTED;
     if (SUCCEEDED(status))
-        status = FindSingleEac3SourcePin(stock_source.get(), stock_source_output.put(),
-                                        &stock_input_type);
+        status = FindSingleDolbyCompressedSourcePin(stock_source.get(), stock_source_output.put(),
+                                                    &stock_input_type);
     if (SUCCEEDED(status))
         status = graph->ConnectDirect(stock_source_output.get(), audio_input.get(),
                                       &stock_input_type);
@@ -5080,6 +5144,263 @@ HRESULT RunControlledSinkMatrix(const std::filesystem::path &runtime_dir,
         status = E_UNEXPECTED;
     FreeModules(&dependencies);
     return status;
+}
+
+HRESULT RunLegacyCoreGraphCase(const std::filesystem::path &runtime_dir,
+                               const std::filesystem::path &manifest_path,
+                               const std::filesystem::path &fixture_path,
+                               const LAVOpenJocOutputPolicy policy)
+{
+    const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
+    if (!contract || !fixture_path.is_absolute())
+        return E_INVALIDARG;
+
+    std::vector<unsigned char> fixture_bytes;
+    FixtureIdentity fixture;
+    if (!ReadFixtureBytes(fixture_path, &fixture_bytes) ||
+        !BuildFixtureIdentity(fixture_path, &fixture) ||
+        !FixtureIdentityMatches(fixture))
+    {
+        std::fwprintf(stderr, L"LEGACY_CORE_GRAPH_FAILURE stage=fixture-read fixture=%ls\n",
+                      fixture_path.c_str());
+        return E_INVALIDARG;
+    }
+
+    std::vector<BYTE> oracle;
+    if (!BuildLegacyCoreOracleBytes(fixture_path, policy, &oracle))
+    {
+        std::fwprintf(stderr, L"LEGACY_CORE_GRAPH_FAILURE stage=build-oracle fixture=%ls policy=%u\n",
+                      fixture_path.c_str(), static_cast<unsigned int>(policy));
+        return E_UNEXPECTED;
+    }
+
+    std::vector<StagedRecord> records;
+    if (!ReadStagedManifest(runtime_dir, manifest_path, &records))
+    {
+        std::fwprintf(stderr, L"LEGACY_CORE_GRAPH_FAILURE stage=read-manifest runtime=%ls manifest=%ls\n",
+                      runtime_dir.c_str(), manifest_path.c_str());
+        return E_INVALIDARG;
+    }
+    const StagedRecord *audio_record = FindRecord(records, StagedKind::Module, L"LAVAudio.ax");
+    const StagedRecord *splitter_record = FindRecord(records, StagedKind::Module, L"LAVSplitter.ax");
+    if (!audio_record || !splitter_record)
+        return E_UNEXPECTED;
+
+    const std::wstring runtime_final = FinalPathForFile(runtime_dir);
+    ScopedActivationContext activation(audio_record->final_path, runtime_final);
+    if (!activation.active())
+        return HRESULT_FROM_WIN32(GetLastError());
+    PrivateComModule audio(audio_record->final_path, kTargetLavAudio);
+    PrivateComModule splitter(splitter_record->final_path, kLavSplitterSource);
+    LoadedDependenciesOwner dependencies;
+    if (FAILED(audio.status()) || FAILED(splitter.status()) ||
+        !LoadStagedDependencies(records, dependencies.put()))
+        return E_UNEXPECTED;
+
+    ComOwner<IGraphBuilder> graph;
+    ComOwner<IBaseFilter> source_filter;
+    ComOwner<IBaseFilter> audio_filter;
+    ComOwner<IPin> source_output;
+    ComOwner<IPin> audio_input;
+    ComOwner<IPin> audio_output;
+    CMediaType source_type;
+    HRESULT status = CreateGraphForFixture(
+        audio, splitter, fixture_path, policy, true, graph.put(), source_filter.put(),
+        audio_filter.put(), source_output.put(), audio_input.put(), audio_output.put(),
+        &source_type, false);
+    if (FAILED(status))
+    {
+        std::fwprintf(stderr, L"LEGACY_CORE_GRAPH_FAILURE stage=create-graph hr=0x%08lx fixture=%ls\n",
+                      static_cast<unsigned long>(status), fixture_path.c_str());
+        return status;
+    }
+
+    const bool source_is_ac3 = source_type.subtype == MEDIASUBTYPE_DOLBY_AC3;
+    const bool source_is_eac3 = source_type.subtype == kDolbyDdPlus;
+    if (!source_is_ac3 && !source_is_eac3)
+        return E_UNEXPECTED;
+
+    const CMediaType target = BuildStrictTarget(*contract);
+    if (!IsExactLAVOpenJocStrictMediaType(*contract, target) ||
+        !ExactConnectionTypes(source_output.get(), audio_input.get(), source_type))
+        return E_UNEXPECTED;
+
+    ComOwner<ILAVOpenJocDiagnostics> diagnostics;
+    ComOwner<ILAVOpenJocStatus> admission;
+    if (FAILED(status = audio_filter->QueryInterface(
+                  __uuidof(ILAVOpenJocDiagnostics), reinterpret_cast<void **>(diagnostics.put()))) ||
+        FAILED(status = audio_filter->QueryInterface(
+                  __uuidof(ILAVOpenJocStatus), reinterpret_cast<void **>(admission.put()))) ||
+        !SameControllingUnknown(audio_filter.get(), diagnostics.get()) ||
+        admission->GetOpenJocAdmissionState() != LAVOpenJocAdmissionUndecided)
+        return FAILED(status) ? status : E_UNEXPECTED;
+
+    HRESULT sink_status = S_OK;
+    auto *sink = new (std::nothrow) StrictCaptureSink(target, false, {}, &sink_status, true);
+    if (!sink)
+        return E_OUTOFMEMORY;
+    if (FAILED(sink_status))
+    {
+        delete sink;
+        return sink_status;
+    }
+    sink->AddRef();
+    ComOwner<IBaseFilter> sink_owner;
+    sink_owner.attach(static_cast<IBaseFilter *>(sink));
+    if (FAILED(status = AttachCaptureSink(graph.get(), audio_output.get(), sink, target)) ||
+        !ExactConnectionTypes(audio_output.get(), sink->input(), target) ||
+        !GraphContainsExactly(graph.get(), 3))
+        return FAILED(status) ? status : E_UNEXPECTED;
+
+    ComOwner<IMediaControl> control;
+    ComOwner<IMediaEvent> events;
+    if (FAILED(status = graph->QueryInterface(IID_IMediaControl,
+                                              reinterpret_cast<void **>(control.put()))) ||
+        FAILED(status = graph->QueryInterface(IID_IMediaEvent,
+                                              reinterpret_cast<void **>(events.put()))))
+        return status;
+
+    OAFilterState state = State_Stopped;
+    if (control->Run() != S_OK || control->GetState(10000, &state) != S_OK ||
+        state != State_Running ||
+        WaitForSingleObject(sink->end_of_stream_event(), 30000) != WAIT_OBJECT_0)
+        return E_FAIL;
+
+    ULONGLONG classifier_bytes = 0;
+    ULONGLONG stream_bytes = 0;
+    HRESULT graph_error = S_OK;
+    const bool graph_failed = DrainGraphErrors(events.get(), &graph_error);
+    const bool counters_valid = diagnostics->GetOpenJocInputByteCounts(
+                                    &classifier_bytes, &stream_bytes) == S_OK &&
+                                classifier_bytes > 0 &&
+                                stream_bytes == static_cast<ULONGLONG>(fixture_bytes.size());
+    const bool admission_valid = admission->GetOpenJocAdmissionState() == LAVOpenJocAdmissionOpenJoc;
+    const bool output_valid = ExactConnectionTypes(audio_output.get(), sink->input(), target) &&
+                              sink->sample_count() > 0 && !sink->bytes().empty() &&
+                              sink->bytes() == oracle && sink->sample_contracts_valid() &&
+                              sink->allocator_contract_valid() && sink->end_of_stream() &&
+                              sink->end_of_stream_count() == 1 && sink->end_of_stream_running();
+    const HRESULT stop_status = control->Stop();
+    const bool complete = !graph_failed && SUCCEEDED(graph_error) && SUCCEEDED(stop_status) &&
+                          source_is_ac3 && counters_valid && admission_valid && output_valid;
+    std::wprintf(L"LEGACY_CORE_GRAPH_%ls fixture=%ls subtype=%ls codec_id=%ls policy=%hs "
+                 L"classifier_input_bytes=%llu stream_input_bytes=%llu samples=%llu bytes=%llu "
+                 L"eos=%llu graph_error=0x%08lx\n",
+                 complete ? L"COMPLETE" : L"FAILURE", fixture.final_path.c_str(),
+                 source_is_ac3 ? L"AC3" : L"EAC3", source_is_ac3 ? L"AV_CODEC_ID_AC3" : L"AV_CODEC_ID_EAC3",
+                 contract->property_page_label, static_cast<unsigned long long>(classifier_bytes),
+                 static_cast<unsigned long long>(stream_bytes),
+                 static_cast<unsigned long long>(sink->sample_count()),
+                 static_cast<unsigned long long>(sink->bytes().size()),
+                 static_cast<unsigned long long>(sink->end_of_stream_count()),
+                 static_cast<unsigned long>(graph_error));
+    return complete ? S_OK : E_FAIL;
+}
+
+HRESULT RunAc3BitstreamGraphCase(const std::filesystem::path &runtime_dir,
+                                 const std::filesystem::path &manifest_path,
+                                 const std::filesystem::path &fixture_path)
+{
+    std::vector<unsigned char> fixture_bytes;
+    if (!ReadFixtureBytes(fixture_path, &fixture_bytes))
+        return E_INVALIDARG;
+    std::vector<StagedRecord> records;
+    if (!ReadStagedManifest(runtime_dir, manifest_path, &records))
+        return E_INVALIDARG;
+    const StagedRecord *audio_record = FindRecord(records, StagedKind::Module, L"LAVAudio.ax");
+    const StagedRecord *splitter_record = FindRecord(records, StagedKind::Module, L"LAVSplitter.ax");
+    if (!audio_record || !splitter_record)
+        return E_UNEXPECTED;
+
+    const std::wstring runtime_final = FinalPathForFile(runtime_dir);
+    ScopedActivationContext activation(audio_record->final_path, runtime_final);
+    if (!activation.active())
+        return HRESULT_FROM_WIN32(GetLastError());
+    PrivateComModule audio(audio_record->final_path, kTargetLavAudio);
+    PrivateComModule splitter(splitter_record->final_path, kLavSplitterSource);
+    LoadedDependenciesOwner dependencies;
+    if (FAILED(audio.status()) || FAILED(splitter.status()) ||
+        !LoadStagedDependencies(records, dependencies.put()))
+        return E_UNEXPECTED;
+
+    ComOwner<IGraphBuilder> graph;
+    ComOwner<IBaseFilter> source_filter;
+    ComOwner<IBaseFilter> audio_filter;
+    ComOwner<IPin> source_output;
+    ComOwner<IPin> audio_input;
+    ComOwner<IPin> audio_output;
+    CMediaType source_type;
+    HRESULT status = CreateGraphForFixture(
+        audio, splitter, fixture_path, LAVOpenJocOutputPolicy::Stereo, false,
+        graph.put(), source_filter.put(), audio_filter.put(), source_output.put(),
+        audio_input.put(), audio_output.put(), &source_type, false, true, true);
+    if (FAILED(status))
+        return status;
+    if (source_type.subtype != MEDIASUBTYPE_DOLBY_AC3)
+        return E_UNEXPECTED;
+
+    ComOwner<ILAVOpenJocDiagnostics> diagnostics;
+    ComOwner<ILAVOpenJocStatus> admission;
+    if (FAILED(status = audio_filter->QueryInterface(
+                  __uuidof(ILAVOpenJocDiagnostics), reinterpret_cast<void **>(diagnostics.put()))) ||
+        FAILED(status = audio_filter->QueryInterface(
+                  __uuidof(ILAVOpenJocStatus), reinterpret_cast<void **>(admission.put()))) ||
+        admission->GetOpenJocAdmissionState() != LAVOpenJocAdmissionUndecided)
+        return FAILED(status) ? status : E_UNEXPECTED;
+
+    HRESULT sink_status = S_OK;
+    auto *sink = new (std::nothrow) StrictCaptureSink(CMediaType{}, false, {}, &sink_status, true);
+    if (!sink)
+        return E_OUTOFMEMORY;
+    if (FAILED(sink_status))
+    {
+        delete sink;
+        return sink_status;
+    }
+    sink->AddRef();
+    ComOwner<IBaseFilter> sink_owner;
+    sink_owner.attach(static_cast<IBaseFilter *>(sink));
+    if (FAILED(status = graph->AddFilter(static_cast<IBaseFilter *>(sink), L"AC-3 bitstream sink")) ||
+        FAILED(status = graph->ConnectDirect(audio_output.get(), sink->input(), nullptr)))
+        return status;
+
+    ComOwner<IMediaControl> control;
+    ComOwner<IMediaEvent> events;
+    if (FAILED(status = graph->QueryInterface(IID_IMediaControl,
+                                              reinterpret_cast<void **>(control.put()))) ||
+        FAILED(status = graph->QueryInterface(IID_IMediaEvent,
+                                              reinterpret_cast<void **>(events.put()))))
+        return status;
+    OAFilterState state = State_Stopped;
+    if (control->Run() != S_OK || control->GetState(10000, &state) != S_OK ||
+        state != State_Running ||
+        WaitForSingleObject(sink->end_of_stream_event(), 30000) != WAIT_OBJECT_0)
+        return E_FAIL;
+
+    ULONGLONG classifier_bytes = 0;
+    ULONGLONG stream_bytes = 0;
+    const HRESULT graph_error = [&]() {
+        HRESULT first_error = S_OK;
+        return DrainGraphErrors(events.get(), &first_error) ? first_error : S_OK;
+    }();
+    const bool counters_valid = diagnostics->GetOpenJocInputByteCounts(
+                                    &classifier_bytes, &stream_bytes) == S_OK &&
+                                classifier_bytes == 0 && stream_bytes == 0;
+    const bool output_valid = IsIec61937Ac3Type(sink->expected_type()) && sink->sample_count() > 0 &&
+                              !sink->bytes().empty() && sink->end_of_stream() &&
+                              sink->end_of_stream_count() == 1 && sink->end_of_stream_running();
+    const HRESULT stop_status = control->Stop();
+    const bool complete = SUCCEEDED(graph_error) && SUCCEEDED(stop_status) && counters_valid && output_valid;
+    std::wprintf(L"AC3_BITSTREAM_%ls fixture=%ls classifier_input_bytes=%llu "
+                 L"stream_input_bytes=%llu samples=%llu bytes=%llu eos=%llu graph_error=0x%08lx\n",
+                 complete ? L"COMPLETE" : L"FAILURE", fixture_path.c_str(),
+                 static_cast<unsigned long long>(classifier_bytes),
+                 static_cast<unsigned long long>(stream_bytes),
+                 static_cast<unsigned long long>(sink->sample_count()),
+                 static_cast<unsigned long long>(sink->bytes().size()),
+                 static_cast<unsigned long long>(sink->end_of_stream_count()),
+                 static_cast<unsigned long>(graph_error));
+    return complete ? S_OK : E_FAIL;
 }
 
 class Task4TestSample final : public IMediaSample
@@ -7597,6 +7918,29 @@ HRESULT RunSelfTest(const std::filesystem::path &runtime_dir,
 
 int wmain(int argc, wchar_t **argv)
 {
+    if (argc == 3 && wcscmp(argv[1], L"--classify") == 0)
+    {
+        std::vector<unsigned char> bytes;
+        if (!openjoc_harness_shell::ReadFixtureBytes(argv[2], &bytes))
+            return 66;
+        LAVOpenJocDecoder decoder;
+        if (!decoder.IsAvailable())
+            return 67;
+        const LAVOpenJocProcessResult result = decoder.Process(
+            bytes.data(), bytes.size(), (std::numeric_limits<std::int64_t>::min)(), true);
+        std::wprintf(L"OPENJOC_CLASSIFY fixture=%ls result=%u state=%u "
+                     L"classifier_input_bytes=%llu stream_input_bytes=%llu error=%hs\n",
+                     argv[2], static_cast<unsigned int>(result),
+                     static_cast<unsigned int>(decoder.State()),
+                     static_cast<unsigned long long>(decoder.ClassifierInputBytes()),
+                     static_cast<unsigned long long>(decoder.StreamInputBytes()),
+                     decoder.LastError());
+        return result != LAVOpenJocProcessResult::OpenJoc &&
+                       decoder.State() != LAVOpenJocState::OpenJoc &&
+                       decoder.StreamInputBytes() == 0
+                   ? 0
+                   : 1;
+    }
     if (argc == 4 && wcscmp(argv[1], L"--write-manifest") == 0)
     {
         if (!openjoc_harness_shell::WriteStagedManifest(argv[2], argv[3]))
@@ -7716,7 +8060,9 @@ int wmain(int argc, wchar_t **argv)
     const bool lifecycle = argc == 5 && wcscmp(argv[1], L"--openjoc-lifecycle") == 0;
     const bool allocator_performance =
         argc == 5 && wcscmp(argv[1], L"--allocator-performance") == 0;
-    if (!controlled_sink && !lifecycle && !allocator_performance &&
+    const bool ac3_bitstream = argc == 5 && wcscmp(argv[1], L"--ac3-bitstream") == 0;
+    const bool legacy_core = argc == 6 && wcscmp(argv[1], L"--legacy-core") == 0;
+    if (!controlled_sink && !lifecycle && !allocator_performance && !ac3_bitstream && !legacy_core &&
         (argc != 5 || wcscmp(argv[1], L"--self-test") != 0 ||
         (wcscmp(argv[4], L"target") != 0 && wcscmp(argv[4], L"pristine") != 0))
        )
@@ -7734,6 +8080,10 @@ int wmain(int argc, wchar_t **argv)
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --openjoc-lifecycle ...\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --allocator-performance "
                       L"<runtime-dir> <manifest> <joc.multi.ec3>\n"
+                      L"   or: OpenJocDirectShowNegotiationSmoke.exe --legacy-core "
+                      L"<runtime-dir> <manifest> <fixture.ac3> <policy>\n"
+                      L"   or: OpenJocDirectShowNegotiationSmoke.exe --ac3-bitstream "
+                      L"<runtime-dir> <manifest> <fixture.ac3>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --native-renderer-probe "
                       L"<runtime-dir> <manifest> <fixture> <renderer-moniker> <policy> "
                       L"<new-evidence-file>\n"
@@ -7753,10 +8103,25 @@ int wmain(int argc, wchar_t **argv)
         return 1;
     }
     const GUID &audio_class_id = !controlled_sink && !lifecycle && !allocator_performance &&
+                                         !ac3_bitstream && !legacy_core &&
                                          wcscmp(argv[4], L"pristine") == 0
                                      ? kPristineLavAudio
                                      : kTargetLavAudio;
-    const HRESULT status = allocator_performance
+    wchar_t *legacy_policy_end = nullptr;
+    const unsigned long legacy_policy_value = legacy_core ? wcstoul(argv[5], &legacy_policy_end, 10) : 0;
+    const bool legacy_policy_valid = !legacy_core ||
+                                     (legacy_policy_end && *legacy_policy_end == L'\0' &&
+                                      legacy_policy_value < LAV_OPENJOC_OUTPUT_CONTRACT_COUNT);
+    const HRESULT status = !legacy_policy_valid
+                               ? E_INVALIDARG
+                           : ac3_bitstream
+                               ? openjoc_harness_shell::RunAc3BitstreamGraphCase(
+                                     argv[2], argv[3], argv[4])
+                           : legacy_core
+                               ? openjoc_harness_shell::RunLegacyCoreGraphCase(
+                                     argv[2], argv[3], argv[4],
+                                     static_cast<LAVOpenJocOutputPolicy>(legacy_policy_value))
+                           : allocator_performance
                                ? openjoc_harness_shell::RunTask4AllocatorPerformance(
                                      argv[2], argv[3], argv[4])
                            : lifecycle
@@ -7776,6 +8141,12 @@ int wmain(int argc, wchar_t **argv)
         else if (lifecycle)
             std::fwprintf(stderr, L"TASK3_UNVERIFIED: lifecycle matrix failed: 0x%08lx\n",
                           static_cast<unsigned long>(status));
+        else if (ac3_bitstream)
+            std::fwprintf(stderr, L"AC-3 bitstream graph failed: 0x%08lx\n",
+                          static_cast<unsigned long>(status));
+        else if (legacy_core)
+            std::fwprintf(stderr, L"legacy-core graph failed: 0x%08lx\n",
+                          static_cast<unsigned long>(status));
         else if (allocator_performance)
             std::fwprintf(stderr, L"TASK4_UNVERIFIED: allocator/performance failed: 0x%08lx\n",
                           static_cast<unsigned long>(status));
@@ -7794,6 +8165,16 @@ int wmain(int argc, wchar_t **argv)
     {
         std::wprintf(L"TASK3_CONTROL_COMPLETE: lifecycle matrix passed; renderer state remains "
                      L"UNVERIFIED\n");
+        return 0;
+    }
+    if (ac3_bitstream)
+    {
+        std::wprintf(L"AC3_BITSTREAM_INTEGRATION_COMPLETE\n");
+        return 0;
+    }
+    if (legacy_core)
+    {
+        std::wprintf(L"LEGACY_CORE_INTEGRATION_COMPLETE\n");
         return 0;
     }
     if (allocator_performance)

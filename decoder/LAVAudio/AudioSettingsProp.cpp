@@ -1218,7 +1218,7 @@ void CLAVAudioStatusProp::UpdateOpenJocStatusDisplay()
     const wchar_t *admission = L"Undecided";
     switch (m_pOpenJocStatus->GetOpenJocAdmissionState())
     {
-    case LAVOpenJocAdmissionStockEac3: admission = L"StockEac3"; break;
+    case LAVOpenJocAdmissionStockEac3: admission = L"Stock decoder"; break;
     case LAVOpenJocAdmissionOpenJoc: admission = L"OpenJoc"; break;
     case LAVOpenJocAdmissionUndecided:
     default: break;

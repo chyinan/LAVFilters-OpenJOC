@@ -36,9 +36,9 @@ LAVOpenJocAdmissionAction LAVOpenJocAdmission::resolve(const LAVOpenJocClassific
         classification == LAVOpenJocClassification::ConfirmedNonJoc ||
         classification == LAVOpenJocClassification::InvalidOrUnsupported)
     {
-        m_state = LAVOpenJocState::StockEac3;
+        m_state = LAVOpenJocState::StockCodec;
         m_classified_bytes = 0;
-        return {LAVOpenJocActionKind::UseStockEac3, 0};
+        return {LAVOpenJocActionKind::UseStockDecoder, 0};
     }
 
     if (classification == LAVOpenJocClassification::ConfirmedJoc)

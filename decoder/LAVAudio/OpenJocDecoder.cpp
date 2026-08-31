@@ -572,14 +572,14 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
     if (!m_impl->available)
     {
         m_impl->admission.resolve(LAVOpenJocClassification::InvalidOrUnsupported, data_size);
-        return LAVOpenJocProcessResult::UseStockEac3;
+        return LAVOpenJocProcessResult::UseStockDecoder;
     }
 
     if (data_size > 0 && !data)
     {
         m_impl->SetError("invalid null OpenJOC input buffer");
         m_impl->admission.resolve(LAVOpenJocClassification::InvalidOrUnsupported, data_size);
-        return LAVOpenJocProcessResult::UseStockEac3;
+        return LAVOpenJocProcessResult::UseStockDecoder;
     }
 
     if (m_impl->admission.state() == LAVOpenJocState::Undecided)
@@ -615,15 +615,15 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
 
         LAVOpenJocAdmissionAction action = m_impl->admission.resolve(
             classification, m_impl->admission.classified_bytes());
-        if (action.kind == LAVOpenJocActionKind::UseStockEac3)
-            return LAVOpenJocProcessResult::UseStockEac3;
+        if (action.kind == LAVOpenJocActionKind::UseStockDecoder)
+            return LAVOpenJocProcessResult::UseStockDecoder;
         if (action.kind == LAVOpenJocActionKind::NoAction)
         {
             if (end_of_stream)
             {
                 m_impl->admission.resolve(LAVOpenJocClassification::InvalidOrUnsupported,
                                            m_impl->admission.classified_bytes());
-                return LAVOpenJocProcessResult::UseStockEac3;
+                return LAVOpenJocProcessResult::UseStockDecoder;
             }
             return LAVOpenJocProcessResult::Waiting;
         }
@@ -631,12 +631,12 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
         if (!m_impl->FeedDecoder(data, data_size, m_impl->admission_pts_samples))
             return LAVOpenJocProcessResult::Error;
 #else
-        return LAVOpenJocProcessResult::UseStockEac3;
+        return LAVOpenJocProcessResult::UseStockDecoder;
 #endif
     }
-    else if (m_impl->admission.state() == LAVOpenJocState::StockEac3)
+    else if (m_impl->admission.state() == LAVOpenJocState::StockCodec)
     {
-        return LAVOpenJocProcessResult::UseStockEac3;
+        return LAVOpenJocProcessResult::UseStockDecoder;
     }
     else
     {

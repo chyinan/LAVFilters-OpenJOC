@@ -597,7 +597,7 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
     if (SUCCEEDED(hr) && (WindowText(output) != L"12 / 0x2d63f" || WindowText(codec) != L"PCM" ||
                           WindowText(sample_rate) != L"48000" ||
                           WindowText(format) != L"32-bit Floating-point" || WindowText(policy) != L"7.1.4" ||
-                          WindowText(admission) != L"StockEac3" || status.volume_queries() != 8 ||
+                          WindowText(admission) != L"Stock decoder" || status.volume_queries() != 8 ||
                           status.max_volume_channel() != 7 || status.output_detail_queries() < 3 ||
                           status.policy_queries() < 3 || status.admission_queries() < 3 ||
                           !MeterLabelsMatch(parent, labels_714) || !MeterPositionsMatch(parent, 8)))

@@ -13,7 +13,7 @@
       "common/DSUtilLite/DSUtilLite.vcxproj",
       "common/baseclasses/baseclasses.vcxproj"
     ],
-    "compiled_input_count": 64,
+    "compiled_input_count": 65,
     "method": "All ClCompile Include entries in the three projects"
   },
   "compiled_inputs": [
@@ -89,6 +89,16 @@
     },
     {
       "source_path": "decoder/LAVAudio/OpenJocAdmission.cpp",
+      "origin": "OpenJOC downstream integration",
+      "upstream_revision": "not-applicable (new downstream file)",
+      "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
+      "lav_modification_state": "not-applicable",
+      "openjoc_modification_state": "new for openjoc-0.10.0",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/OpenJocCandidate.cpp",
       "origin": "OpenJOC downstream integration",
       "upstream_revision": "not-applicable (new downstream file)",
       "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",

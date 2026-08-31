@@ -12,7 +12,7 @@
 enum class LAVOpenJocState
 {
     Undecided,
-    StockEac3,
+    StockCodec,
     OpenJoc,
 };
 
@@ -27,7 +27,7 @@ enum class LAVOpenJocClassification
 enum class LAVOpenJocActionKind
 {
     NoAction,
-    UseStockEac3,
+    UseStockDecoder,
     PromoteToOpenJoc,
 };
 

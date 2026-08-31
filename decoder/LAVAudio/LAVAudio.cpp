@@ -28,6 +28,7 @@
 #include "stdafx.h"
 #include "LAVAudio.h"
 #include "PostProcessor.h"
+#include "OpenJocCandidate.h"
 #include "OpenJocStrictNegotiation.h"
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
 #include "OpenJocDialnorm.h"
@@ -1305,7 +1306,7 @@ LAVOpenJocAdmissionState CLAVAudio::GetOpenJocAdmissionState()
 #endif
     switch (m_openJoc.State())
     {
-    case LAVOpenJocState::StockEac3:
+    case LAVOpenJocState::StockCodec:
         return LAVOpenJocAdmissionStockEac3;
     case LAVOpenJocState::OpenJoc:
         return LAVOpenJocAdmissionOpenJoc;
@@ -2257,8 +2258,14 @@ HRESULT CLAVAudio::Receive(IMediaSample *pIn)
 
     m_bJustFlushed = FALSE;
 
-    m_rtStartInput = SUCCEEDED(hr) ? rtStart : AV_NOPTS_VALUE;
-    m_rtStopInput = (hr == S_OK) ? rtStop : AV_NOPTS_VALUE;
+    const bool retain_probe_timestamp = IsOpenJocCandidate() &&
+                                        m_openJoc.State() == LAVOpenJocState::Undecided &&
+                                        m_buff.GetCount() > 0;
+    if (!retain_probe_timestamp)
+    {
+        m_rtStartInput = SUCCEEDED(hr) ? rtStart : AV_NOPTS_VALUE;
+        m_rtStopInput = (hr == S_OK) ? rtStop : AV_NOPTS_VALUE;
+    }
 
     DWORD bufflen = m_buff.GetCount();
 
@@ -2313,6 +2320,13 @@ static int check_mpegaudio_header(uint8_t *buf, uint32_t *retheader)
         *retheader = header;
 
     return sd.frame_size;
+}
+
+bool CLAVAudio::IsOpenJocCandidate() const
+{
+    return IsLAVOpenJocCandidate(
+        m_nCodecId, m_avBSContext != nullptr, m_openJoc.IsAvailable(),
+        m_pInput->CurrentMediaType().subtype == MEDIASUBTYPE_DOLBY_AC3_SPDIF);
 }
 
 HRESULT CLAVAudio::ResyncMPEGAudio()
@@ -2460,8 +2474,7 @@ HRESULT CLAVAudio::ProcessBuffer(IMediaSample *pMediaSample, BOOL bEOF)
         }
     }
 
-    const bool openjoc_candidate = m_nCodecId == AV_CODEC_ID_EAC3 && !m_avBSContext && m_openJoc.IsAvailable() &&
-                                   m_pInput->CurrentMediaType().subtype != MEDIASUBTYPE_DOLBY_AC3_SPDIF;
+    const bool openjoc_candidate = IsOpenJocCandidate();
 
     if (openjoc_candidate)
     {
