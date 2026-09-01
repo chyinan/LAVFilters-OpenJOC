@@ -498,7 +498,7 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
         SendMessageW(combo, CB_GETCURSEL, 0, 0) != 7 ||
         SendMessageW(dialnorm, CB_GETCOUNT, 0, 0) != std::size(expected_dialnorm) ||
         SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0 ||
-        SendMessageW(virtual_layout, CB_GETCOUNT, 0, 0) != 1 ||
+        SendMessageW(virtual_layout, CB_GETCOUNT, 0, 0) != 2 ||
         SendMessageW(virtual_layout, CB_GETCURSEL, 0, 0) != 0 ||
         SendMessageW(hrtf_source, CB_GETCOUNT, 0, 0) != 2 ||
         SendMessageW(hrtf_source, CB_GETCURSEL, 0, 0) != 0 ||
@@ -523,7 +523,8 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
             std::wstring(combo_label) != expected_dialnorm[index].label)
             hr = E_UNEXPECTED;
     }
-    constexpr const wchar_t *expected_virtual_layouts[] = {L"7.1.4 (Recommended)"};
+    constexpr const wchar_t *expected_virtual_layouts[] = {
+        L"7.1.4 (Recommended)", L"9.1.6 (Experimental)"};
     for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_virtual_layouts); ++index)
     {
         wchar_t label[64] = {};
@@ -558,6 +559,18 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
                      reinterpret_cast<LPARAM>(hrtf_source));
         if (!IsWindowEnabled(sofa_file) || !IsWindowEnabled(sofa_browse))
             hr = E_UNEXPECTED;
+        if (SUCCEEDED(hr) && SendMessageW(virtual_layout, CB_SETCURSEL, 1, 0) != 1)
+            hr = E_UNEXPECTED;
+        if (SUCCEEDED(hr))
+            SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocVirtualLayoutControl, CBN_SELCHANGE),
+                         reinterpret_cast<LPARAM>(virtual_layout));
+        if (SUCCEEDED(hr) &&
+            SendMessageW(virtual_layout, CB_GETITEMDATA, 1, 0) !=
+                static_cast<LRESULT>(LAVOpenJocBinauralVirtualLayout::Layout916))
+            hr = E_UNEXPECTED;
+        SendMessageW(virtual_layout, CB_SETCURSEL, 0, 0);
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocVirtualLayoutControl, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(virtual_layout));
         SendMessageW(hrtf_source, CB_SETCURSEL, 0, 0);
         SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocHrtfSourceControl, CBN_SELCHANGE),
                      reinterpret_cast<LPARAM>(hrtf_source));
@@ -765,6 +778,16 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
          WindowText(admission) != L"OpenJOC" ||
          !WindowText(warning).empty() || !WindowText(reason).empty() ||
          !WindowText(details).empty() || !MeterLabelsMatch(page_window, labels_stereo)))
+        hr = E_UNEXPECTED;
+
+    status.SetDiagnostic(LAVOpenJocDiagnosticBinauralHrtfConfiguration, TRUE, FALSE, 0,
+                         L"Binaural HRTF configuration error: Custom SOFA could not be opened: missing.sofa");
+    if (SUCCEEDED(hr))
+        SendMessageW(page_window, WM_TIMER, 1, 0);
+    if (SUCCEEDED(hr) &&
+        (WindowText(warning) != L"Warning" || WindowText(reason) != L"Binaural HRTF configuration" ||
+         WindowText(details) !=
+             L"Binaural HRTF configuration error: Custom SOFA could not be opened: missing.sofa"))
         hr = E_UNEXPECTED;
 
     status.SetOutputResult(S_FALSE);

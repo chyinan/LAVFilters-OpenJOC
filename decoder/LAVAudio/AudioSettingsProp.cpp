@@ -566,6 +566,7 @@ HRESULT CLAVAudioOpenJocProp::OnActivate()
         const wchar_t *label;
     } virtual_layout_options[] = {
         {LAVOpenJocBinauralVirtualLayout::Layout714, L"7.1.4 (Recommended)"},
+        {LAVOpenJocBinauralVirtualLayout::Layout916, L"9.1.6 (Experimental)"},
     };
     LRESULT selected_layout = CB_ERR;
     for (const auto &option : virtual_layout_options)
@@ -1433,6 +1434,9 @@ void CLAVAudioStatusProp::UpdateOpenJocStatusDisplay()
             break;
         case LAVOpenJocDiagnosticUnsupportedOutputLayout:
             reason_label = L"Unsupported output layout";
+            break;
+        case LAVOpenJocDiagnosticBinauralHrtfConfiguration:
+            reason_label = L"Binaural HRTF configuration";
             break;
         case LAVOpenJocDiagnosticNone:
         default:

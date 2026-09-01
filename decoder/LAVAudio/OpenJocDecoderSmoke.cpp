@@ -12,6 +12,8 @@
 #include "OpenJocOutput.h"
 
 #include <array>
+#include <algorithm>
+#include <cmath>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -158,6 +160,107 @@ static std::size_t decode_policy(const std::vector<unsigned char> &bytes,
     assert(decoder.ClassifierInputBytes() == 0);
     assert(decoder.StreamInputBytes() == 0);
     return frame_count;
+}
+
+static void binaural_virtual_layout_configuration_is_forwarded_and_switch_safe()
+{
+    const LAVOpenJocOutputContract *contract =
+        FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Binaural);
+    assert(contract != nullptr);
+    assert(contract->channel_count == 2);
+
+    LAVOpenJocDecoder decoder;
+    assert(decoder.IsAvailable());
+    assert(decoder.SetBinauralConfiguration(
+        contract, LAVOpenJocDialnormPolicy::Calibrated, {}, "7.1.4"));
+#if defined(LAV_OPENJOC_TESTING)
+    assert(std::strstr(decoder.ConfigDescriptorForTesting(), "binaural_virtual_layout=7.1.4") != nullptr);
+#endif
+    assert(decoder.SetBinauralConfiguration(
+        contract, LAVOpenJocDialnormPolicy::Calibrated, {}, "9.1.6"));
+    assert(decoder.OutputContract() == contract);
+#if defined(LAV_OPENJOC_TESTING)
+    assert(std::strstr(decoder.ConfigDescriptorForTesting(), "binaural_virtual_layout=9.1.6") != nullptr);
+#endif
+    assert(decoder.State() == LAVOpenJocState::Undecided);
+    LAVOpenJocFrame stale;
+    assert(!decoder.ReceiveFrame(stale));
+    assert(decoder.SetBinauralConfiguration(
+        contract, LAVOpenJocDialnormPolicy::Calibrated, {}, "7.1.4"));
+    assert(decoder.State() == LAVOpenJocState::Undecided);
+}
+
+static void binaural_configuration_error_does_not_block_stock_admission(
+    const std::vector<unsigned char> &ordinary, const std::vector<unsigned char> &joc)
+{
+    LAVOpenJocDecoder decoder;
+    assert(decoder.IsAvailable());
+    decoder.SetConfigurationError("Binaural HRTF configuration error: persisted SOFA is unavailable");
+    assert(decoder.Process(ordinary.data(), ordinary.size(), INT64_MIN, true) ==
+           LAVOpenJocProcessResult::UseStockDecoder);
+    assert(decoder.State() == LAVOpenJocState::StockCodec);
+    assert(!decoder.DiagnosticSnapshot().warning);
+
+    decoder.ResetForNewStream();
+    decoder.SetConfigurationError("Binaural HRTF configuration error: persisted SOFA is unavailable");
+    assert(decoder.Process(joc.data(), joc.size(), INT64_MIN, true) == LAVOpenJocProcessResult::Error);
+    const LAVOpenJocDiagnosticSnapshot diagnostic = decoder.DiagnosticSnapshot();
+    assert(diagnostic.warning);
+    assert(diagnostic.reason == LAVOpenJocFailureReason::BinauralHrtfConfiguration);
+}
+
+static std::vector<float> render_binaural_fixture(const std::vector<unsigned char> &joc,
+                                                   const std::vector<unsigned char> &sofa,
+                                                   const char *layout)
+{
+    const LAVOpenJocOutputContract *contract =
+        FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Binaural);
+    assert(contract != nullptr && contract->channel_count == 2);
+    LAVOpenJocDecoder decoder;
+    assert(decoder.IsAvailable());
+    assert(decoder.SetBinauralConfiguration(
+        contract, LAVOpenJocDialnormPolicy::Calibrated, sofa, layout));
+#if defined(LAV_OPENJOC_TESTING)
+    const char *descriptor = decoder.ConfigDescriptorForTesting();
+    assert(descriptor != nullptr);
+    if (!sofa.empty())
+        assert(std::strstr(descriptor, "binaural_hrtf_source=custom-sofa-bytes") != nullptr);
+#endif
+    assert(decoder.Process(joc.data(), joc.size(), INT64_MIN, true) == LAVOpenJocProcessResult::OpenJoc);
+    std::vector<float> pcm;
+    LAVOpenJocFrame frame;
+    while (decoder.ReceiveFrame(frame))
+    {
+        assert(frame.output_contract == contract && frame.channel_count == 2);
+        assert(std::all_of(frame.samples.begin(), frame.samples.end(), [](const float sample) {
+            return std::isfinite(sample);
+        }));
+        pcm.insert(pcm.end(), frame.samples.begin(), frame.samples.end());
+    }
+    assert(!pcm.empty());
+    return pcm;
+}
+
+static void custom_sofa_is_used_and_changes_binaural_pcm(
+    const std::vector<unsigned char> &joc, const char *sofa_path)
+{
+    const std::vector<unsigned char> custom = read_file(sofa_path);
+    assert(!custom.empty());
+    const std::vector<float> builtin = render_binaural_fixture(joc, {}, "7.1.4");
+    const std::vector<float> custom_pcm = render_binaural_fixture(joc, custom, "7.1.4");
+    const std::size_t common_size = (std::min)(builtin.size(), custom_pcm.size());
+    assert(common_size > 0);
+    assert(builtin.size() != custom_pcm.size() ||
+           !std::equal(builtin.begin(), builtin.begin() + common_size, custom_pcm.begin()));
+    const std::vector<float> custom_916 = render_binaural_fixture(joc, custom, "9.1.6");
+    assert(!custom_916.empty());
+}
+
+static void builtin_916_configuration_produces_two_channel_pcm(const std::vector<unsigned char> &joc)
+{
+    const std::vector<float> pcm = render_binaural_fixture(joc, {}, "9.1.6");
+    assert(!pcm.empty());
+    assert(pcm.size() % 2 == 0);
 }
 
 static void classify_and_feed_joc_for_all_policies(const std::vector<unsigned char> &bytes)
@@ -366,10 +469,16 @@ static void failed_dialnorm_change_is_atomic(const std::vector<unsigned char> &b
 
 int main(int argc, char **argv)
 {
-    assert(argc == 3);
-    classify_as_stock(read_file(argv[1]));
-    classify_malformed_probe_as_sticky_fallback();
+    assert(argc == 3 || argc == 4);
+    binaural_virtual_layout_configuration_is_forwarded_and_switch_safe();
+    const std::vector<unsigned char> ordinary = read_file(argv[1]);
     const std::vector<unsigned char> joc = read_file(argv[2]);
+    binaural_configuration_error_does_not_block_stock_admission(ordinary, joc);
+    builtin_916_configuration_produces_two_channel_pcm(joc);
+    if (argc == 4)
+        custom_sofa_is_used_and_changes_binaural_pcm(joc, argv[3]);
+    classify_as_stock(ordinary);
+    classify_malformed_probe_as_sticky_fallback();
     classify_and_feed_joc_for_all_policies(joc);
     policy_assignment_and_switch_are_safe(joc);
     dialnorm_assignment_and_switch_are_safe(joc);

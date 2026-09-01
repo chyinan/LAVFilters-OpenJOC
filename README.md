@@ -47,6 +47,15 @@ are reported as Binaural HRTF configuration errors and do not silently fall
 back to the built-in HRTF. This integration does not add head tracking or
 personalized HRTF controls.
 
+The Binaural page also selects the virtual speaker layout: **7.1.4
+(Recommended)** or **9.1.6 (Experimental)**. Both layouts use the existing
+OpenJOC virtual-speaker stage followed by the same SOFA/HRTF backend; final
+output remains two-channel binaural PCM. 9.1.6 is not claimed to be better or
+reference quality, and its additional virtual feeds may cost more CPU.
+The canonical 9.1.6 intermediate order is `FL, FR, FC, LFE, Lb, Rb, Ls, Rs,
+Lw, Rw, Ltf, Rtf, Ltm, Rtm, Ltr, Rtr`; it is never exposed as 16-channel
+DirectShow output.
+
 The Status page distinguishes three playback states: OpenJOC, Stock decoder,
 and Stock decoder (OpenJOC fallback). Ordinary AC-3/E-AC-3 remains normal
 stock decoding with no warning. A fallback warning retains its structured
