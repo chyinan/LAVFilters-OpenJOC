@@ -50,6 +50,12 @@ stream is positively classified. A downstream output-layout rejection is
 shown as an OpenJOC output error and is not relabeled as file corruption or
 silently switched to stock decoding after promotion.
 
+Channel Output meters are diagnostic-only: they read the final selected PCM
+output (including the final two-channel Binaural signal) through the same
+statistics lifecycle for Stock and OpenJOC. Status snapshots use non-blocking
+state publication, so an in-flight OpenJOC render cannot stall the meter UI;
+the last textual snapshot is retained until the next readable tick.
+
 ---
 
 LAV Filters - ffmpeg based DirectShow Splitter and Decoders

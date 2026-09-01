@@ -884,6 +884,76 @@ HRESULT CLAVAudio::RunOpenJocVolumeStatsSelfTest()
             return hr;
     }
 
+    const auto run_sequence_case = [&](const LAVOpenJocOutputPolicy policy,
+                                       const std::vector<std::vector<float>> &sequence,
+                                       const auto &verify) -> HRESULT {
+        HRESULT constructor_hr = S_OK;
+        CLAVAudio audio(nullptr, &constructor_hr);
+        if (FAILED(constructor_hr) || FAILED(audio.EnableVolumeStats()))
+            return FAILED(constructor_hr) ? constructor_hr : E_FAIL;
+        for (const auto &amplitudes : sequence)
+        {
+            BufferDetails buffer;
+            if (!prepare_buffer(policy, amplitudes, &buffer))
+                return E_FAIL;
+            const std::vector<BYTE> before(buffer.bBuffer->Ptr(),
+                                           buffer.bBuffer->Ptr() + buffer.bBuffer->GetCount());
+            if (audio.PostProcess(&buffer) != S_OK ||
+                std::memcmp(before.data(), buffer.bBuffer->Ptr(), before.size()) != 0)
+                return E_UNEXPECTED;
+        }
+        return verify(audio);
+    };
+
+    {
+        const std::vector<std::vector<float>> sequence = {
+            {0.5f, 0.25f}, {0.0f, 0.25f}, {0.5f, 0.25f}, {0.0f, 0.25f},
+            {0.5f, 0.25f}, {0.0f, 0.25f}, {0.5f, 0.25f}, {0.0f, 0.25f},
+            {0.5f, 0.25f}, {0.0f, 0.25f},
+        };
+        const HRESULT hr = run_sequence_case(
+            LAVOpenJocOutputPolicy::Stereo, sequence, [&](const CLAVAudio &audio) {
+                const float expected_left =
+                    (5.0f * (20.0f * std::log10(0.5f)) + 5.0f * -100.0f) / 10.0f;
+                const float expected_right = 20.0f * std::log10(0.25f);
+                return std::fabs(audio.m_faVolume[0].Average() - expected_left) <= kTolerance &&
+                               std::fabs(audio.m_faVolume[1].Average() - expected_right) <= kTolerance
+                           ? S_OK
+                           : E_UNEXPECTED;
+            });
+        if (FAILED(hr))
+            return hr;
+    }
+
+    {
+        HRESULT constructor_hr = S_OK;
+        CLAVAudio audio(nullptr, &constructor_hr);
+        if (FAILED(constructor_hr) || FAILED(audio.EnableVolumeStats()))
+            return FAILED(constructor_hr) ? constructor_hr : E_FAIL;
+        const std::vector<std::vector<float>> silence(10, std::vector<float>{0.0f, 0.0f});
+        for (const auto &amplitudes : silence)
+        {
+            BufferDetails buffer;
+            if (!prepare_buffer(LAVOpenJocOutputPolicy::Stereo, amplitudes, &buffer) ||
+                audio.PostProcess(&buffer) != S_OK)
+                return E_UNEXPECTED;
+        }
+        BufferDetails transient;
+        if (!prepare_buffer(LAVOpenJocOutputPolicy::Stereo, {1.0f, 0.5f}, &transient) ||
+            audio.PostProcess(&transient) != S_OK || audio.m_faVolume[0].Average() <= -100.0f)
+            return E_UNEXPECTED;
+        for (const auto &amplitudes : silence)
+        {
+            BufferDetails buffer;
+            if (!prepare_buffer(LAVOpenJocOutputPolicy::Stereo, amplitudes, &buffer) ||
+                audio.PostProcess(&buffer) != S_OK)
+                return E_UNEXPECTED;
+        }
+        if (std::fabs(audio.m_faVolume[0].Average() + 100.0f) > kTolerance ||
+            std::fabs(audio.m_faVolume[1].Average() + 100.0f) > kTolerance)
+            return E_UNEXPECTED;
+    }
+
     {
         HRESULT constructor_hr = S_OK;
         CLAVAudio audio(nullptr, &constructor_hr);

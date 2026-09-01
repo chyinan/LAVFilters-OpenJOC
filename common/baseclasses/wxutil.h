@@ -10,6 +10,8 @@
 #ifndef __WXUTIL__
 #define __WXUTIL__
 
+// pattern: Imperative Shell
+
 // eliminate spurious "statement has no effect" warnings.
 #pragma warning(disable : 4705)
 
@@ -34,6 +36,7 @@ class CCritSec
     ~CCritSec();
     void Lock();
     void Unlock();
+    BOOL TryLock();
 #else
 
   public:
@@ -44,6 +47,8 @@ class CCritSec
     void Lock() { EnterCriticalSection(&m_CritSec); };
 
     void Unlock() { LeaveCriticalSection(&m_CritSec); };
+
+    BOOL TryLock() { return TryEnterCriticalSection(&m_CritSec); };
 #endif
 };
 
@@ -90,6 +95,31 @@ class CAutoLock
     };
 
     ~CAutoLock() { m_pLock->Unlock(); };
+};
+
+// A non-blocking lock for status/UI reads that must not wait on streaming work.
+class CAutoTryLock
+{
+    CAutoTryLock(const CAutoTryLock &refAutoLock);
+    CAutoTryLock &operator=(const CAutoTryLock &refAutoLock);
+
+  protected:
+    CCritSec *m_pLock;
+    BOOL m_bLocked;
+
+  public:
+    explicit CAutoTryLock(CCritSec *plock)
+        : m_pLock(plock), m_bLocked(plock && plock->TryLock())
+    {
+    };
+
+    ~CAutoTryLock()
+    {
+        if (m_bLocked)
+            m_pLock->Unlock();
+    };
+
+    BOOL IsLocked() const { return m_bLocked; };
 };
 
 // wrapper for event objects

@@ -460,6 +460,7 @@ HRESULT AMSafeMemMoveOffset(__in_bcount(dst_size) void *dst, __in size_t dst_siz
 }
 
 #ifdef DEBUG
+// pattern: Imperative Shell
 /******************************Public*Routine******************************\
 * Debug CCritSec helpers
 *
@@ -527,6 +528,15 @@ void CCritSec::Unlock()
         m_currentOwner = 0;
     }
     LeaveCriticalSection(&m_CritSec);
+}
+
+BOOL CCritSec::TryLock()
+{
+    if (!TryEnterCriticalSection(&m_CritSec))
+        return FALSE;
+    if (0 == m_lockCount++)
+        m_currentOwner = GetCurrentThreadId();
+    return TRUE;
 }
 
 void WINAPI DbgLockTrace(CCritSec *pcCrit, BOOL fTrace)

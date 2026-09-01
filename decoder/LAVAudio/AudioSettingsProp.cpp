@@ -1215,7 +1215,7 @@ void CLAVAudioStatusProp::UpdateMeterLayout(const int output_channels, DWORD out
 void CLAVAudioStatusProp::UpdateOpenJocStatusDisplay()
 {
     LAVOpenJocOutputPolicy policy = LAVOpenJocOutputPolicy::Stereo;
-    if (SUCCEEDED(m_pOpenJocSettings->GetOutputPolicy(&policy)))
+    if (m_pOpenJocSettings->GetOutputPolicy(&policy) == S_OK)
     {
         const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
         ATL::CA2W label(contract ? contract->property_page_label : "Invalid");
@@ -1240,33 +1240,26 @@ void CLAVAudioStatusProp::UpdateOpenJocStatusDisplay()
     int sample_rate = 0;
     DWORD mask = 0;
     const HRESULT hr = m_pAudioStatus->GetOutputDetails(&format, &channels, &sample_rate, &mask);
-    if (SUCCEEDED(hr))
+    if (hr == S_OK)
     {
         WCHAR buffer[100] = {};
-        if (hr == S_OK)
-        {
-            _snwprintf_s(buffer, _TRUNCATE, L"%d / 0x%x", channels, mask);
-            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CHANNEL, WM_SETTEXT, 0, (LPARAM)buffer);
-            _snwprintf_s(buffer, _TRUNCATE, L"%d", sample_rate);
-            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_SAMPLERATE, WM_SETTEXT, 0, (LPARAM)buffer);
-            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CODEC, WM_SETTEXT, 0, (LPARAM)L"PCM");
-            _snwprintf_s(buffer, _TRUNCATE, L"%S", format ? format : "");
-            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_FORMAT, WM_SETTEXT, 0, (LPARAM)buffer);
-        }
-        else
-        {
-            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CODEC, WM_SETTEXT, 0, (LPARAM)L"Bitstreaming");
-            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CHANNEL, WM_SETTEXT, 0, (LPARAM)L"");
-            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_SAMPLERATE, WM_SETTEXT, 0, (LPARAM)L"");
-            SendDlgItemMessage(m_Dlg, IDC_OUTPUT_FORMAT, WM_SETTEXT, 0, (LPARAM)L"");
-        }
+        _snwprintf_s(buffer, _TRUNCATE, L"%d / 0x%x", channels, mask);
+        SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CHANNEL, WM_SETTEXT, 0, (LPARAM)buffer);
+        _snwprintf_s(buffer, _TRUNCATE, L"%d", sample_rate);
+        SendDlgItemMessage(m_Dlg, IDC_OUTPUT_SAMPLERATE, WM_SETTEXT, 0, (LPARAM)buffer);
+        SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CODEC, WM_SETTEXT, 0, (LPARAM)L"PCM");
+        _snwprintf_s(buffer, _TRUNCATE, L"%S", format ? format : "");
+        SendDlgItemMessage(m_Dlg, IDC_OUTPUT_FORMAT, WM_SETTEXT, 0, (LPARAM)buffer);
+        UpdateMeterLayout(channels, mask);
     }
-    else
+    else if (hr == S_FALSE || FAILED(hr))
     {
-        SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CODEC, WM_SETTEXT, 0, (LPARAM)L"");
+        SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CODEC, WM_SETTEXT, 0,
+                           (LPARAM)(hr == S_FALSE ? L"Bitstreaming" : L""));
         SendDlgItemMessage(m_Dlg, IDC_OUTPUT_CHANNEL, WM_SETTEXT, 0, (LPARAM)L"");
         SendDlgItemMessage(m_Dlg, IDC_OUTPUT_SAMPLERATE, WM_SETTEXT, 0, (LPARAM)L"");
         SendDlgItemMessage(m_Dlg, IDC_OUTPUT_FORMAT, WM_SETTEXT, 0, (LPARAM)L"");
+        UpdateMeterLayout(0, 0);
     }
 
     LAVOpenJocDiagnosticReason reason = LAVOpenJocDiagnosticNone;
@@ -1274,54 +1267,47 @@ void CLAVAudioStatusProp::UpdateOpenJocStatusDisplay()
     BOOL failure_au_known = FALSE;
     ULONGLONG failure_au = 0;
     WCHAR detail[513] = {};
-    if (!m_pOpenJocDiagnostics ||
-        FAILED(m_pOpenJocDiagnostics->GetOpenJocPlaybackDiagnostics(
-            &reason, &warning, &failure_au_known, &failure_au, detail, ARRAYSIZE(detail))))
+    if (m_pOpenJocDiagnostics &&
+        m_pOpenJocDiagnostics->GetOpenJocPlaybackDiagnostics(
+            &reason, &warning, &failure_au_known, &failure_au, detail, ARRAYSIZE(detail)) == S_OK)
     {
-        reason = LAVOpenJocDiagnosticNone;
-        warning = FALSE;
-        failure_au_known = FALSE;
-        failure_au = 0;
-        detail[0] = L'\0';
-    }
+        const wchar_t *reason_label = L"";
+        switch (reason)
+        {
+        case LAVOpenJocDiagnosticMalformedJocMetadata:
+            reason_label = L"Malformed JOC metadata";
+            break;
+        case LAVOpenJocDiagnosticUnsupportedJocProfile:
+            reason_label = L"Unsupported JOC profile";
+            break;
+        case LAVOpenJocDiagnosticInvalidJocCarriage:
+            reason_label = L"Invalid JOC carriage";
+            break;
+        case LAVOpenJocDiagnosticOpenJocDecodeError:
+            reason_label = L"OpenJOC decode error";
+            break;
+        case LAVOpenJocDiagnosticUnsupportedOutputLayout:
+            reason_label = L"Unsupported output layout";
+            break;
+        case LAVOpenJocDiagnosticNone:
+        default:
+            break;
+        }
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_WARNING, WM_SETTEXT, 0,
+                           (LPARAM)(warning ? L"Warning" : L""));
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_REASON, WM_SETTEXT, 0, (LPARAM)reason_label);
 
-    const wchar_t *reason_label = L"";
-    switch (reason)
-    {
-    case LAVOpenJocDiagnosticMalformedJocMetadata:
-        reason_label = L"Malformed JOC metadata";
-        break;
-    case LAVOpenJocDiagnosticUnsupportedJocProfile:
-        reason_label = L"Unsupported JOC profile";
-        break;
-    case LAVOpenJocDiagnosticInvalidJocCarriage:
-        reason_label = L"Invalid JOC carriage";
-        break;
-    case LAVOpenJocDiagnosticOpenJocDecodeError:
-        reason_label = L"OpenJOC decode error";
-        break;
-    case LAVOpenJocDiagnosticUnsupportedOutputLayout:
-        reason_label = L"Unsupported output layout";
-        break;
-    case LAVOpenJocDiagnosticNone:
-    default:
-        break;
+        WCHAR displayed_detail[640] = {};
+        if (detail[0] != L'\0')
+        {
+            if (failure_au_known)
+                _snwprintf_s(displayed_detail, _TRUNCATE, L"AU %I64u: %s", failure_au, detail);
+            else
+                wcsncpy_s(displayed_detail, detail, _TRUNCATE);
+        }
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_DETAILS, WM_SETTEXT, 0,
+                           (LPARAM)displayed_detail);
     }
-    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_WARNING, WM_SETTEXT, 0,
-                       (LPARAM)(warning ? L"Warning" : L""));
-    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_REASON, WM_SETTEXT, 0, (LPARAM)reason_label);
-
-    WCHAR displayed_detail[640] = {};
-    if (detail[0] != L'\0')
-    {
-        if (failure_au_known)
-            _snwprintf_s(displayed_detail, _TRUNCATE, L"AU %I64u: %s", failure_au, detail);
-        else
-            wcsncpy_s(displayed_detail, detail, _TRUNCATE);
-    }
-    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_DETAILS, WM_SETTEXT, 0,
-                       (LPARAM)displayed_detail);
-    UpdateMeterLayout(hr == S_OK ? channels : 0, hr == S_OK ? mask : 0);
 }
 #endif
 

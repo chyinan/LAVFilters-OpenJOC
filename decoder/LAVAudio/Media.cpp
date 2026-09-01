@@ -17,6 +17,10 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+// pattern: Mixed (unavoidable)
+// Reason: the existing meter producer combines PCM inspection with its
+// intentionally stateful in-filter statistics accumulator.
+
 #include "stdafx.h"
 #include "LAVAudio.h"
 
@@ -593,17 +597,20 @@ void CLAVAudio::UpdateVolumeStats(const BufferDetails &buffer)
         }
     }
 
-    for (int ch = 0; ch < min(buffer.layout.nb_channels, MAX_VOLUME_STAT_CHANNEL); ++ch)
     {
-        if (fChAvg[ch] > FLT_EPSILON)
+        CAutoLock volume_lock(&m_csVolumeStats);
+        for (int ch = 0; ch < min(buffer.layout.nb_channels, MAX_VOLUME_STAT_CHANNEL); ++ch)
         {
-            const float fAvgSqrt = sqrtf(fChAvg[ch] / dwSamplesPerChannel);
-            const float fDb = 20.0f * log10f(fAvgSqrt);
-            m_faVolume[ch].Sample(fDb);
-        }
-        else
-        {
-            m_faVolume[ch].Sample(-100.0f);
+            if (fChAvg[ch] > FLT_EPSILON)
+            {
+                const float fAvgSqrt = sqrtf(fChAvg[ch] / dwSamplesPerChannel);
+                const float fDb = 20.0f * log10f(fAvgSqrt);
+                m_faVolume[ch].Sample(fDb);
+            }
+            else
+            {
+                m_faVolume[ch].Sample(-100.0f);
+            }
         }
     }
     free(fChAvg);

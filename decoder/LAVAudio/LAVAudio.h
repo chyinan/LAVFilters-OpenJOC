@@ -27,6 +27,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocSettings.h"
 #include "LAVOpenJocDiagnostics.h"
@@ -285,6 +287,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     HRESULT ResyncMPEGAudio();
 
     void UpdateVolumeStats(const BufferDetails &buffer);
+    void RefreshOpenJocAdmissionSnapshot();
 
     BOOL IsBitstreaming(AVCodecID codec);
     HRESULT InitBitstreaming();
@@ -393,7 +396,17 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     BOOL m_bRuntimeConfig = FALSE;
 
     BOOL m_bVolumeStats = FALSE;          // Volume Stats gathering enabled
+    CCritSec m_csVolumeStats;
     FloatingAverage<float> m_faVolume[MAX_VOLUME_STAT_CHANNEL]; // Floating Average for volume (8 channels)
+    std::atomic<LAVOpenJocAdmissionState> m_openJocAdmissionSnapshot{
+        LAVOpenJocAdmissionUndecided};
+    std::atomic<LAVOpenJocOutputPolicy> m_openJocOutputPolicySnapshot{
+        LAVOpenJocOutputPolicy::Stereo};
+    std::atomic<LAVAudioSampleFormat> m_outputStatusFormat{SampleFormat_None};
+    std::atomic<int> m_outputStatusChannels{0};
+    std::atomic<int> m_outputStatusSampleRate{0};
+    std::atomic<DWORD> m_outputStatusChannelMask{0};
+    std::atomic<int> m_volumeStatsChannels{0};
 
     BOOL m_bQueueResync = FALSE;
     BOOL m_bResyncTimestamp = FALSE;

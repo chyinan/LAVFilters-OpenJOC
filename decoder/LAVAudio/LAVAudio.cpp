@@ -300,6 +300,8 @@ HRESULT CLAVAudio::LoadOpenJocOutputPolicySettings()
     if (!FindLAVOpenJocOutputContract(policy))
         return S_FALSE;
     m_settings.OpenJocOutputPolicy = policy;
+    m_openJocOutputPolicySnapshot.store(policy, std::memory_order_release);
+    RefreshOpenJocAdmissionSnapshot();
     return S_OK;
 }
 
@@ -335,6 +337,8 @@ HRESULT CLAVAudio::ConfigureOpenJocOutputPolicy(const LAVOpenJocOutputPolicy pol
     }
 
     m_settings.OpenJocOutputPolicy = policy;
+    m_openJocOutputPolicySnapshot.store(policy, std::memory_order_release);
+    RefreshOpenJocAdmissionSnapshot();
     if (changed && clear_queues)
     {
         m_buff.Clear();
@@ -362,6 +366,7 @@ HRESULT CLAVAudio::LoadOpenJocDialnormPolicySettings()
     if (!IsLAVOpenJocDialnormPolicy(policy))
         return S_FALSE;
     m_settings.OpenJocDialnormPolicy = policy;
+    RefreshOpenJocAdmissionSnapshot();
     return S_OK;
 }
 
@@ -398,6 +403,7 @@ HRESULT CLAVAudio::ConfigureOpenJocDialnormPolicy(const LAVOpenJocDialnormPolicy
     }
 
     m_settings.OpenJocDialnormPolicy = policy;
+    RefreshOpenJocAdmissionSnapshot();
     if (changed && clear_queues)
     {
         m_buff.Clear();
@@ -623,6 +629,7 @@ HRESULT CLAVAudio::SaveSettings()
 void CLAVAudio::ffmpeg_shutdown()
 {
     m_openJoc.Reset();
+    RefreshOpenJocAdmissionSnapshot();
 
     m_pAVCodec = nullptr;
     if (m_pAVCtx)
@@ -778,8 +785,7 @@ HRESULT CLAVAudio::SetRuntimeConfig(BOOL bRuntimeConfig)
 HRESULT CLAVAudio::GetOutputPolicy(LAVOpenJocOutputPolicy *policy)
 {
     CheckPointer(policy, E_POINTER);
-    CAutoLock receive_lock(&m_csReceive);
-    *policy = m_settings.OpenJocOutputPolicy;
+    *policy = m_openJocOutputPolicySnapshot.load(std::memory_order_acquire);
     return S_OK;
 }
 
@@ -801,7 +807,9 @@ HRESULT CLAVAudio::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
 HRESULT CLAVAudio::GetDialnormPolicy(LAVOpenJocDialnormPolicy *policy)
 {
     CheckPointer(policy, E_POINTER);
-    CAutoLock receive_lock(&m_csReceive);
+    CAutoTryLock receive_lock(&m_csReceive);
+    if (!receive_lock.IsLocked())
+        return S_FALSE;
     *policy = m_settings.OpenJocDialnormPolicy;
     return S_OK;
 }
@@ -1228,9 +1236,6 @@ HRESULT CLAVAudio::GetDecodeDetails(const char **pCodec, const char **pDecodeFor
 
 HRESULT CLAVAudio::GetOutputDetails(const char **pOutputFormat, int *pnChannels, int *pSampleRate, DWORD *pChannelMask)
 {
-#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-    CAutoLock receive_lock(&m_csReceive);
-#endif
     if (!m_pOutput || m_pOutput->IsConnected() == FALSE)
     {
         return E_UNEXPECTED;
@@ -1245,22 +1250,20 @@ HRESULT CLAVAudio::GetOutputDetails(const char **pOutputFormat, int *pnChannels,
     }
     if (pOutputFormat)
     {
-        *pOutputFormat = get_sample_format_desc(m_OutputQueue.sfFormat);
+        *pOutputFormat = get_sample_format_desc(
+            m_outputStatusFormat.load(std::memory_order_acquire));
     }
     if (pnChannels)
     {
-        *pnChannels = m_OutputQueue.layout.nb_channels;
+        *pnChannels = m_outputStatusChannels.load(std::memory_order_acquire);
     }
     if (pSampleRate)
     {
-        *pSampleRate = m_OutputQueue.dwSamplesPerSec;
+        *pSampleRate = m_outputStatusSampleRate.load(std::memory_order_acquire);
     }
     if (pChannelMask)
     {
-        if (m_OutputQueue.layout.order == AV_CHANNEL_ORDER_NATIVE)
-            *pChannelMask = (DWORD)m_OutputQueue.layout.u.mask;
-        else
-            *pChannelMask = 0;
+        *pChannelMask = m_outputStatusChannelMask.load(std::memory_order_acquire);
     }
     return S_OK;
 }
@@ -1286,10 +1289,12 @@ HRESULT CLAVAudio::GetChannelVolumeAverage(WORD nChannel, float *pfDb)
     {
         return E_UNEXPECTED;
     }
-    if (nChannel >= m_OutputQueue.layout.nb_channels || nChannel >= MAX_VOLUME_STAT_CHANNEL)
+    if (nChannel >= static_cast<WORD>(m_volumeStatsChannels.load(std::memory_order_acquire)) ||
+        nChannel >= MAX_VOLUME_STAT_CHANNEL)
     {
         return E_INVALIDARG;
     }
+    CAutoLock volume_lock(&m_csVolumeStats);
     *pfDb = m_faVolume[nChannel].Average();
     return S_OK;
 }
@@ -1302,23 +1307,30 @@ BOOL CLAVAudio::IsOpenJocAvailable()
     return m_openJoc.IsAvailable() ? TRUE : FALSE;
 }
 
-LAVOpenJocAdmissionState CLAVAudio::GetOpenJocAdmissionState()
+void CLAVAudio::RefreshOpenJocAdmissionSnapshot()
 {
-#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-    CAutoLock receive_lock(&m_csReceive);
-#endif
+    LAVOpenJocAdmissionState state = LAVOpenJocAdmissionUndecided;
     switch (m_openJoc.State())
     {
     case LAVOpenJocState::StockCodec:
-        return LAVOpenJocAdmissionStockEac3;
+        state = LAVOpenJocAdmissionStockEac3;
+        break;
     case LAVOpenJocState::StockAfterOpenJocFailure:
-        return LAVOpenJocAdmissionStockOpenJocFallback;
+        state = LAVOpenJocAdmissionStockOpenJocFallback;
+        break;
     case LAVOpenJocState::OpenJoc:
-        return LAVOpenJocAdmissionOpenJoc;
+        state = LAVOpenJocAdmissionOpenJoc;
+        break;
     case LAVOpenJocState::Undecided:
     default:
-        return LAVOpenJocAdmissionUndecided;
+        break;
     }
+    m_openJocAdmissionSnapshot.store(state, std::memory_order_release);
+}
+
+LAVOpenJocAdmissionState CLAVAudio::GetOpenJocAdmissionState()
+{
+    return m_openJocAdmissionSnapshot.load(std::memory_order_acquire);
 }
 
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
@@ -1327,7 +1339,9 @@ HRESULT CLAVAudio::GetOpenJocInputByteCounts(ULONGLONG *classifier_input_bytes,
 {
     CheckPointer(classifier_input_bytes, E_POINTER);
     CheckPointer(stream_input_bytes, E_POINTER);
-    CAutoLock receive_lock(&m_csReceive);
+    CAutoTryLock receive_lock(&m_csReceive);
+    if (!receive_lock.IsLocked())
+        return S_FALSE;
     *classifier_input_bytes = static_cast<ULONGLONG>(m_openJoc.ClassifierInputBytes());
     *stream_input_bytes = static_cast<ULONGLONG>(m_openJoc.StreamInputBytes());
     return S_OK;
@@ -1395,7 +1409,9 @@ STDMETHODIMP CLAVAudio::GetOpenJocPlaybackDiagnostics(
     if (detail_capacity > 0 && !detail)
         return E_POINTER;
 
-    CAutoLock receive_lock(&m_csReceive);
+    CAutoTryLock receive_lock(&m_csReceive);
+    if (!receive_lock.IsLocked())
+        return S_FALSE;
     const LAVOpenJocDiagnosticSnapshot snapshot = m_openJoc.DiagnosticSnapshot();
     *reason = ToPublicOpenJocDiagnosticReason(snapshot.reason);
     *warning = snapshot.warning ? TRUE : FALSE;
@@ -2134,6 +2150,7 @@ HRESULT CLAVAudio::EndOfStream()
     // Flush the last data out of the parser
     bool strict_eos = m_OutputQueue.openjoc_contract != nullptr || m_openJoc.State() == LAVOpenJocState::OpenJoc;
     const HRESULT first_process_hr = ProcessBuffer(nullptr);
+    RefreshOpenJocAdmissionSnapshot();
     strict_eos = strict_eos || m_OutputQueue.openjoc_contract != nullptr ||
                  m_openJoc.State() == LAVOpenJocState::OpenJoc;
     const HRESULT first_propagation_hr = NormalizeLAVOpenJocEndOfStreamStep(strict_eos, first_process_hr);
@@ -2141,6 +2158,7 @@ HRESULT CLAVAudio::EndOfStream()
         return first_propagation_hr;
 
     const HRESULT eof_process_hr = ProcessBuffer(nullptr, TRUE);
+    RefreshOpenJocAdmissionSnapshot();
     strict_eos = strict_eos || m_OutputQueue.openjoc_contract != nullptr ||
                  m_openJoc.State() == LAVOpenJocState::OpenJoc;
     const HRESULT eof_propagation_hr = NormalizeLAVOpenJocEndOfStreamStep(strict_eos, eof_process_hr);
@@ -2160,6 +2178,7 @@ HRESULT CLAVAudio::PerformFlush()
 
     m_buff.Clear();
     m_openJoc.Reset();
+    RefreshOpenJocAdmissionSnapshot();
     FlushOutput(FALSE);
     FlushDecoder();
 
@@ -2214,6 +2233,7 @@ HRESULT CLAVAudio::NewSegment(REFERENCE_TIME tStart, REFERENCE_TIME tStop, doubl
 HRESULT CLAVAudio::FlushDecoder()
 {
     m_openJoc.Reset();
+    RefreshOpenJocAdmissionSnapshot();
 
     if (m_bJustFlushed)
         return S_OK;
@@ -2257,6 +2277,7 @@ HRESULT CLAVAudio::Receive(IMediaSample *pIn)
         pmt = nullptr;
         m_buff.Clear();
         m_openJoc.ResetForNewStream();
+        RefreshOpenJocAdmissionSnapshot();
 
         m_bQueueResync = TRUE;
     }
@@ -2265,6 +2286,7 @@ HRESULT CLAVAudio::Receive(IMediaSample *pIn)
     {
         m_bBitStreamingSettingsChanged = FALSE;
         m_openJoc.Reset();
+        RefreshOpenJocAdmissionSnapshot();
         UpdateBitstreamContext();
     }
 
@@ -2377,6 +2399,7 @@ HRESULT CLAVAudio::Receive(IMediaSample *pIn)
     m_buff.Append(pDataIn, len);
 
     hr = ProcessBuffer(pIn);
+    RefreshOpenJocAdmissionSnapshot();
 
     if (FAILED(hr))
         return hr;
@@ -3196,6 +3219,15 @@ HRESULT CLAVAudio::QueueOutput(BufferDetails &buffer)
         return hr;
     m_OutputQueue.nSamples = result.sample_count;
     m_OutputQueue.rtStart = result.start_time;
+    m_outputStatusFormat.store(m_OutputQueue.sfFormat, std::memory_order_release);
+    m_outputStatusChannels.store(m_OutputQueue.layout.nb_channels, std::memory_order_release);
+    m_outputStatusSampleRate.store(m_OutputQueue.dwSamplesPerSec, std::memory_order_release);
+    m_outputStatusChannelMask.store(
+        m_OutputQueue.layout.order == AV_CHANNEL_ORDER_NATIVE
+            ? static_cast<DWORD>(m_OutputQueue.layout.u.mask)
+            : 0,
+        std::memory_order_release);
+    m_volumeStatsChannels.store(m_OutputQueue.layout.nb_channels, std::memory_order_release);
 
     buffer.bBuffer->SetSize(0);
     buffer.nSamples = 0;

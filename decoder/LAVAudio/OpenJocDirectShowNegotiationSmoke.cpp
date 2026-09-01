@@ -2792,7 +2792,7 @@ class LiveStatusPageBinding final
         const std::wstring expected_policy =
             contract ? Utf8ToWide(contract->property_page_label) : std::wstring{};
         const std::wstring expected_admission =
-        admission == LAVOpenJocAdmissionOpenJoc ? L"OpenJoc" : L"Stock decoder";
+        admission == LAVOpenJocAdmissionOpenJoc ? L"OpenJOC" : L"Stock decoder";
         return WindowText(GetDlgItem(page_window_, IDC_OPENJOC_STATUS_POLICY)) == expected_policy &&
                WindowText(GetDlgItem(page_window_, IDC_OPENJOC_STATUS_ADMISSION)) == expected_admission &&
                WindowText(GetDlgItem(page_window_, IDC_OUTPUT_CHANNEL)) == channel_text &&
@@ -3843,7 +3843,8 @@ HRESULT WaitForLifecycleEpoch(IMediaControl *control, IMediaEvent *events, IMedi
                                sink->end_of_stream_count() == eos_begin + 1;
         const bool reset_state_valid = diagnostics_status == S_OK && classifier_end == 0 &&
                                        stream_end == 0 &&
-                                       admission_state == LAVOpenJocAdmissionStockEac3;
+                                       (admission_state == LAVOpenJocAdmissionStockEac3 ||
+                                        admission_state == LAVOpenJocAdmissionStockOpenJocFallback);
         if (!source_exact || !output_exact || !events_valid || !eos_valid || !reset_state_valid ||
             !sink->sample_contracts_valid() || !sink->allocator_contract_valid())
         {
