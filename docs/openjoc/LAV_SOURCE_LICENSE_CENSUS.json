@@ -173,7 +173,7 @@
       "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
       "original_license_evidence": "explicit per-file GPL v2-or-later notice",
       "lav_modification_state": "upstream compilation unit",
-      "openjoc_modification_state": "modified for openjoc-0.12.0; dated notice present",
+      "openjoc_modification_state": "modified for openjoc-0.15.0; dated notice present",
       "resulting_classification": "GPL-2.0-or-later",
       "confidence": "high"
     },

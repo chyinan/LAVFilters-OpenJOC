@@ -36,12 +36,12 @@ See `DIRECTSHOW_BASECLASSES_PROVENANCE.md` for the exact evidence chain. The JSO
 
 ## OpenJOC-created LAV files
 
-All 28 OpenJOC-created integration, contract, tool, test, and smoke files carry:
+All 30 OpenJOC-created integration, contract, tool, test, and smoke files carry:
 
 - `SPDX-FileCopyrightText: 2026 OpenJOC contributors`
 - `SPDX-License-Identifier: GPL-2.0-or-later`
 
-They are `AudioStatusCapacityTests.cpp`, `LAVAudioIdentitySmoke.cpp`, `LAVAudioResourceIdentitySmoke.cpp`, `LAVOpenJocDiagnostics.h`, `OpenJocAdmission.cpp/.h`, `OpenJocAdmissionTests.cpp`, `OpenJocCandidate.cpp/.h`, `OpenJocDecoder.cpp/.h`, `OpenJocDecoderSmoke.cpp`, `OpenJocDirectShowNegotiationSmoke.cpp`, `OpenJocOutput.cpp/.h`, `OpenJocOutputTests.cpp`, `OpenJocPolicyControl.cpp`, `OpenJocPropertyPageSmoke.cpp`, `OpenJocSettingsSmoke.cpp`, `OpenJocShippedLayouts.cpp/.h`, `OpenJocShippedLayoutsTests.cpp`, `OpenJocStrictNegotiation.cpp/.h`, `OpenJocStrictOutput.cpp/.h`, `OpenJocStrictOutputTests.cpp`, and `include/LAVOpenJocSettings.h`.
+They are `AudioStatusCapacityTests.cpp`, `LAVAudioIdentitySmoke.cpp`, `LAVAudioResourceIdentitySmoke.cpp`, `LAVOpenJocDiagnostics.h`, `OpenJocAdmission.cpp/.h`, `OpenJocAdmissionTests.cpp`, `OpenJocCandidate.cpp/.h`, `OpenJocDecoder.cpp/.h`, `OpenJocDecoderSmoke.cpp`, `OpenJocDialnorm.h`, `OpenJocDialnormPolicyTests.cpp`, `OpenJocDirectShowNegotiationSmoke.cpp`, `OpenJocOutput.cpp/.h`, `OpenJocOutputTests.cpp`, `OpenJocPolicyControl.cpp`, `OpenJocPropertyPageSmoke.cpp`, `OpenJocSettingsSmoke.cpp`, `OpenJocShippedLayouts.cpp/.h`, `OpenJocShippedLayoutsTests.cpp`, `OpenJocStrictNegotiation.cpp/.h`, `OpenJocStrictOutput.cpp/.h`, `OpenJocStrictOutputTests.cpp`, and `include/LAVOpenJocSettings.h`.
 
 ## Modified upstream census
 
