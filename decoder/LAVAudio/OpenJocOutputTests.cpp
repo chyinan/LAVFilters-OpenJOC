@@ -107,7 +107,7 @@ struct ExpectedContract
 
 const std::array<ExpectedContract, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT> kExpectedContracts = {{
     {LAVOpenJocOutputPolicy::Stereo,
-     "Stereo",
+     "Stereo (Speakers)",
      nullptr,
      "2.0",
      "stereo",
