@@ -1,6 +1,6 @@
 // Microsoft Visual C++ generated resource script.
 //
-// OpenJOC downstream modification (2026-08-30):
+// OpenJOC downstream modification (openjoc-0.15.0, 2026-09-01):
 // add a guarded dedicated OpenJOC output and programme-level settings page.
 //
 // pattern: Imperative Shell

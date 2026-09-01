@@ -5,8 +5,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # LAV source license census
 
-Release: openjoc-0.12.0
-Census date: 2026-08-25
+Release: openjoc-0.15.0
+Census date: 2026-09-01
 Machine-readable census: `LAV_SOURCE_LICENSE_CENSUS.json`
 
 ## Scope and result

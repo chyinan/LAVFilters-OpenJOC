@@ -18,7 +18,7 @@
  */
 
 /*
- * OpenJOC downstream modification (2026-08-30):
+ * OpenJOC downstream modification (openjoc-0.15.0, 2026-09-01):
  * preserve OpenJOC-negotiated output channels outside the stock mixer limit
  * and retain read-only LAV volume statistics in the validated strict lane.
  */

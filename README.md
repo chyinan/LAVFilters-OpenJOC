@@ -18,7 +18,7 @@ This repository is a downstream fork of [Nevcairiel/LAVFilters](https://github.c
 - Scope: no endpoint-name layout inference, Bass Management, physical-subwoofer
   routing, or physical multichannel hardware verification
 - OpenJOC project: [chyinan/OpenJOC](https://github.com/chyinan/OpenJOC)
-- Downstream integration tag: `openjoc-0.12.0`
+- Downstream integration tag: `openjoc-0.15.0`
 
 This downstream project is not endorsed by Nevcairiel, FFmpeg, PotPlayer,
 Dolby, Microsoft, or SADIE. See `docs/openjoc/` and the upstream `COPYING`
