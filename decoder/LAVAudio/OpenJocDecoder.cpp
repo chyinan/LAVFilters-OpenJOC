@@ -72,6 +72,10 @@ struct LAVOpenJocDecoder::Impl
     const LAVOpenJocOutputContract *output_contract =
         FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Stereo);
     LAVOpenJocDialnormPolicy dialnorm_policy = LAVOpenJocDialnormPolicy::Calibrated;
+    std::vector<unsigned char> binaural_sofa_data;
+    std::string binaural_virtual_layout = "7.1.4";
+    bool configuration_error = false;
+    std::string configuration_error_detail;
 
 #if defined(LAV_OPENJOC_TESTING)
     bool fail_next_classifier_create = false;
@@ -250,6 +254,8 @@ struct LAVOpenJocDecoder::Impl
 
     bool CreateDecoderForContract(const LAVOpenJocOutputContract *contract,
                                   const LAVOpenJocDialnormPolicy dialnorm_policy,
+                                  const std::vector<unsigned char> &sofa_data,
+                                  const std::string &virtual_layout,
                                   openjoc_stream_decoder **output_decoder)
     {
         if (!output_decoder)
@@ -287,9 +293,9 @@ struct LAVOpenJocDecoder::Impl
         {
             config.render_mode = OPENJOC_RENDER_BINAURAL;
             config.speaker_layout = contract->abi_preset_name;
-            config.virtual_layout = nullptr;
-            config.sofa_data = nullptr;
-            config.sofa_size = 0;
+            config.virtual_layout = virtual_layout.empty() ? nullptr : virtual_layout.c_str();
+            config.sofa_data = sofa_data.empty() ? nullptr : sofa_data.data();
+            config.sofa_size = sofa_data.size();
             config.lfe_policy = OPENJOC_LFE_EXCLUDE;
         }
         else
@@ -321,7 +327,25 @@ struct LAVOpenJocDecoder::Impl
         {
             if (candidate && api.stream_decoder_destroy)
                 api.stream_decoder_destroy(candidate);
-            SetApiError("failed to create OpenJOC decoder");
+            if (contract->policy == LAVOpenJocOutputPolicy::Binaural)
+            {
+                switch (status)
+                {
+                case OPENJOC_STATUS_UNSUPPORTED:
+                    SetApiError("OpenJOC rejected the binaural SOFA or virtual layout as unsupported");
+                    break;
+                case OPENJOC_STATUS_INVALID_ARGUMENT:
+                    SetApiError("OpenJOC rejected the binaural SOFA or virtual layout configuration");
+                    break;
+                default:
+                    SetApiError("failed to create the OpenJOC binaural decoder");
+                    break;
+                }
+            }
+            else
+            {
+                SetApiError("failed to create OpenJOC decoder");
+            }
             return false;
         }
         *output_decoder = candidate;
@@ -330,7 +354,9 @@ struct LAVOpenJocDecoder::Impl
 
     bool CreateDecoder()
     {
-        return decoder || CreateDecoderForContract(output_contract, dialnorm_policy, &decoder);
+        return decoder ||
+               CreateDecoderForContract(output_contract, dialnorm_policy, binaural_sofa_data,
+                                        binaural_virtual_layout, &decoder);
     }
 
     bool ValidateAndCopyFrame(const openjoc_pcm_frame &pcm, LAVOpenJocFrame &output)
@@ -538,6 +564,82 @@ bool LAVOpenJocDecoder::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
     return SetConfiguration(contract, m_impl->dialnorm_policy);
 }
 
+bool LAVOpenJocDecoder::SetBinauralConfiguration(
+    const LAVOpenJocOutputContract *const contract,
+    const LAVOpenJocDialnormPolicy dialnorm_policy,
+    std::vector<unsigned char> sofa_data,
+    std::string virtual_layout)
+{
+    if (!contract || !IsLAVOpenJocDialnormPolicy(dialnorm_policy) || virtual_layout.empty())
+        return false;
+    const bool unchanged = contract == m_impl->output_contract &&
+                           dialnorm_policy == m_impl->dialnorm_policy &&
+                           sofa_data == m_impl->binaural_sofa_data &&
+                           virtual_layout == m_impl->binaural_virtual_layout;
+    if (unchanged && !m_impl->configuration_error)
+        return true;
+
+#if defined(LAV_ENABLE_OPENJOC)
+    m_impl->last_error.clear();
+    openjoc_classifier *next_classifier = nullptr;
+    if (!m_impl->CreateClassifier(&next_classifier))
+        return false;
+
+    const LAVOpenJocOutputContract *binaural_contract =
+        FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Binaural);
+    openjoc_stream_decoder *validation_decoder = nullptr;
+    if (contract->policy != LAVOpenJocOutputPolicy::Binaural &&
+        (!binaural_contract ||
+         !m_impl->CreateDecoderForContract(binaural_contract, dialnorm_policy, sofa_data,
+                                           virtual_layout, &validation_decoder)))
+    {
+        if (next_classifier)
+            m_impl->api.classifier_destroy(next_classifier);
+        return false;
+    }
+    if (validation_decoder)
+        m_impl->api.stream_decoder_destroy(validation_decoder);
+
+    openjoc_stream_decoder *next_decoder = nullptr;
+    if (!m_impl->CreateDecoderForContract(contract, dialnorm_policy, sofa_data, virtual_layout,
+                                          &next_decoder))
+    {
+        if (next_classifier)
+            m_impl->api.classifier_destroy(next_classifier);
+        return false;
+    }
+
+    openjoc_classifier *old_classifier = m_impl->classifier;
+    openjoc_stream_decoder *old_decoder = m_impl->decoder;
+    m_impl->classifier = next_classifier;
+    m_impl->decoder = next_decoder;
+    m_impl->output_contract = contract;
+    m_impl->dialnorm_policy = dialnorm_policy;
+    m_impl->binaural_sofa_data = std::move(sofa_data);
+    m_impl->binaural_virtual_layout = std::move(virtual_layout);
+    m_impl->available = true;
+    if (old_decoder)
+        m_impl->api.stream_decoder_destroy(old_decoder);
+    if (old_classifier)
+        m_impl->api.classifier_destroy(old_classifier);
+    m_impl->pending_frames.clear();
+#else
+    m_impl->output_contract = contract;
+    m_impl->dialnorm_policy = dialnorm_policy;
+    m_impl->binaural_sofa_data = std::move(sofa_data);
+    m_impl->binaural_virtual_layout = std::move(virtual_layout);
+#endif
+    m_impl->configuration_error = false;
+    m_impl->configuration_error_detail.clear();
+    m_impl->admission.reset();
+    m_impl->admission_pts_samples = kNoPts;
+    m_impl->classifier_input_bytes = 0;
+    m_impl->stream_input_bytes = 0;
+    m_impl->last_error.clear();
+    m_impl->ClearDiagnostic();
+    return true;
+}
+
 bool LAVOpenJocDecoder::SetDialnormPolicy(const LAVOpenJocDialnormPolicy policy)
 {
     if (!IsLAVOpenJocDialnormPolicy(policy))
@@ -550,7 +652,8 @@ bool LAVOpenJocDecoder::SetConfiguration(const LAVOpenJocOutputContract *const c
 {
     if (!contract || !IsLAVOpenJocDialnormPolicy(dialnorm_policy))
         return false;
-    if (contract == m_impl->output_contract && dialnorm_policy == m_impl->dialnorm_policy)
+    if (contract == m_impl->output_contract && dialnorm_policy == m_impl->dialnorm_policy &&
+        !m_impl->configuration_error)
         return true;
 
 #if defined(LAV_ENABLE_OPENJOC)
@@ -560,7 +663,8 @@ bool LAVOpenJocDecoder::SetConfiguration(const LAVOpenJocOutputContract *const c
         return false;
 
     openjoc_stream_decoder *next_decoder = nullptr;
-    if (!m_impl->CreateDecoderForContract(contract, dialnorm_policy, &next_decoder))
+    if (!m_impl->CreateDecoderForContract(contract, dialnorm_policy, m_impl->binaural_sofa_data,
+                                          m_impl->binaural_virtual_layout, &next_decoder))
     {
         m_impl->api.classifier_destroy(next_classifier);
         return false;
@@ -572,6 +676,8 @@ bool LAVOpenJocDecoder::SetConfiguration(const LAVOpenJocOutputContract *const c
     m_impl->decoder = next_decoder;
     m_impl->output_contract = contract;
     m_impl->dialnorm_policy = dialnorm_policy;
+    m_impl->configuration_error = false;
+    m_impl->configuration_error_detail.clear();
     m_impl->available = true;
     if (old_decoder)
         m_impl->api.stream_decoder_destroy(old_decoder);
@@ -589,6 +695,19 @@ bool LAVOpenJocDecoder::SetConfiguration(const LAVOpenJocOutputContract *const c
     m_impl->last_error.clear();
     m_impl->ClearDiagnostic();
     return true;
+}
+
+void LAVOpenJocDecoder::SetConfigurationError(const char *const detail)
+{
+    m_impl->configuration_error = true;
+    m_impl->configuration_error_detail =
+        BoundLAVOpenJocDiagnosticDetail(detail ? detail : "binaural HRTF configuration failed");
+    if (m_impl->configuration_error_detail.empty())
+        m_impl->configuration_error_detail = "binaural HRTF configuration failed";
+    m_impl->last_error = m_impl->configuration_error_detail;
+    m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::BinauralHrtfConfiguration,
+                                    m_impl->configuration_error_detail.c_str());
+    m_impl->admission.reset();
 }
 
 const LAVOpenJocOutputContract *LAVOpenJocDecoder::OutputContract() const
@@ -675,6 +794,14 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
             return LAVOpenJocProcessResult::Waiting;
         }
 
+        if (m_impl->configuration_error)
+        {
+            m_impl->last_error = m_impl->configuration_error_detail;
+            m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::BinauralHrtfConfiguration,
+                                             m_impl->configuration_error_detail.c_str());
+            return LAVOpenJocProcessResult::Error;
+        }
+
         if (!m_impl->FeedDecoder(data, data_size, m_impl->admission_pts_samples))
         {
             m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::OpenJocDecodeError,
@@ -693,6 +820,13 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
     else
     {
 #if defined(LAV_ENABLE_OPENJOC)
+        if (m_impl->configuration_error)
+        {
+            m_impl->last_error = m_impl->configuration_error_detail;
+            m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::BinauralHrtfConfiguration,
+                                             m_impl->configuration_error_detail.c_str());
+            return LAVOpenJocProcessResult::Error;
+        }
         if (!m_impl->FeedDecoder(data, data_size, pts_samples))
         {
             m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::OpenJocDecodeError,
@@ -763,7 +897,10 @@ bool LAVOpenJocDecoder::Drain()
 
 void LAVOpenJocDecoder::Reset()
 {
-    m_impl->last_error.clear();
+    if (m_impl->configuration_error)
+        m_impl->last_error = m_impl->configuration_error_detail;
+    else
+        m_impl->last_error.clear();
 #if defined(LAV_ENABLE_OPENJOC)
     m_impl->pending_frames.clear();
     if (m_impl->decoder)
@@ -817,7 +954,8 @@ void LAVOpenJocDecoder::Reset()
 void LAVOpenJocDecoder::ResetForNewStream()
 {
     Reset();
-    m_impl->ClearDiagnostic();
+    if (!m_impl->configuration_error)
+        m_impl->ClearDiagnostic();
 }
 
 bool LAVOpenJocDecoder::HasError() const
@@ -828,6 +966,12 @@ bool LAVOpenJocDecoder::HasError() const
 const char *LAVOpenJocDecoder::LastError() const
 {
     return m_impl->last_error.c_str();
+}
+
+void LAVOpenJocDecoder::ClearTransientError()
+{
+    if (!m_impl->configuration_error)
+        m_impl->last_error.clear();
 }
 
 LAVOpenJocDiagnosticSnapshot LAVOpenJocDecoder::DiagnosticSnapshot() const

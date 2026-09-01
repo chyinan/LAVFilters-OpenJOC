@@ -31,16 +31,21 @@ file for provenance and applicable license information.
 
 **Stereo (Speakers)** is conventional two-channel speaker playback without
 HRTF processing. **Binaural (Headphones)** renders the selected OpenJOC
-virtual speaker field through the built-in SADIE II D1 KU100 HRTF and emits
-two-channel headphone PCM. Both policies use ordinary two-channel
-WAVEFORMATEXTENSIBLE output, but their rendering semantics are different.
+virtual speaker field through the built-in SADIE II D1 KU100 HRTF or one
+user-selected local SOFA dataset and emits two-channel headphone PCM. Both
+policies use ordinary two-channel WAVEFORMATEXTENSIBLE output, but their
+rendering semantics are different.
 
 The output policy is an explicit user choice. The filter does not detect
 headphones, speakers, endpoints, Bluetooth devices, HDMI capabilities, or
 USB DACs. Speaker layouts must match a supported downstream layout. The
 built-in HRTF is generic and uses the embedded offline resource documented in
-the OpenJOC third-party notices; this integration does not add custom SOFA,
-head tracking, or personalized HRTF controls.
+the OpenJOC third-party notices. A Custom SOFA selection is passed to the
+existing strict OpenJOC SOFA loader; the file must remain readable and within
+that loader's supported SimpleFreeFieldHRIR subset. Invalid or missing files
+are reported as Binaural HRTF configuration errors and do not silently fall
+back to the built-in HRTF. This integration does not add head tracking or
+personalized HRTF controls.
 
 The Status page distinguishes three playback states: OpenJOC, Stock decoder,
 and Stock decoder (OpenJOC fallback). Ordinary AC-3/E-AC-3 remains normal

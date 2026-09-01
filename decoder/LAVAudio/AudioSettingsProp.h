@@ -26,8 +26,11 @@
 
 // pattern: Imperative Shell
 
+#include <string>
+
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocSettings.h"
+#include "OpenJocBinauralSettings.h"
 #include "LAVOpenJocDiagnostics.h"
 #include "BaseDSPropPage.h"
 #include "Media.h"
@@ -115,6 +118,7 @@ class CLAVAudioOpenJocProp : public CBaseDSPropPage
 
   private:
     HRESULT LoadData();
+    void UpdateBinauralControlState();
 
     void SetDirty()
     {
@@ -125,8 +129,12 @@ class CLAVAudioOpenJocProp : public CBaseDSPropPage
 
     ILAVOpenJocSettings *m_pOpenJocSettings = nullptr;
     ILAVOpenJocLevelSettings *m_pOpenJocLevelSettings = nullptr;
+    ILAVOpenJocBinauralSettings *m_pOpenJocBinauralSettings = nullptr;
     LAVOpenJocOutputPolicy m_outputPolicy = LAVOpenJocOutputPolicy::Stereo;
     LAVOpenJocDialnormPolicy m_dialnormPolicy = LAVOpenJocDialnormPolicy::Calibrated;
+    LAVOpenJocHrtfSource m_hrtfSource = LAVOpenJocHrtfSource::BuiltinSadieIiD1;
+    LAVOpenJocBinauralVirtualLayout m_virtualLayout = LAVOpenJocBinauralVirtualLayout::Layout714;
+    std::wstring m_customSofaPath;
 };
 #endif
 

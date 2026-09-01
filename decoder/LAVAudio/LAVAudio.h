@@ -28,6 +28,7 @@
 #pragma once
 
 #include <atomic>
+#include <string>
 
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocSettings.h"
@@ -37,6 +38,7 @@
 #include "BitstreamParser.h"
 #include "PostProcessor.h"
 #include "OpenJocDecoder.h"
+#include "OpenJocBinauralSettings.h"
 #include "OpenJocStrictOutput.h"
 
 #include "ISpecifyPropertyPages2.h"
@@ -112,6 +114,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     , public ILAVOpenJocSettings
     , public ILAVOpenJocLevelSettings
+    , public ILAVOpenJocBinauralSettings
     , public ILAVOpenJocDiagnostics
     , public ILAVOpenJocDiagnostics2
 #endif
@@ -191,6 +194,16 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     STDMETHODIMP GetOutputPolicy(LAVOpenJocOutputPolicy *policy);
     STDMETHODIMP SetOutputPolicy(LAVOpenJocOutputPolicy policy);
 
+    // ILAVOpenJocBinauralSettings
+    STDMETHODIMP GetBinauralHrtfSource(LAVOpenJocHrtfSource *source);
+    STDMETHODIMP GetBinauralVirtualLayout(LAVOpenJocBinauralVirtualLayout *layout);
+    STDMETHODIMP GetCustomSofaPath(LPWSTR path, DWORD capacity);
+    STDMETHODIMP SetBinauralConfiguration(LAVOpenJocOutputPolicy output_policy,
+                                           LAVOpenJocHrtfSource source,
+                                           LAVOpenJocBinauralVirtualLayout layout,
+                                           LPCWSTR sofa_path);
+    STDMETHODIMP GetBinauralConfigurationError(LPWSTR detail, DWORD capacity);
+
     // ILAVOpenJocLevelSettings
     STDMETHODIMP GetDialnormPolicy(LAVOpenJocDialnormPolicy *policy);
     STDMETHODIMP SetDialnormPolicy(LAVOpenJocDialnormPolicy policy);
@@ -252,6 +265,12 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     HRESULT LoadOpenJocOutputPolicySettings();
     HRESULT SaveOpenJocOutputPolicySettings(LAVOpenJocOutputPolicy policy);
     HRESULT ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy policy, bool clear_queues);
+    HRESULT LoadOpenJocBinauralSettings();
+    HRESULT SaveOpenJocBinauralSettings();
+    HRESULT ConfigureOpenJocBinauralConfiguration(LAVOpenJocOutputPolicy output_policy,
+                                                  LAVOpenJocHrtfSource source,
+                                                  LAVOpenJocBinauralVirtualLayout layout,
+                                                  LPCWSTR sofa_path, bool clear_queues);
     HRESULT LoadOpenJocDialnormPolicySettings();
     HRESULT SaveOpenJocDialnormPolicySettings(LAVOpenJocDialnormPolicy policy);
     HRESULT ConfigureOpenJocDialnormPolicy(LAVOpenJocDialnormPolicy policy, bool clear_queues);
@@ -391,8 +410,12 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
         LAVOpenJocOutputPolicy OpenJocOutputPolicy;
         LAVOpenJocDialnormPolicy OpenJocDialnormPolicy;
+        LAVOpenJocHrtfSource OpenJocHrtfSource;
+        LAVOpenJocBinauralVirtualLayout OpenJocBinauralVirtualLayout;
+        std::wstring OpenJocCustomSofaPath;
 #endif
     } m_settings;
+    std::wstring m_openJocBinauralConfigurationError;
     BOOL m_bRuntimeConfig = FALSE;
 
     BOOL m_bVolumeStats = FALSE;          // Volume Stats gathering enabled

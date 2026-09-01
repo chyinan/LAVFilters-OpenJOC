@@ -23,6 +23,7 @@
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocDiagnostics.h"
 #include "LAVOpenJocSettings.h"
+#include "OpenJocBinauralSettings.h"
 
 namespace
 {
@@ -41,6 +42,10 @@ constexpr int kOpenJocOutputPolicyControl = 1136;
 constexpr int kOpenJocOutputGuidanceControl = 1144;
 constexpr int kOpenJocOutputCompatControl = 1145;
 constexpr int kOpenJocDialnormPolicyControl = 1140;
+constexpr int kOpenJocVirtualLayoutControl = 1149;
+constexpr int kOpenJocHrtfSourceControl = 1151;
+constexpr int kOpenJocSofaFileControl = 1153;
+constexpr int kOpenJocSofaBrowseControl = 1154;
 constexpr int kOpenJocStatusPolicyControl = 1138;
 constexpr int kOpenJocStatusAdmissionControl = 1139;
 constexpr int kOpenJocStatusWarningControl = 1146;
@@ -448,11 +453,15 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
 
     ILAVOpenJocSettings *settings = nullptr;
     ILAVOpenJocLevelSettings *level_settings = nullptr;
+    ILAVOpenJocBinauralSettings *binaural_settings = nullptr;
     ITestRuntimeSettings *runtime = nullptr;
     HRESULT hr = filter->QueryInterface(__uuidof(ILAVOpenJocSettings), reinterpret_cast<void **>(&settings));
     if (SUCCEEDED(hr))
         hr = filter->QueryInterface(__uuidof(ILAVOpenJocLevelSettings),
                                     reinterpret_cast<void **>(&level_settings));
+    if (SUCCEEDED(hr))
+        hr = filter->QueryInterface(__uuidof(ILAVOpenJocBinauralSettings),
+                                    reinterpret_cast<void **>(&binaural_settings));
     if (SUCCEEDED(hr))
         hr = filter->QueryInterface(kAudioSettings, reinterpret_cast<void **>(&runtime));
     if (SUCCEEDED(hr))
@@ -475,7 +484,12 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     HWND output_guidance = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputGuidanceControl) : nullptr;
     HWND output_compat = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputCompatControl) : nullptr;
     HWND dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
-    if (!combo || !output_guidance || !output_compat || !dialnorm ||
+    HWND virtual_layout = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocVirtualLayoutControl) : nullptr;
+    HWND hrtf_source = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocHrtfSourceControl) : nullptr;
+    HWND sofa_file = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocSofaFileControl) : nullptr;
+    HWND sofa_browse = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocSofaBrowseControl) : nullptr;
+    if (!combo || !output_guidance || !output_compat || !dialnorm || !virtual_layout || !hrtf_source ||
+        !sofa_file || !sofa_browse ||
         WindowText(output_guidance) !=
             L"Speakers: choose the layout matching your playback system. Headphones: choose Binaural for HRTF spatial rendering." ||
         WindowText(output_compat) !=
@@ -483,7 +497,13 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
         SendMessageW(combo, CB_GETCOUNT, 0, 0) != std::size(expected_policies) ||
         SendMessageW(combo, CB_GETCURSEL, 0, 0) != 7 ||
         SendMessageW(dialnorm, CB_GETCOUNT, 0, 0) != std::size(expected_dialnorm) ||
-        SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0)
+        SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0 ||
+        SendMessageW(virtual_layout, CB_GETCOUNT, 0, 0) != 1 ||
+        SendMessageW(virtual_layout, CB_GETCURSEL, 0, 0) != 0 ||
+        SendMessageW(hrtf_source, CB_GETCOUNT, 0, 0) != 2 ||
+        SendMessageW(hrtf_source, CB_GETCURSEL, 0, 0) != 0 ||
+        WindowText(sofa_file) != L"" || IsWindowEnabled(virtual_layout) || IsWindowEnabled(hrtf_source) ||
+        IsWindowEnabled(sofa_file) || IsWindowEnabled(sofa_browse))
         hr = E_UNEXPECTED;
     for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_policies); ++index)
     {
@@ -502,6 +522,48 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
                 static_cast<LRESULT>(expected_dialnorm[index].policy) ||
             std::wstring(combo_label) != expected_dialnorm[index].label)
             hr = E_UNEXPECTED;
+    }
+    constexpr const wchar_t *expected_virtual_layouts[] = {L"7.1.4 (Recommended)"};
+    for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_virtual_layouts); ++index)
+    {
+        wchar_t label[64] = {};
+        SendMessageW(virtual_layout, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(label));
+        if (std::wstring(label) != expected_virtual_layouts[index] ||
+            SendMessageW(virtual_layout, CB_GETITEMDATA, index, 0) != static_cast<LRESULT>(index))
+            hr = E_UNEXPECTED;
+    }
+    constexpr const wchar_t *expected_hrtf_sources[] = {
+        L"Built-in SADIE II D1 (Recommended)", L"Custom SOFA..."};
+    for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_hrtf_sources); ++index)
+    {
+        wchar_t label[96] = {};
+        SendMessageW(hrtf_source, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(label));
+        if (std::wstring(label) != expected_hrtf_sources[index] ||
+            SendMessageW(hrtf_source, CB_GETITEMDATA, index, 0) != static_cast<LRESULT>(index))
+            hr = E_UNEXPECTED;
+    }
+
+    if (SUCCEEDED(hr) &&
+        (SendMessageW(combo, CB_SETCURSEL, 1, 0) != 1 ||
+         SendMessageW(hrtf_source, CB_SETCURSEL, 1, 0) != 1))
+        hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr))
+    {
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocOutputPolicyControl, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(combo));
+        if (!IsWindowEnabled(virtual_layout) || !IsWindowEnabled(hrtf_source) ||
+            IsWindowEnabled(sofa_file) || IsWindowEnabled(sofa_browse))
+            hr = E_UNEXPECTED;
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocHrtfSourceControl, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(hrtf_source));
+        if (!IsWindowEnabled(sofa_file) || !IsWindowEnabled(sofa_browse))
+            hr = E_UNEXPECTED;
+        SendMessageW(hrtf_source, CB_SETCURSEL, 0, 0);
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocHrtfSourceControl, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(hrtf_source));
+        SendMessageW(combo, CB_SETCURSEL, 0, 0);
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocOutputPolicyControl, CBN_SELCHANGE),
+                     reinterpret_cast<LPARAM>(combo));
     }
 
     if (SUCCEEDED(hr) &&
@@ -541,7 +603,12 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     const bool apply_active = SUCCEEDED(hr);
     combo = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputPolicyControl) : nullptr;
     dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
-    if (!combo || !dialnorm || SendMessageW(combo, CB_GETCURSEL, 0, 0) != 7 ||
+    virtual_layout = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocVirtualLayoutControl) : nullptr;
+    hrtf_source = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocHrtfSourceControl) : nullptr;
+    sofa_file = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocSofaFileControl) : nullptr;
+    sofa_browse = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocSofaBrowseControl) : nullptr;
+    if (!combo || !dialnorm || !virtual_layout || !hrtf_source || !sofa_file || !sofa_browse ||
+        SendMessageW(combo, CB_GETCURSEL, 0, 0) != 7 ||
         SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0)
         hr = E_UNEXPECTED;
     if (SUCCEEDED(hr) &&
@@ -576,8 +643,18 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     const bool reopen_active = SUCCEEDED(hr);
     combo = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputPolicyControl) : nullptr;
     dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
-    if (!combo || !dialnorm || SendMessageW(combo, CB_GETCURSEL, 0, 0) != 0 ||
+    virtual_layout = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocVirtualLayoutControl) : nullptr;
+    hrtf_source = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocHrtfSourceControl) : nullptr;
+    sofa_file = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocSofaFileControl) : nullptr;
+    sofa_browse = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocSofaBrowseControl) : nullptr;
+    if (!combo || !dialnorm || !virtual_layout || !hrtf_source || !sofa_file || !sofa_browse ||
+        SendMessageW(combo, CB_GETCURSEL, 0, 0) != 0 ||
         SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 1)
+        hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr) &&
+        (SendMessageW(virtual_layout, CB_GETCURSEL, 0, 0) != 0 ||
+         SendMessageW(hrtf_source, CB_GETCURSEL, 0, 0) != 0 || IsWindowEnabled(virtual_layout) ||
+         IsWindowEnabled(hrtf_source) || IsWindowEnabled(sofa_file) || IsWindowEnabled(sofa_browse)))
         hr = E_UNEXPECTED;
 
     if (SUCCEEDED(hr) && SendMessageW(dialnorm, CB_SETCURSEL, 0, 0) != 0)
@@ -596,6 +673,7 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     DisconnectPage(page, reopen_active);
     Release(page);
     Release(runtime);
+    Release(binaural_settings);
     Release(level_settings);
     Release(settings);
     return passed;
@@ -618,15 +696,17 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
         hr = ActivatePage(page, status_object, &site, parent, &page_window);
     const bool active = SUCCEEDED(hr);
 
-    HWND output = SUCCEEDED(hr) ? FindControl(parent, kOutputChannelControl) : nullptr;
-    HWND codec = SUCCEEDED(hr) ? FindControl(parent, kOutputCodecControl) : nullptr;
-    HWND sample_rate = SUCCEEDED(hr) ? FindControl(parent, kOutputSampleRateControl) : nullptr;
-    HWND format = SUCCEEDED(hr) ? FindControl(parent, kOutputFormatControl) : nullptr;
-    HWND policy = SUCCEEDED(hr) ? FindControl(parent, kOpenJocStatusPolicyControl) : nullptr;
-    HWND admission = SUCCEEDED(hr) ? FindControl(parent, kOpenJocStatusAdmissionControl) : nullptr;
-    HWND warning = SUCCEEDED(hr) ? FindControl(parent, kOpenJocStatusWarningControl) : nullptr;
-    HWND reason = SUCCEEDED(hr) ? FindControl(parent, kOpenJocStatusReasonControl) : nullptr;
-    HWND details = SUCCEEDED(hr) ? FindControl(parent, kOpenJocStatusDetailsControl) : nullptr;
+    HWND output = SUCCEEDED(hr) ? FindControl(page_window, kOutputChannelControl) : nullptr;
+    HWND codec = SUCCEEDED(hr) ? FindControl(page_window, kOutputCodecControl) : nullptr;
+    HWND sample_rate = SUCCEEDED(hr) ? FindControl(page_window, kOutputSampleRateControl) : nullptr;
+    HWND format = SUCCEEDED(hr) ? FindControl(page_window, kOutputFormatControl) : nullptr;
+    HWND policy = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocStatusPolicyControl) : nullptr;
+    HWND admission = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocStatusAdmissionControl) : nullptr;
+    HWND warning = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocStatusWarningControl) : nullptr;
+    HWND reason = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocStatusReasonControl) : nullptr;
+    HWND details = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocStatusDetailsControl) : nullptr;
+    if (SUCCEEDED(hr))
+        SendMessageW(page_window, WM_TIMER, 1, 0);
     if (!output || !codec || !sample_rate || !format || !policy || !admission ||
         !warning || !reason || !details ||
         WindowText(output) != L"10 / 0x2d60f" || WindowText(codec) != L"PCM" ||
@@ -634,14 +714,14 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
         WindowText(policy) != L"5.1.4" || WindowText(admission) != L"OpenJOC" ||
         !WindowText(warning).empty() || !WindowText(reason).empty() ||
         !WindowText(details).empty() ||
-        !MeterLabelsMatch(parent, labels_514))
+        !MeterLabelsMatch(page_window, labels_514))
         hr = E_UNEXPECTED;
 
     status.SetOutput(10, 0x0002d60f, LAVOpenJocOutputPolicy::Layout514, LAVOpenJocAdmissionOpenJoc);
     if (SUCCEEDED(hr))
         SendMessageW(page_window, WM_TIMER, 1, 0);
     if (SUCCEEDED(hr) && (status.volume_queries() != 8 || status.max_volume_channel() != 7 ||
-                          !MeterPositionsMatch(parent, 8)))
+                          !MeterPositionsMatch(page_window, 8)))
         hr = E_UNEXPECTED;
 
     status.SetOutput(12, 0x0002d63f, LAVOpenJocOutputPolicy::Layout714, LAVOpenJocAdmissionStockEac3);
@@ -653,7 +733,7 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
                           WindowText(admission) != L"Stock decoder" || status.volume_queries() != 8 ||
                           status.max_volume_channel() != 7 || status.output_detail_queries() < 3 ||
                           status.policy_queries() < 3 || status.admission_queries() < 3 ||
-                          !MeterLabelsMatch(parent, labels_714) || !MeterPositionsMatch(parent, 8)))
+                          !MeterLabelsMatch(page_window, labels_714) || !MeterPositionsMatch(page_window, 8)))
         hr = E_UNEXPECTED;
 
     status.SetOutput(2, 0x00000003, LAVOpenJocOutputPolicy::Stereo, LAVOpenJocAdmissionOpenJoc);
@@ -661,7 +741,7 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
         SendMessageW(page_window, WM_TIMER, 1, 0);
     if (SUCCEEDED(hr) &&
         (status.volume_queries() != 2 || status.max_volume_channel() != 1 ||
-         !MeterLabelsMatch(parent, labels_stereo) || !MeterPositionsMatch(parent, 2)))
+         !MeterLabelsMatch(page_window, labels_stereo) || !MeterPositionsMatch(page_window, 2)))
         hr = E_UNEXPECTED;
 
     status.SetOutput(12, 0x0002d63f, LAVOpenJocOutputPolicy::Layout714,
@@ -684,7 +764,7 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
         (WindowText(policy) != L"Binaural (Headphones)" ||
          WindowText(admission) != L"OpenJOC" ||
          !WindowText(warning).empty() || !WindowText(reason).empty() ||
-         !WindowText(details).empty() || !MeterLabelsMatch(parent, labels_stereo)))
+         !WindowText(details).empty() || !MeterLabelsMatch(page_window, labels_stereo)))
         hr = E_UNEXPECTED;
 
     status.SetOutputResult(S_FALSE);
@@ -692,7 +772,7 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
         SendMessageW(page_window, WM_TIMER, 1, 0);
     if (SUCCEEDED(hr) &&
         (WindowText(codec) != L"Bitstreaming" || status.volume_queries() != 0 ||
-         !MeterLabelsMatch(parent, labels_empty) || !MeterPositionsMatch(parent, 0)))
+         !MeterLabelsMatch(page_window, labels_empty) || !MeterPositionsMatch(page_window, 0)))
         hr = E_UNEXPECTED;
 
     status.SetOutput(12, 0x0002d63f, LAVOpenJocOutputPolicy::Layout714, LAVOpenJocAdmissionStockEac3);
@@ -704,7 +784,7 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
     if (SUCCEEDED(hr) &&
         (!WindowText(output).empty() || !WindowText(codec).empty() || !WindowText(sample_rate).empty() ||
          !WindowText(format).empty() || status.volume_queries() != 0 ||
-         !MeterLabelsMatch(parent, labels_empty) || !MeterPositionsMatch(parent, 0)))
+         !MeterLabelsMatch(page_window, labels_empty) || !MeterPositionsMatch(page_window, 0)))
         hr = E_UNEXPECTED;
 
     DisconnectPage(page, active);

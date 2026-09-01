@@ -25,6 +25,7 @@
  */
 
 #include "stdafx.h"
+
 #include "AudioSettingsProp.h"
 #include "Media.h"
 #include "OpenJocOutput.h"
@@ -34,6 +35,7 @@
 
 #include "resource.h"
 #include "version.h"
+#include <commdlg.h>
 
 CLAVAudioSettingsProp::CLAVAudioSettingsProp(LPUNKNOWN pUnk, HRESULT *phr)
     : CBaseDSPropPage(NAME("LAVCAudioProp"), pUnk, IDD_PROPPAGE_AUDIO_SETTINGS, IDS_SETTINGS)
@@ -450,14 +452,17 @@ HRESULT CLAVAudioOpenJocProp::OnConnect(IUnknown *pUnk)
 {
     if (!pUnk)
         return E_POINTER;
-    ASSERT(!m_pOpenJocSettings && !m_pOpenJocLevelSettings);
+    ASSERT(!m_pOpenJocSettings && !m_pOpenJocLevelSettings && !m_pOpenJocBinauralSettings);
     HRESULT hr = pUnk->QueryInterface(&m_pOpenJocSettings);
     if (SUCCEEDED(hr))
         hr = pUnk->QueryInterface(&m_pOpenJocLevelSettings);
+    if (SUCCEEDED(hr))
+        hr = pUnk->QueryInterface(&m_pOpenJocBinauralSettings);
     if (FAILED(hr))
     {
         SafeRelease(&m_pOpenJocSettings);
         SafeRelease(&m_pOpenJocLevelSettings);
+        SafeRelease(&m_pOpenJocBinauralSettings);
     }
     return hr;
 }
@@ -466,6 +471,7 @@ HRESULT CLAVAudioOpenJocProp::OnDisconnect()
 {
     SafeRelease(&m_pOpenJocSettings);
     SafeRelease(&m_pOpenJocLevelSettings);
+    SafeRelease(&m_pOpenJocBinauralSettings);
     return S_OK;
 }
 
@@ -474,7 +480,28 @@ HRESULT CLAVAudioOpenJocProp::LoadData()
     HRESULT hr = m_pOpenJocSettings->GetOutputPolicy(&m_outputPolicy);
     if (SUCCEEDED(hr))
         hr = m_pOpenJocLevelSettings->GetDialnormPolicy(&m_dialnormPolicy);
+    if (SUCCEEDED(hr))
+        hr = m_pOpenJocBinauralSettings->GetBinauralHrtfSource(&m_hrtfSource);
+    if (SUCCEEDED(hr))
+        hr = m_pOpenJocBinauralSettings->GetBinauralVirtualLayout(&m_virtualLayout);
+    if (SUCCEEDED(hr))
+    {
+        wchar_t path[LAV_OPENJOC_BINAURAL_SETTINGS_TEXT_CAPACITY] = {};
+        hr = m_pOpenJocBinauralSettings->GetCustomSofaPath(path, static_cast<DWORD>(std::size(path)));
+        if (SUCCEEDED(hr))
+            m_customSofaPath = path;
+    }
     return hr;
+}
+
+void CLAVAudioOpenJocProp::UpdateBinauralControlState()
+{
+    const BOOL binaural = m_outputPolicy == LAVOpenJocOutputPolicy::Binaural ? TRUE : FALSE;
+    const BOOL custom = binaural && m_hrtfSource == LAVOpenJocHrtfSource::CustomSofa ? TRUE : FALSE;
+    EnableWindow(GetDlgItem(m_Dlg, IDC_OPENJOC_VIRTUAL_LAYOUT), binaural);
+    EnableWindow(GetDlgItem(m_Dlg, IDC_OPENJOC_HRTF_SOURCE), binaural);
+    EnableWindow(GetDlgItem(m_Dlg, IDC_OPENJOC_SOFA_FILE), custom);
+    EnableWindow(GetDlgItem(m_Dlg, IDC_OPENJOC_SOFA_BROWSE), custom);
 }
 
 HRESULT CLAVAudioOpenJocProp::OnActivate()
@@ -532,6 +559,58 @@ HRESULT CLAVAudioOpenJocProp::OnActivate()
     if (selected_dialnorm == CB_ERR)
         return E_UNEXPECTED;
     SendDlgItemMessage(m_Dlg, IDC_OPENJOC_DIALNORM_POLICY, CB_SETCURSEL, selected_dialnorm, 0);
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_VIRTUAL_LAYOUT, CB_RESETCONTENT, 0, 0);
+    constexpr struct
+    {
+        LAVOpenJocBinauralVirtualLayout layout;
+        const wchar_t *label;
+    } virtual_layout_options[] = {
+        {LAVOpenJocBinauralVirtualLayout::Layout714, L"7.1.4 (Recommended)"},
+    };
+    LRESULT selected_layout = CB_ERR;
+    for (const auto &option : virtual_layout_options)
+    {
+        const LRESULT combo_index = SendDlgItemMessage(
+            m_Dlg, IDC_OPENJOC_VIRTUAL_LAYOUT, CB_ADDSTRING, 0, (LPARAM)option.label);
+        if (combo_index == CB_ERR || combo_index == CB_ERRSPACE)
+            return E_OUTOFMEMORY;
+        if (SendDlgItemMessage(m_Dlg, IDC_OPENJOC_VIRTUAL_LAYOUT, CB_SETITEMDATA, combo_index,
+                               static_cast<LPARAM>(static_cast<std::uint32_t>(option.layout))) == CB_ERR)
+            return E_UNEXPECTED;
+        if (option.layout == m_virtualLayout)
+            selected_layout = combo_index;
+    }
+    if (selected_layout == CB_ERR)
+        return E_UNEXPECTED;
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_VIRTUAL_LAYOUT, CB_SETCURSEL, selected_layout, 0);
+
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_HRTF_SOURCE, CB_RESETCONTENT, 0, 0);
+    constexpr struct
+    {
+        LAVOpenJocHrtfSource source;
+        const wchar_t *label;
+    } hrtf_options[] = {
+        {LAVOpenJocHrtfSource::BuiltinSadieIiD1, L"Built-in SADIE II D1 (Recommended)"},
+        {LAVOpenJocHrtfSource::CustomSofa, L"Custom SOFA..."},
+    };
+    LRESULT selected_source = CB_ERR;
+    for (const auto &option : hrtf_options)
+    {
+        const LRESULT combo_index = SendDlgItemMessage(
+            m_Dlg, IDC_OPENJOC_HRTF_SOURCE, CB_ADDSTRING, 0, (LPARAM)option.label);
+        if (combo_index == CB_ERR || combo_index == CB_ERRSPACE)
+            return E_OUTOFMEMORY;
+        if (SendDlgItemMessage(m_Dlg, IDC_OPENJOC_HRTF_SOURCE, CB_SETITEMDATA, combo_index,
+                               static_cast<LPARAM>(static_cast<std::uint32_t>(option.source))) == CB_ERR)
+            return E_UNEXPECTED;
+        if (option.source == m_hrtfSource)
+            selected_source = combo_index;
+    }
+    if (selected_source == CB_ERR)
+        return E_UNEXPECTED;
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_HRTF_SOURCE, CB_SETCURSEL, selected_source, 0);
+    SetDlgItemTextW(m_Dlg, IDC_OPENJOC_SOFA_FILE, m_customSofaPath.c_str());
+    UpdateBinauralControlState();
     return S_OK;
 }
 
@@ -539,34 +618,100 @@ HRESULT CLAVAudioOpenJocProp::OnApplyChanges()
 {
     const LRESULT output_index = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETCURSEL, 0, 0);
     const LRESULT dialnorm_index = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_DIALNORM_POLICY, CB_GETCURSEL, 0, 0);
-    if (output_index == CB_ERR || dialnorm_index == CB_ERR)
+    const LRESULT layout_index = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_VIRTUAL_LAYOUT, CB_GETCURSEL, 0, 0);
+    const LRESULT source_index = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_HRTF_SOURCE, CB_GETCURSEL, 0, 0);
+    if (output_index == CB_ERR || dialnorm_index == CB_ERR || layout_index == CB_ERR || source_index == CB_ERR)
         return E_UNEXPECTED;
 
     const LRESULT output_data =
         SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETITEMDATA, output_index, 0);
     const LRESULT dialnorm_data =
         SendDlgItemMessage(m_Dlg, IDC_OPENJOC_DIALNORM_POLICY, CB_GETITEMDATA, dialnorm_index, 0);
+    const LRESULT layout_data =
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_VIRTUAL_LAYOUT, CB_GETITEMDATA, layout_index, 0);
+    const LRESULT source_data =
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_HRTF_SOURCE, CB_GETITEMDATA, source_index, 0);
     const auto output_policy = static_cast<LAVOpenJocOutputPolicy>(static_cast<std::uint32_t>(output_data));
     const auto dialnorm_policy =
         static_cast<LAVOpenJocDialnormPolicy>(static_cast<std::uint32_t>(dialnorm_data));
+    const auto virtual_layout =
+        static_cast<LAVOpenJocBinauralVirtualLayout>(static_cast<std::uint32_t>(layout_data));
+    const auto hrtf_source =
+        static_cast<LAVOpenJocHrtfSource>(static_cast<std::uint32_t>(source_data));
     if (output_data == CB_ERR || !IsLAVOpenJocOutputPolicyShipped(output_policy) ||
         !FindLAVOpenJocOutputContract(output_policy) || dialnorm_data == CB_ERR ||
         (dialnorm_policy != LAVOpenJocDialnormPolicy::Calibrated &&
-         dialnorm_policy != LAVOpenJocDialnormPolicy::UnityCompatibility))
+         dialnorm_policy != LAVOpenJocDialnormPolicy::UnityCompatibility) ||
+        layout_data == CB_ERR || !IsLAVOpenJocBinauralVirtualLayout(virtual_layout) ||
+        source_data == CB_ERR || !IsLAVOpenJocHrtfSource(hrtf_source))
         return E_UNEXPECTED;
 
-    HRESULT hr = m_pOpenJocSettings->SetOutputPolicy(output_policy);
+    wchar_t sofa_path[LAV_OPENJOC_BINAURAL_SETTINGS_TEXT_CAPACITY] = {};
+    GetDlgItemTextW(m_Dlg, IDC_OPENJOC_SOFA_FILE, sofa_path, static_cast<int>(std::size(sofa_path)));
+    const LPCWSTR selected_sofa = hrtf_source == LAVOpenJocHrtfSource::CustomSofa ? sofa_path : nullptr;
+    HRESULT hr = m_pOpenJocBinauralSettings->SetBinauralConfiguration(
+        output_policy, hrtf_source, virtual_layout, selected_sofa);
     if (SUCCEEDED(hr))
         hr = m_pOpenJocLevelSettings->SetDialnormPolicy(dialnorm_policy);
     if (SUCCEEDED(hr))
         hr = LoadData();
+    else
+    {
+        wchar_t detail[LAV_OPENJOC_BINAURAL_SETTINGS_TEXT_CAPACITY] = {};
+        if (m_pOpenJocBinauralSettings->GetBinauralConfigurationError(
+                detail, static_cast<DWORD>(std::size(detail))) == S_OK && detail[0] != L'\0')
+            MessageBoxW(m_Dlg, detail, L"Binaural HRTF error", MB_OK | MB_ICONERROR);
+        LoadData();
+        UpdateBinauralControlState();
+    }
     return hr;
 }
 
 INT_PTR CLAVAudioOpenJocProp::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     if (uMsg == WM_COMMAND && HIWORD(wParam) == CBN_SELCHANGE &&
-        (LOWORD(wParam) == IDC_OPENJOC_OUTPUT_POLICY || LOWORD(wParam) == IDC_OPENJOC_DIALNORM_POLICY))
+        (LOWORD(wParam) == IDC_OPENJOC_OUTPUT_POLICY || LOWORD(wParam) == IDC_OPENJOC_DIALNORM_POLICY ||
+         LOWORD(wParam) == IDC_OPENJOC_VIRTUAL_LAYOUT || LOWORD(wParam) == IDC_OPENJOC_HRTF_SOURCE))
+    {
+        if (LOWORD(wParam) == IDC_OPENJOC_OUTPUT_POLICY)
+        {
+            const LRESULT index = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETCURSEL, 0, 0);
+            if (index != CB_ERR)
+                m_outputPolicy = static_cast<LAVOpenJocOutputPolicy>(static_cast<std::uint32_t>(
+                    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETITEMDATA, index, 0)));
+        }
+        if (LOWORD(wParam) == IDC_OPENJOC_HRTF_SOURCE)
+        {
+            const LRESULT index = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_HRTF_SOURCE, CB_GETCURSEL, 0, 0);
+            if (index != CB_ERR)
+                m_hrtfSource = static_cast<LAVOpenJocHrtfSource>(static_cast<std::uint32_t>(
+                    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_HRTF_SOURCE, CB_GETITEMDATA, index, 0)));
+        }
+        UpdateBinauralControlState();
+        SetDirty();
+    }
+    else if (uMsg == WM_COMMAND && HIWORD(wParam) == BN_CLICKED &&
+             LOWORD(wParam) == IDC_OPENJOC_SOFA_BROWSE)
+    {
+        OPENFILENAMEW dialog{};
+        wchar_t path[LAV_OPENJOC_BINAURAL_SETTINGS_TEXT_CAPACITY] = {};
+        GetDlgItemTextW(m_Dlg, IDC_OPENJOC_SOFA_FILE, path, static_cast<int>(std::size(path)));
+        dialog.lStructSize = sizeof(dialog);
+        dialog.hwndOwner = m_Dlg;
+        dialog.lpstrFilter = L"SOFA files (*.sofa)\0*.sofa\0All files (*.*)\0*.*\0\0";
+        dialog.nFilterIndex = 1;
+        dialog.lpstrFile = path;
+        dialog.nMaxFile = static_cast<DWORD>(std::size(path));
+        dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+        dialog.lpstrDefExt = L"sofa";
+        if (GetOpenFileNameW(&dialog))
+        {
+            SetDlgItemTextW(m_Dlg, IDC_OPENJOC_SOFA_FILE, path);
+            SetDirty();
+        }
+    }
+    else if (uMsg == WM_COMMAND && HIWORD(wParam) == EN_CHANGE &&
+             LOWORD(wParam) == IDC_OPENJOC_SOFA_FILE)
         SetDirty();
     return __super::OnReceiveMessage(hwnd, uMsg, wParam, lParam);
 }

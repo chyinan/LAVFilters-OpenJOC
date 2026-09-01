@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 struct LAVOpenJocFrame
@@ -46,6 +47,10 @@ class LAVOpenJocDecoder final
     bool IsAvailable() const;
     LAVOpenJocState State() const;
     bool SetOutputPolicy(LAVOpenJocOutputPolicy policy);
+    bool SetBinauralConfiguration(const LAVOpenJocOutputContract *contract,
+                                  LAVOpenJocDialnormPolicy dialnorm_policy,
+                                  std::vector<unsigned char> sofa_data,
+                                  std::string virtual_layout);
     bool SetDialnormPolicy(LAVOpenJocDialnormPolicy policy);
     const LAVOpenJocOutputContract *OutputContract() const;
     LAVOpenJocDialnormPolicy DialnormPolicy() const;
@@ -58,6 +63,8 @@ class LAVOpenJocDecoder final
 
     bool HasError() const;
     const char *LastError() const;
+    void ClearTransientError();
+    void SetConfigurationError(const char *detail);
     [[nodiscard]] LAVOpenJocDiagnosticSnapshot DiagnosticSnapshot() const;
     void RecordRuntimeDiagnostic(LAVOpenJocFailureReason reason, const char *detail);
     std::size_t ClassifierInputBytes() const;

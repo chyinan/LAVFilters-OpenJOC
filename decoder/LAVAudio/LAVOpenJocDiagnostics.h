@@ -35,6 +35,7 @@ typedef enum LAVOpenJocDiagnosticReason
     LAVOpenJocDiagnosticInvalidJocCarriage = 3,
     LAVOpenJocDiagnosticOpenJocDecodeError = 4,
     LAVOpenJocDiagnosticUnsupportedOutputLayout = 5,
+    LAVOpenJocDiagnosticBinauralHrtfConfiguration = 6,
 } LAVOpenJocDiagnosticReason;
 
 // {A9C07B6A-4C8F-4B6A-9D1F-6C9D3E5B7A20}

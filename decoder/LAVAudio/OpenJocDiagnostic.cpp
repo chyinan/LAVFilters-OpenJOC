@@ -27,6 +27,8 @@ const char *DefaultDetail(const LAVOpenJocFailureReason reason) noexcept
         return "OpenJOC decoding failed";
     case LAVOpenJocFailureReason::UnsupportedOutputLayout:
         return "the selected output layout was rejected by the downstream filter";
+    case LAVOpenJocFailureReason::BinauralHrtfConfiguration:
+        return "the selected Binaural HRTF configuration was rejected";
     case LAVOpenJocFailureReason::None:
     default:
         return "";
@@ -101,6 +103,7 @@ const char *LAVOpenJocFailureReasonLabel(const LAVOpenJocFailureReason reason) n
     case LAVOpenJocFailureReason::InvalidJocCarriage: return "Invalid JOC carriage";
     case LAVOpenJocFailureReason::OpenJocDecodeError: return "OpenJOC decode error";
     case LAVOpenJocFailureReason::UnsupportedOutputLayout: return "Unsupported output layout";
+    case LAVOpenJocFailureReason::BinauralHrtfConfiguration: return "Binaural HRTF configuration";
     case LAVOpenJocFailureReason::None:
     default: return "";
     }

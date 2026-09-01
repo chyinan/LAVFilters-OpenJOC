@@ -108,6 +108,16 @@
       "confidence": "high"
     },
     {
+      "source_path": "decoder/LAVAudio/OpenJocBinauralSettings.h",
+      "origin": "OpenJOC downstream integration",
+      "upstream_revision": "not-applicable (new downstream file)",
+      "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
+      "lav_modification_state": "not-applicable",
+      "openjoc_modification_state": "new for openjoc-0.15.0",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
       "source_path": "decoder/LAVAudio/OpenJocDecoder.cpp",
       "origin": "OpenJOC downstream integration",
       "upstream_revision": "not-applicable (new downstream file)",

@@ -112,6 +112,9 @@
     <ClInclude Include="OpenJocOutput.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="OpenJocBinauralSettings.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="OpenJocDialnorm.h">
       <Filter>Header Files</Filter>
     </ClInclude>

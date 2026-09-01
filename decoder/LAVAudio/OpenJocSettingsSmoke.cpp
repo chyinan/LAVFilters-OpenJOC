@@ -15,10 +15,12 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 #include <dshow.h>
 
 #include "LAVOpenJocSettings.h"
+#include "OpenJocBinauralSettings.h"
 
 namespace
 {
@@ -28,6 +30,10 @@ constexpr wchar_t kPolicyVersionValue[] = L"OpenJocOutputPolicyVersion";
 constexpr wchar_t kPolicyValue[] = L"OpenJocOutputPolicy";
 constexpr wchar_t kDialnormVersionValue[] = L"OpenJocDialnormPolicyVersion";
 constexpr wchar_t kDialnormValue[] = L"OpenJocDialnormPolicy";
+constexpr wchar_t kBinauralVersionValue[] = L"OpenJocBinauralSettingsVersion";
+constexpr wchar_t kBinauralHrtfSourceValue[] = L"OpenJocBinauralHrtfSource";
+constexpr wchar_t kBinauralVirtualLayoutValue[] = L"OpenJocBinauralVirtualLayout";
+constexpr wchar_t kBinauralSofaPathValue[] = L"OpenJocCustomSofaPath";
 
 constexpr GUID kOpenJocLavAudio = {
     0x27247580, 0xc701, 0x40cd, {0x88, 0x6d, 0xe6, 0x18, 0xfc, 0x8c, 0x9f, 0xff}};
@@ -206,6 +212,26 @@ class FilterModule final
         return hr;
     }
 
+    HRESULT CreateBinaural(ILAVOpenJocBinauralSettings **settings) const
+    {
+        if (!settings)
+            return E_POINTER;
+        *settings = nullptr;
+        if (FAILED(status_) || !factory_)
+            return FAILED(status_) ? status_ : E_FAIL;
+
+        IBaseFilter *filter = nullptr;
+        HRESULT hr = factory_->CreateInstance(nullptr, IID_IBaseFilter,
+                                              reinterpret_cast<void **>(&filter));
+        if (SUCCEEDED(hr))
+            hr = filter->QueryInterface(__uuidof(ILAVOpenJocBinauralSettings),
+                                         reinterpret_cast<void **>(settings));
+        Release(filter);
+        if (FAILED(hr))
+            Release(*settings);
+        return hr;
+    }
+
   private:
     HMODULE module_ = nullptr;
     IClassFactory *factory_ = nullptr;
@@ -268,6 +294,28 @@ bool ValueIsExactDword(const wchar_t *subkey, const wchar_t *name, const DWORD e
     return status == ERROR_SUCCESS && type == REG_DWORD && size == sizeof(DWORD) && value == expected;
 }
 
+bool ValueIsExactString(const wchar_t *subkey, const wchar_t *name, const std::wstring &expected)
+{
+    HKEY key = nullptr;
+    LONG status = RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_QUERY_VALUE, &key);
+    DWORD type = 0;
+    DWORD size = 0;
+    if (status == ERROR_SUCCESS)
+        status = RegQueryValueExW(key, name, nullptr, &type, nullptr, &size);
+    if (status != ERROR_SUCCESS || type != REG_SZ || size == 0 || size % sizeof(wchar_t) != 0)
+    {
+        if (key)
+            RegCloseKey(key);
+        return false;
+    }
+    std::vector<wchar_t> value(size / sizeof(wchar_t) + 1, L'\0');
+    status = RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE *>(value.data()), &size);
+    if (key)
+        RegCloseKey(key);
+    return status == ERROR_SUCCESS && type == REG_SZ && value.back() == L'\0' &&
+           std::wstring(value.data()) == expected;
+}
+
 bool ValueIsAbsent(const wchar_t *subkey, const wchar_t *name)
 {
     HKEY key = nullptr;
@@ -288,6 +336,23 @@ bool ExpectLoadedPolicy(const FilterModule &module, const LAVOpenJocOutputPolicy
         hr = settings->GetOutputPolicy(&actual);
     Release(settings);
     return SUCCEEDED(hr) && actual == expected;
+}
+
+bool ResetBinauralKey()
+{
+    HKEY key = nullptr;
+    const LONG open_status = RegOpenKeyExW(HKEY_CURRENT_USER, kPolicyKey, 0, KEY_SET_VALUE, &key);
+    if (open_status != ERROR_SUCCESS)
+        return false;
+    const LONG version_status = RegDeleteValueW(key, kBinauralVersionValue);
+    const LONG source_status = RegDeleteValueW(key, kBinauralHrtfSourceValue);
+    const LONG layout_status = RegDeleteValueW(key, kBinauralVirtualLayoutValue);
+    const LONG path_status = RegDeleteValueW(key, kBinauralSofaPathValue);
+    RegCloseKey(key);
+    return (version_status == ERROR_SUCCESS || version_status == ERROR_FILE_NOT_FOUND) &&
+           (source_status == ERROR_SUCCESS || source_status == ERROR_FILE_NOT_FOUND) &&
+           (layout_status == ERROR_SUCCESS || layout_status == ERROR_FILE_NOT_FOUND) &&
+           (path_status == ERROR_SUCCESS || path_status == ERROR_FILE_NOT_FOUND);
 }
 
 bool ExpectLoadedDialnorm(const FilterModule &module, const LAVOpenJocDialnormPolicy expected)
@@ -486,6 +551,164 @@ bool TestDefaultAndSetters(const FilterModule &module)
            ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Layout714);
 }
 
+bool TestBinauralDefaultsAndInvalidCustom(const FilterModule &module, const wchar_t *valid_sofa_path)
+{
+    if (!ResetBinauralKey())
+        return false;
+
+    ILAVOpenJocBinauralSettings *settings = nullptr;
+    HRESULT hr = module.CreateBinaural(&settings);
+    LAVOpenJocHrtfSource source = LAVOpenJocHrtfSource::CustomSofa;
+    LAVOpenJocBinauralVirtualLayout layout = LAVOpenJocBinauralVirtualLayout::Layout916;
+    wchar_t path[32768] = {};
+    if (SUCCEEDED(hr))
+        hr = settings->GetBinauralHrtfSource(&source);
+    if (SUCCEEDED(hr))
+        hr = settings->GetBinauralVirtualLayout(&layout);
+    if (SUCCEEDED(hr))
+        hr = settings->GetCustomSofaPath(path, static_cast<DWORD>(std::size(path)));
+    if (FAILED(hr) || source != LAVOpenJocHrtfSource::BuiltinSadieIiD1 ||
+        layout != LAVOpenJocBinauralVirtualLayout::Layout714 || path[0] != L'\0')
+    {
+        Release(settings);
+        return false;
+    }
+
+    const HRESULT invalid_hr = settings->SetBinauralConfiguration(
+        LAVOpenJocOutputPolicy::Binaural, LAVOpenJocHrtfSource::CustomSofa,
+        LAVOpenJocBinauralVirtualLayout::Layout714, L"missing-openjoc-test.sofa");
+    wchar_t detail[512] = {};
+    const HRESULT detail_hr = settings->GetBinauralConfigurationError(
+        detail, static_cast<DWORD>(std::size(detail)));
+    source = LAVOpenJocHrtfSource::CustomSofa;
+    layout = LAVOpenJocBinauralVirtualLayout::Layout916;
+    path[0] = L'X';
+    if (SUCCEEDED(invalid_hr) || FAILED(detail_hr) || detail[0] == L'\0' ||
+        settings->GetBinauralHrtfSource(&source) != S_OK ||
+        settings->GetBinauralVirtualLayout(&layout) != S_OK ||
+        settings->GetCustomSofaPath(path, static_cast<DWORD>(std::size(path))) != S_OK ||
+        source != LAVOpenJocHrtfSource::BuiltinSadieIiD1 ||
+        layout != LAVOpenJocBinauralVirtualLayout::Layout714 || path[0] != L'\0' ||
+        !ValueIsAbsent(kPolicyKey, kBinauralVersionValue) ||
+        !ValueIsAbsent(kPolicyKey, kBinauralHrtfSourceValue) ||
+        !ValueIsAbsent(kPolicyKey, kBinauralVirtualLayoutValue) ||
+        !ValueIsAbsent(kPolicyKey, kBinauralSofaPathValue))
+    {
+        Release(settings);
+        return false;
+    }
+
+    if (valid_sofa_path)
+    {
+        if (settings->SetBinauralConfiguration(
+                LAVOpenJocOutputPolicy::Binaural, LAVOpenJocHrtfSource::CustomSofa,
+                LAVOpenJocBinauralVirtualLayout::Layout714, valid_sofa_path) != S_OK ||
+            settings->GetBinauralHrtfSource(&source) != S_OK ||
+            source != LAVOpenJocHrtfSource::CustomSofa ||
+            settings->GetCustomSofaPath(path, static_cast<DWORD>(std::size(path))) != S_OK ||
+            std::wstring(path) != valid_sofa_path)
+        {
+            Release(settings);
+            return false;
+        }
+        if (!ValueIsExactDword(kPolicyKey, kBinauralVersionValue, 1) ||
+            !ValueIsExactDword(kPolicyKey, kBinauralHrtfSourceValue, 1) ||
+            !ValueIsExactDword(kPolicyKey, kBinauralVirtualLayoutValue, 0) ||
+            !ValueIsExactString(kPolicyKey, kBinauralSofaPathValue, valid_sofa_path))
+        {
+            Release(settings);
+            return false;
+        }
+        Release(settings);
+        settings = nullptr;
+        if (module.CreateBinaural(&settings) != S_OK ||
+            settings->GetBinauralHrtfSource(&source) != S_OK ||
+            source != LAVOpenJocHrtfSource::CustomSofa ||
+            settings->GetCustomSofaPath(path, static_cast<DWORD>(std::size(path))) != S_OK ||
+            std::wstring(path) != valid_sofa_path)
+        {
+            std::fwprintf(stderr, L"binaural persistence reload failed\n");
+            Release(settings);
+            return false;
+        }
+    }
+    Release(settings);
+    return ResetBinauralKey();
+}
+
+bool TestPersistedMissingCustomIsExplicit(const FilterModule &module)
+{
+    if (!ResetBinauralKey() || !ResetPolicyKey() ||
+        !WriteDword(kBinauralVersionValue, 1) || !WriteDword(kBinauralHrtfSourceValue, 1) ||
+        !WriteDword(kBinauralVirtualLayoutValue, 0) ||
+        !WriteRawValue(kBinauralSofaPathValue, REG_SZ, L"missing-persisted.sofa",
+                       static_cast<DWORD>(sizeof(L"missing-persisted.sofa"))) ||
+        !WriteDword(kPolicyVersionValue, 1) || !WriteDword(kPolicyValue, 7))
+        return false;
+
+    ILAVOpenJocBinauralSettings *binaural = nullptr;
+    ILAVOpenJocSettings *output = nullptr;
+    HRESULT hr = module.CreateBinaural(&binaural);
+    if (SUCCEEDED(hr))
+        hr = module.Create(&output);
+    LAVOpenJocHrtfSource source = LAVOpenJocHrtfSource::BuiltinSadieIiD1;
+    LAVOpenJocBinauralVirtualLayout layout = LAVOpenJocBinauralVirtualLayout::Layout714;
+    LAVOpenJocOutputPolicy policy = LAVOpenJocOutputPolicy::Stereo;
+    wchar_t detail[512] = {};
+    wchar_t path[32768] = {};
+    if (SUCCEEDED(hr))
+        hr = binaural->GetBinauralHrtfSource(&source);
+    if (SUCCEEDED(hr))
+        hr = binaural->GetBinauralVirtualLayout(&layout);
+    if (SUCCEEDED(hr))
+        hr = binaural->GetCustomSofaPath(path, static_cast<DWORD>(std::size(path)));
+    if (SUCCEEDED(hr))
+        hr = binaural->GetBinauralConfigurationError(detail, static_cast<DWORD>(std::size(detail)));
+    if (SUCCEEDED(hr))
+        hr = output->GetOutputPolicy(&policy);
+    const bool passed = SUCCEEDED(hr) && source == LAVOpenJocHrtfSource::CustomSofa &&
+                        layout == LAVOpenJocBinauralVirtualLayout::Layout714 &&
+                        std::wstring(path) == L"missing-persisted.sofa" &&
+                        std::wstring(detail).find(L"could not be opened") != std::wstring::npos &&
+                        policy == LAVOpenJocOutputPolicy::Binaural;
+    Release(output);
+    Release(binaural);
+    return ResetBinauralKey() && ResetPolicyKey() && passed;
+}
+
+bool TestStructurallyInvalidBinauralSettingsUseSafeDefaults(const FilterModule &module)
+{
+    if (!ResetBinauralKey() || !ResetPolicyKey() ||
+        !WriteDword(kBinauralVersionValue, 1) || !WriteDword(kBinauralHrtfSourceValue, 99) ||
+        !WriteDword(kBinauralVirtualLayoutValue, 99) || !WriteDword(kPolicyVersionValue, 1) ||
+        !WriteDword(kPolicyValue, 7))
+        return false;
+
+    ILAVOpenJocBinauralSettings *settings = nullptr;
+    ILAVOpenJocSettings *output = nullptr;
+    HRESULT hr = module.CreateBinaural(&settings);
+    if (SUCCEEDED(hr))
+        hr = module.Create(&output);
+    LAVOpenJocHrtfSource source = LAVOpenJocHrtfSource::CustomSofa;
+    LAVOpenJocBinauralVirtualLayout layout = LAVOpenJocBinauralVirtualLayout::Layout916;
+    LAVOpenJocOutputPolicy policy = LAVOpenJocOutputPolicy::Stereo;
+    wchar_t detail[512] = {};
+    if (SUCCEEDED(hr))
+        hr = settings->GetBinauralHrtfSource(&source);
+    if (SUCCEEDED(hr))
+        hr = settings->GetBinauralVirtualLayout(&layout);
+    if (SUCCEEDED(hr))
+        hr = settings->GetBinauralConfigurationError(detail, static_cast<DWORD>(std::size(detail)));
+    if (SUCCEEDED(hr))
+        hr = output->GetOutputPolicy(&policy);
+    const bool passed = SUCCEEDED(hr) && source == LAVOpenJocHrtfSource::BuiltinSadieIiD1 &&
+                        layout == LAVOpenJocBinauralVirtualLayout::Layout714 && detail[0] == L'\0' &&
+                        policy == LAVOpenJocOutputPolicy::Binaural;
+    Release(output);
+    Release(settings);
+    return ResetBinauralKey() && ResetPolicyKey() && passed;
+}
+
 bool TestPersistenceMatrix(const FilterModule &module)
 {
     if (!ResetPolicyKey() || !ExpectLoadedPolicy(module, LAVOpenJocOutputPolicy::Stereo))
@@ -664,9 +887,9 @@ int wmain(int argc, wchar_t **argv)
         std::fwprintf(stderr, L"ILAVOpenJocLevelSettings IID oracle mismatch\n");
         return 1;
     }
-    if (argc != 2)
+    if (argc != 2 && argc != 3)
     {
-        std::fwprintf(stderr, L"usage: OpenJocSettingsSmoke.exe <OpenJOC LAVAudio.ax>\n");
+        std::fwprintf(stderr, L"usage: OpenJocSettingsSmoke.exe <OpenJOC LAVAudio.ax> [valid SOFA path]\n");
         return 2;
     }
     if (!TestPolicyReloadClearsIncompatibleQueues())
@@ -685,7 +908,22 @@ int wmain(int argc, wchar_t **argv)
     int test_result = 0;
     {
         FilterModule module(argv[1]);
-        if (!TestDefaultAndSetters(module))
+        if (!TestBinauralDefaultsAndInvalidCustom(module, argc == 3 ? argv[2] : nullptr))
+        {
+            std::fwprintf(stderr, L"binaural settings RED contract failed\n");
+            test_result = 1;
+        }
+        else if (!TestPersistedMissingCustomIsExplicit(module))
+        {
+            std::fwprintf(stderr, L"persisted missing custom SOFA contract failed\n");
+            test_result = 1;
+        }
+        else if (!TestStructurallyInvalidBinauralSettingsUseSafeDefaults(module))
+        {
+            std::fwprintf(stderr, L"invalid binaural settings fallback contract failed\n");
+            test_result = 1;
+        }
+        else if (!TestDefaultAndSetters(module))
         {
             std::fwprintf(stderr, L"default/setter policy contract failed\n");
             test_result = 1;

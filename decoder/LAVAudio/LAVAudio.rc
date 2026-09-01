@@ -126,7 +126,7 @@ BEGIN
 END
 
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-IDD_PROPPAGE_OPENJOC DIALOGEX 0, 0, 369, 160
+IDD_PROPPAGE_OPENJOC DIALOGEX 0, 0, 369, 246
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x0
 BEGIN
@@ -135,11 +135,19 @@ BEGIN
     COMBOBOX        IDC_OPENJOC_OUTPUT_POLICY,91,21,118,68,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "Speakers: choose the layout matching your playback system. Headphones: choose Binaural for HRTF spatial rendering.",IDC_LBL_OPENJOC_OUTPUT_GUIDANCE,17,37,335,17
     LTEXT           "Stereo (Speakers) and Binaural (Headphones) both output 2-channel PCM with different rendering semantics.",IDC_LBL_OPENJOC_OUTPUT_COMPAT,17,54,335,17
-    GROUPBOX        "Program Level",IDC_STATIC,7,77,355,74
-    LTEXT           "Dialnorm:",IDC_LBL_OPENJOC_DIALNORM_POLICY,17,95,66,8
-    COMBOBOX        IDC_OPENJOC_DIALNORM_POLICY,91,92,144,36,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Calibrated respects the programme dialnorm carried by E-AC-3.",IDC_OPENJOC_DIALNORM_HELP_CALIBRATED,17,115,335,10
-    LTEXT           "Unity disables dialnorm gain for compatibility and may sound louder.",IDC_OPENJOC_DIALNORM_HELP_UNITY,17,131,335,10
+    GROUPBOX        "Binaural (Headphones)",IDC_STATIC,7,77,355,80
+    LTEXT           "Virtual layout:",IDC_LBL_OPENJOC_VIRTUAL_LAYOUT,17,94,66,8
+    COMBOBOX        IDC_OPENJOC_VIRTUAL_LAYOUT,91,91,190,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "HRTF:",IDC_LBL_OPENJOC_HRTF_SOURCE,17,113,66,8
+    COMBOBOX        IDC_OPENJOC_HRTF_SOURCE,91,110,258,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "SOFA file:",IDC_LBL_OPENJOC_SOFA_FILE,17,133,66,8
+    EDITTEXT        IDC_OPENJOC_SOFA_FILE,91,130,215,13,ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Browse...",IDC_OPENJOC_SOFA_BROWSE,311,130,40,13
+    GROUPBOX        "Program Level",IDC_STATIC,7,164,355,74
+    LTEXT           "Dialnorm:",IDC_LBL_OPENJOC_DIALNORM_POLICY,17,182,66,8
+    COMBOBOX        IDC_OPENJOC_DIALNORM_POLICY,91,179,144,36,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Calibrated respects the programme dialnorm carried by E-AC-3.",IDC_OPENJOC_DIALNORM_HELP_CALIBRATED,17,202,335,10
+    LTEXT           "Unity disables dialnorm gain for compatibility and may sound louder.",IDC_OPENJOC_DIALNORM_HELP_UNITY,17,218,335,10
 END
 #endif
 

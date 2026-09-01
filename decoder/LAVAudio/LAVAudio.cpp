@@ -28,6 +28,7 @@
 #include "stdafx.h"
 #include "LAVAudio.h"
 #include "PostProcessor.h"
+
 #include "OpenJocCandidate.h"
 #include "OpenJocStrictNegotiation.h"
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
@@ -37,7 +38,11 @@
 #include <MMReg.h>
 #include <algorithm>
 #include <assert.h>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <string>
+#include <vector>
 
 #include "moreuuids.h"
 #include "DShowUtil.h"
@@ -84,6 +89,11 @@ constexpr wchar_t kOpenJocOutputPolicyVersionValue[] = L"OpenJocOutputPolicyVers
 constexpr wchar_t kOpenJocOutputPolicyValue[] = L"OpenJocOutputPolicy";
 constexpr wchar_t kOpenJocDialnormPolicyVersionValue[] = L"OpenJocDialnormPolicyVersion";
 constexpr wchar_t kOpenJocDialnormPolicyValue[] = L"OpenJocDialnormPolicy";
+constexpr wchar_t kOpenJocBinauralSettingsVersionValue[] = L"OpenJocBinauralSettingsVersion";
+constexpr wchar_t kOpenJocBinauralHrtfSourceValue[] = L"OpenJocBinauralHrtfSource";
+constexpr wchar_t kOpenJocBinauralVirtualLayoutValue[] = L"OpenJocBinauralVirtualLayout";
+constexpr wchar_t kOpenJocCustomSofaPathValue[] = L"OpenJocCustomSofaPath";
+constexpr std::uintmax_t kOpenJocMaxCustomSofaBytes = 64u * 1024u * 1024u;
 
 bool ReadExactRegistryDword(HKEY root_key, const wchar_t *subkey, const wchar_t *value_name, DWORD *value)
 {
@@ -107,6 +117,142 @@ bool ReadExactRegistryDword(HKEY root_key, const wchar_t *subkey, const wchar_t 
 
     *value = candidate;
     return true;
+}
+
+bool ReadExactRegistryString(HKEY root_key, const wchar_t *subkey, const wchar_t *value_name,
+                             std::wstring *value)
+{
+    if (!value)
+        return false;
+    value->clear();
+
+    HKEY key = nullptr;
+    const LONG open_status = RegOpenKeyExW(root_key, subkey, 0, KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key);
+    if (open_status != ERROR_SUCCESS)
+        return false;
+
+    DWORD type = 0;
+    DWORD size = 0;
+    LONG query_status = RegQueryValueExW(key, value_name, nullptr, &type, nullptr, &size);
+    if (query_status != ERROR_SUCCESS || type != REG_SZ || size == 0 || size % sizeof(wchar_t) != 0 ||
+        size > LAV_OPENJOC_BINAURAL_SETTINGS_TEXT_CAPACITY * sizeof(wchar_t))
+    {
+        RegCloseKey(key);
+        return false;
+    }
+    const std::size_t character_count = size / sizeof(wchar_t);
+    std::vector<wchar_t> buffer(character_count + 1, L'\0');
+    query_status = RegQueryValueExW(key, value_name, nullptr, &type, reinterpret_cast<BYTE *>(buffer.data()), &size);
+    RegCloseKey(key);
+    if (query_status != ERROR_SUCCESS || type != REG_SZ || buffer[character_count - 1] != L'\0')
+        return false;
+    *value = buffer.data();
+    return true;
+}
+
+bool ReadBoundedBinaryFile(const std::wstring &path, std::vector<unsigned char> *bytes)
+{
+    if (!bytes || path.empty())
+        return false;
+    bytes->clear();
+    std::error_code status;
+    const std::uintmax_t size = std::filesystem::file_size(std::filesystem::path(path), status);
+    if (status || size == 0 || size > kOpenJocMaxCustomSofaBytes ||
+        size > static_cast<std::uintmax_t>((std::numeric_limits<std::size_t>::max)()))
+        return false;
+
+    try
+    {
+        bytes->resize(static_cast<std::size_t>(size));
+    }
+    catch (const std::bad_alloc &)
+    {
+        bytes->clear();
+        return false;
+    }
+    std::ifstream input(std::filesystem::path(path), std::ios::binary);
+    if (!input.good())
+    {
+        bytes->clear();
+        return false;
+    }
+    input.read(reinterpret_cast<char *>(bytes->data()), static_cast<std::streamsize>(bytes->size()));
+    if (!input || input.gcount() != static_cast<std::streamsize>(bytes->size()))
+    {
+        bytes->clear();
+        return false;
+    }
+    return true;
+}
+
+const char *BinauralVirtualLayoutName(const LAVOpenJocBinauralVirtualLayout layout) noexcept
+{
+    switch (layout)
+    {
+    case LAVOpenJocBinauralVirtualLayout::Layout714:
+        return "7.1.4";
+    case LAVOpenJocBinauralVirtualLayout::Layout916:
+        return "9.1.6";
+    default:
+        return nullptr;
+    }
+}
+
+std::wstring BinauralErrorDetail(const LAVOpenJocHrtfSource source, const std::wstring &path,
+                                 const char *backend_detail)
+{
+    std::wstring detail = L"Binaural HRTF configuration error: ";
+    if (source == LAVOpenJocHrtfSource::CustomSofa)
+    {
+        if (backend_detail && *backend_detail)
+        {
+            detail += L"OpenJOC rejected the selected SOFA: ";
+            for (const char *cursor = backend_detail; *cursor && detail.size() < 510; ++cursor)
+                detail.push_back(static_cast<unsigned char>(*cursor) < 0x80 ? static_cast<wchar_t>(*cursor) : L'?');
+        }
+        else
+        {
+            detail += L"Custom SOFA could not be opened: ";
+            detail += path.substr(0, 480);
+        }
+    }
+    else
+    {
+        detail += L"the built-in SADIE II D1 resource could not be initialized";
+    }
+    return detail;
+}
+
+std::string BinauralErrorUtf8(const std::wstring &detail)
+{
+    if (detail.empty())
+        return "binaural HRTF configuration failed";
+    const int source_length = static_cast<int>(std::min<std::size_t>(detail.size(), 510));
+    const int required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, detail.data(), source_length,
+                                             nullptr, 0, nullptr, nullptr);
+    if (required <= 0)
+        return "binaural HRTF configuration failed";
+    std::string converted(static_cast<std::size_t>(required), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, detail.data(), source_length,
+                            converted.data(), required, nullptr, nullptr) != required)
+        return "binaural HRTF configuration failed";
+    return converted;
+}
+
+HRESULT CopyBinauralWideText(const std::wstring &value, LPWSTR output, const DWORD capacity) noexcept
+{
+    if (capacity == 0)
+        return output ? E_INVALIDARG : S_OK;
+    if (!output)
+        return E_POINTER;
+    if (value.size() >= capacity)
+    {
+        output[0] = L'\0';
+        return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+    }
+    std::copy(value.begin(), value.end(), output);
+    output[value.size()] = L'\0';
+    return S_OK;
 }
 } // namespace
 #endif
@@ -238,6 +384,10 @@ HRESULT CLAVAudio::LoadDefaults()
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     m_settings.OpenJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
     m_settings.OpenJocDialnormPolicy = LAVOpenJocDialnormPolicy::Calibrated;
+    m_settings.OpenJocHrtfSource = LAVOpenJocHrtfSource::BuiltinSadieIiD1;
+    m_settings.OpenJocBinauralVirtualLayout = LAVOpenJocBinauralVirtualLayout::Layout714;
+    m_settings.OpenJocCustomSofaPath.clear();
+    m_openJocBinauralConfigurationError.clear();
 #endif
 
     return S_OK;
@@ -265,19 +415,34 @@ HRESULT CLAVAudio::LoadSettings()
     ReadSettings(HKEY_LOCAL_MACHINE);
     const HRESULT settings_hr = ReadSettings(HKEY_CURRENT_USER);
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    LoadOpenJocBinauralSettings();
     LoadOpenJocOutputPolicySettings();
-    const HRESULT policy_hr = ConfigureOpenJocOutputPolicy(m_settings.OpenJocOutputPolicy, true);
-    if (FAILED(policy_hr))
-    {
-        m_settings.OpenJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
-        ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy::Stereo, true);
-    }
     LoadOpenJocDialnormPolicySettings();
     const HRESULT dialnorm_hr = ConfigureOpenJocDialnormPolicy(m_settings.OpenJocDialnormPolicy, true);
     if (FAILED(dialnorm_hr))
     {
         m_settings.OpenJocDialnormPolicy = LAVOpenJocDialnormPolicy::Calibrated;
         ConfigureOpenJocDialnormPolicy(LAVOpenJocDialnormPolicy::Calibrated, true);
+    }
+    const HRESULT policy_hr = ConfigureOpenJocOutputPolicy(m_settings.OpenJocOutputPolicy, true);
+    if (FAILED(policy_hr))
+    {
+        if (m_settings.OpenJocOutputPolicy == LAVOpenJocOutputPolicy::Binaural)
+        {
+            if (m_openJocBinauralConfigurationError.empty())
+                m_openJocBinauralConfigurationError = BinauralErrorDetail(
+                    m_settings.OpenJocHrtfSource, m_settings.OpenJocCustomSofaPath, nullptr);
+            const std::string diagnostic = BinauralErrorUtf8(m_openJocBinauralConfigurationError);
+            m_openJoc.SetConfigurationError(diagnostic.c_str());
+            m_openJocOutputPolicySnapshot.store(LAVOpenJocOutputPolicy::Binaural,
+                                                std::memory_order_release);
+            RefreshOpenJocAdmissionSnapshot();
+        }
+        else
+        {
+            m_settings.OpenJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
+            ConfigureOpenJocOutputPolicy(LAVOpenJocOutputPolicy::Stereo, true);
+        }
     }
 #endif
     return settings_hr;
@@ -322,10 +487,84 @@ HRESULT CLAVAudio::SaveOpenJocOutputPolicySettings(const LAVOpenJocOutputPolicy 
     return registry.WriteDWORD(kOpenJocOutputPolicyValue, static_cast<DWORD>(policy));
 }
 
+HRESULT CLAVAudio::LoadOpenJocBinauralSettings()
+{
+    m_settings.OpenJocHrtfSource = LAVOpenJocHrtfSource::BuiltinSadieIiD1;
+    m_settings.OpenJocBinauralVirtualLayout = LAVOpenJocBinauralVirtualLayout::Layout714;
+    m_settings.OpenJocCustomSofaPath.clear();
+
+    DWORD version = 0;
+    DWORD source_value = 0;
+    DWORD layout_value = 0;
+    if (!ReadExactRegistryDword(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY,
+                                kOpenJocBinauralSettingsVersionValue, &version) ||
+        version != LAV_OPENJOC_BINAURAL_SETTINGS_SCHEMA_VERSION ||
+        !ReadExactRegistryDword(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY,
+                                kOpenJocBinauralHrtfSourceValue, &source_value) ||
+        !ReadExactRegistryDword(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY,
+                                kOpenJocBinauralVirtualLayoutValue, &layout_value))
+        return S_FALSE;
+
+    const auto source = static_cast<LAVOpenJocHrtfSource>(source_value);
+    const auto layout = static_cast<LAVOpenJocBinauralVirtualLayout>(layout_value);
+    if (!IsLAVOpenJocHrtfSource(source) || !IsLAVOpenJocBinauralVirtualLayout(layout))
+        return S_FALSE;
+
+    std::wstring sofa_path;
+    if (source == LAVOpenJocHrtfSource::CustomSofa &&
+        (!ReadExactRegistryString(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY,
+                                  kOpenJocCustomSofaPathValue, &sofa_path) || sofa_path.empty() ||
+         sofa_path.size() >= LAV_OPENJOC_BINAURAL_SETTINGS_TEXT_CAPACITY))
+        return S_FALSE;
+
+    m_settings.OpenJocHrtfSource = source;
+    m_settings.OpenJocBinauralVirtualLayout = layout;
+    if (source == LAVOpenJocHrtfSource::CustomSofa)
+        m_settings.OpenJocCustomSofaPath = std::move(sofa_path);
+    return S_OK;
+}
+
+HRESULT CLAVAudio::SaveOpenJocBinauralSettings()
+{
+    if (m_bRuntimeConfig)
+        return S_FALSE;
+    if (!IsLAVOpenJocHrtfSource(m_settings.OpenJocHrtfSource) ||
+        !IsLAVOpenJocBinauralVirtualLayout(m_settings.OpenJocBinauralVirtualLayout))
+        return E_INVALIDARG;
+    if (!CreateRegistryKey(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY))
+        return HRESULT_FROM_WIN32(GetLastError());
+
+    HRESULT hr = S_OK;
+    CRegistry registry(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY, hr);
+    if (FAILED(hr))
+        return hr;
+    hr = registry.WriteDWORD(kOpenJocBinauralSettingsVersionValue,
+                             LAV_OPENJOC_BINAURAL_SETTINGS_SCHEMA_VERSION);
+    if (FAILED(hr))
+        return hr;
+    hr = registry.WriteDWORD(kOpenJocBinauralHrtfSourceValue,
+                             static_cast<DWORD>(m_settings.OpenJocHrtfSource));
+    if (FAILED(hr))
+        return hr;
+    hr = registry.WriteDWORD(kOpenJocBinauralVirtualLayoutValue,
+                             static_cast<DWORD>(m_settings.OpenJocBinauralVirtualLayout));
+    if (FAILED(hr))
+        return hr;
+    const wchar_t *path = m_settings.OpenJocHrtfSource == LAVOpenJocHrtfSource::CustomSofa
+                              ? m_settings.OpenJocCustomSofaPath.c_str()
+                              : L"";
+    return registry.WriteString(kOpenJocCustomSofaPathValue, path);
+}
+
 HRESULT CLAVAudio::ConfigureOpenJocOutputPolicy(const LAVOpenJocOutputPolicy policy, const bool clear_queues)
 {
     if (!FindLAVOpenJocOutputContract(policy))
         return E_INVALIDARG;
+
+    if (policy == LAVOpenJocOutputPolicy::Binaural)
+        return ConfigureOpenJocBinauralConfiguration(
+            policy, m_settings.OpenJocHrtfSource, m_settings.OpenJocBinauralVirtualLayout,
+            m_settings.OpenJocCustomSofaPath.c_str(), clear_queues);
 
     const LAVOpenJocOutputContract *current_contract = m_openJoc.OutputContract();
     const bool changed = !current_contract || current_contract->policy != policy;
@@ -347,6 +586,67 @@ HRESULT CLAVAudio::ConfigureOpenJocOutputPolicy(const LAVOpenJocOutputPolicy pol
         m_bResyncTimestamp = FALSE;
     }
 
+    return S_OK;
+}
+
+HRESULT CLAVAudio::ConfigureOpenJocBinauralConfiguration(
+    const LAVOpenJocOutputPolicy output_policy, const LAVOpenJocHrtfSource source,
+    const LAVOpenJocBinauralVirtualLayout layout, LPCWSTR sofa_path, const bool clear_queues)
+{
+    const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(output_policy);
+    const char *layout_name = BinauralVirtualLayoutName(layout);
+    if (!contract || !IsLAVOpenJocHrtfSource(source) || !layout_name ||
+        (source == LAVOpenJocHrtfSource::CustomSofa && !sofa_path))
+        return E_INVALIDARG;
+
+    std::wstring requested_path = sofa_path ? sofa_path : L"";
+    if (source == LAVOpenJocHrtfSource::BuiltinSadieIiD1)
+        requested_path.clear();
+    if (source == LAVOpenJocHrtfSource::CustomSofa && requested_path.empty())
+    {
+        m_openJocBinauralConfigurationError =
+            L"Binaural HRTF configuration error: Custom SOFA path is empty";
+        return E_INVALIDARG;
+    }
+    if (requested_path.size() >= LAV_OPENJOC_BINAURAL_SETTINGS_TEXT_CAPACITY)
+        return E_INVALIDARG;
+
+    const bool changed = m_openJoc.OutputContract() != contract ||
+                         m_settings.OpenJocHrtfSource != source ||
+                         m_settings.OpenJocBinauralVirtualLayout != layout ||
+                         m_settings.OpenJocCustomSofaPath != requested_path;
+    std::vector<unsigned char> sofa_data;
+    if (output_policy == LAVOpenJocOutputPolicy::Binaural &&
+        source == LAVOpenJocHrtfSource::CustomSofa &&
+        !ReadBoundedBinaryFile(requested_path, &sofa_data))
+    {
+        m_openJocBinauralConfigurationError = BinauralErrorDetail(source, requested_path, nullptr);
+        return E_FAIL;
+    }
+
+    if (!m_openJoc.SetBinauralConfiguration(contract, m_settings.OpenJocDialnormPolicy,
+                                            std::move(sofa_data), layout_name))
+    {
+        m_openJocBinauralConfigurationError =
+            BinauralErrorDetail(source, requested_path, m_openJoc.LastError());
+        m_openJoc.ClearTransientError();
+        return E_FAIL;
+    }
+
+    m_settings.OpenJocOutputPolicy = output_policy;
+    m_settings.OpenJocHrtfSource = source;
+    m_settings.OpenJocBinauralVirtualLayout = layout;
+    m_settings.OpenJocCustomSofaPath = std::move(requested_path);
+    m_openJocBinauralConfigurationError.clear();
+    m_openJocOutputPolicySnapshot.store(output_policy, std::memory_order_release);
+    RefreshOpenJocAdmissionSnapshot();
+    if (changed && clear_queues)
+    {
+        m_buff.Clear();
+        FlushOutput(FALSE);
+        m_bQueueResync = TRUE;
+        m_bResyncTimestamp = FALSE;
+    }
     return S_OK;
 }
 
@@ -675,7 +975,7 @@ STDMETHODIMP CLAVAudio::NonDelegatingQueryInterface(REFIID riid, void **ppv)
         QI2(ILAVAudioStatus) QI2(ILAVOpenJocStatus)
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
             QI2(ILAVOpenJocSettings) QI2(ILAVOpenJocLevelSettings) QI2(ILAVOpenJocDiagnostics)
-                QI2(ILAVOpenJocDiagnostics2)
+                QI2(ILAVOpenJocBinauralSettings) QI2(ILAVOpenJocDiagnostics2)
 #endif
                 __super::NonDelegatingQueryInterface(riid, ppv);
 }
@@ -802,6 +1102,67 @@ HRESULT CLAVAudio::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
         return hr;
     const HRESULT save_hr = SaveOpenJocOutputPolicySettings(policy);
     return save_hr == S_FALSE ? S_OK : save_hr;
+}
+
+HRESULT CLAVAudio::GetBinauralHrtfSource(LAVOpenJocHrtfSource *source)
+{
+    CheckPointer(source, E_POINTER);
+    CAutoTryLock receive_lock(&m_csReceive);
+    if (!receive_lock.IsLocked())
+        return S_FALSE;
+    *source = m_settings.OpenJocHrtfSource;
+    return S_OK;
+}
+
+HRESULT CLAVAudio::GetBinauralVirtualLayout(LAVOpenJocBinauralVirtualLayout *layout)
+{
+    CheckPointer(layout, E_POINTER);
+    CAutoTryLock receive_lock(&m_csReceive);
+    if (!receive_lock.IsLocked())
+        return S_FALSE;
+    *layout = m_settings.OpenJocBinauralVirtualLayout;
+    return S_OK;
+}
+
+HRESULT CLAVAudio::GetCustomSofaPath(LPWSTR path, const DWORD capacity)
+{
+    CAutoTryLock receive_lock(&m_csReceive);
+    if (!receive_lock.IsLocked())
+        return S_FALSE;
+    return CopyBinauralWideText(m_settings.OpenJocCustomSofaPath, path, capacity);
+}
+
+HRESULT CLAVAudio::SetBinauralConfiguration(
+    const LAVOpenJocOutputPolicy output_policy, const LAVOpenJocHrtfSource source,
+    const LAVOpenJocBinauralVirtualLayout layout, LPCWSTR sofa_path)
+{
+    if (!FindLAVOpenJocOutputContract(output_policy) || !IsLAVOpenJocHrtfSource(source) ||
+        !IsLAVOpenJocBinauralVirtualLayout(layout))
+        return E_INVALIDARG;
+    CAutoLock receive_lock(&m_csReceive);
+    const HRESULT hr = ConfigureOpenJocBinauralConfiguration(output_policy, source, layout,
+                                                              sofa_path, true);
+    if (FAILED(hr))
+        return hr;
+
+    HRESULT save_hr = SaveOpenJocBinauralSettings();
+    if (save_hr == S_FALSE)
+        save_hr = S_OK;
+    if (SUCCEEDED(save_hr))
+    {
+        const HRESULT policy_hr = SaveOpenJocOutputPolicySettings(output_policy);
+        if (policy_hr != S_FALSE)
+            save_hr = policy_hr;
+    }
+    return save_hr;
+}
+
+HRESULT CLAVAudio::GetBinauralConfigurationError(LPWSTR detail, const DWORD capacity)
+{
+    CAutoTryLock receive_lock(&m_csReceive);
+    if (!receive_lock.IsLocked())
+        return S_FALSE;
+    return CopyBinauralWideText(m_openJocBinauralConfigurationError, detail, capacity);
 }
 
 HRESULT CLAVAudio::GetDialnormPolicy(LAVOpenJocDialnormPolicy *policy)
@@ -1363,6 +1724,8 @@ LAVOpenJocDiagnosticReason ToPublicOpenJocDiagnosticReason(const LAVOpenJocFailu
         return LAVOpenJocDiagnosticOpenJocDecodeError;
     case LAVOpenJocFailureReason::UnsupportedOutputLayout:
         return LAVOpenJocDiagnosticUnsupportedOutputLayout;
+    case LAVOpenJocFailureReason::BinauralHrtfConfiguration:
+        return LAVOpenJocDiagnosticBinauralHrtfConfiguration;
     case LAVOpenJocFailureReason::None:
     default:
         return LAVOpenJocDiagnosticNone;

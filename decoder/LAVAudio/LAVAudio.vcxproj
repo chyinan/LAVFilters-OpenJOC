@@ -72,7 +72,7 @@
       <PreprocessorDefinitions>$(OpenJocDefines);$(OpenJocIdentityDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>advapi32.lib;ole32.lib;winmm.lib;user32.lib;oleaut32.lib;shell32.lib;Shlwapi.lib;Comctl32.lib;version.lib;avformat-lav.lib;avutil-lav.lib;avcodec-lav.lib;swresample-lav.lib</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;ole32.lib;winmm.lib;user32.lib;oleaut32.lib;shell32.lib;Shlwapi.lib;Comctl32.lib;comdlg32.lib;version.lib;avformat-lav.lib;avutil-lav.lib;avcodec-lav.lib;swresample-lav.lib</AdditionalDependencies>
       <ModuleDefinitionFile>LAVAudio.def</ModuleDefinitionFile>
     </Link>
     <Manifest>
@@ -88,7 +88,7 @@
       <PreprocessorDefinitions>$(OpenJocDefines);$(OpenJocIdentityDefines);%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>advapi32.lib;ole32.lib;winmm.lib;user32.lib;oleaut32.lib;shell32.lib;Shlwapi.lib;Comctl32.lib;version.lib;avformat-lav.lib;avutil-lav.lib;avcodec-lav.lib;swresample-lav.lib</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;ole32.lib;winmm.lib;user32.lib;oleaut32.lib;shell32.lib;Shlwapi.lib;Comctl32.lib;comdlg32.lib;version.lib;avformat-lav.lib;avutil-lav.lib;avcodec-lav.lib;swresample-lav.lib</AdditionalDependencies>
       <ModuleDefinitionFile>LAVAudio.def</ModuleDefinitionFile>
     </Link>
     <CustomBuildStep>
@@ -147,6 +147,7 @@
     <ClInclude Include="AudioSettingsProp.h" />
     <ClInclude Include="Media.h" />
     <ClInclude Include="OpenJocAdmission.h" />
+    <ClInclude Include="OpenJocBinauralSettings.h" />
     <ClInclude Include="OpenJocCandidate.h" />
     <ClInclude Include="OpenJocDiagnostic.h" />
     <ClInclude Include="OpenJocDecoder.h" />

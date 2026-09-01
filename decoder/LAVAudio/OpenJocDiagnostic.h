@@ -22,6 +22,7 @@ enum class LAVOpenJocFailureReason
     InvalidJocCarriage,
     OpenJocDecodeError,
     UnsupportedOutputLayout,
+    BinauralHrtfConfiguration,
 };
 
 struct LAVOpenJocDiagnosticSnapshot
