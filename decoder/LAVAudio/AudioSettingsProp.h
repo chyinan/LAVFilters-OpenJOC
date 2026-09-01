@@ -28,6 +28,7 @@
 
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocSettings.h"
+#include "LAVOpenJocDiagnostics.h"
 #include "BaseDSPropPage.h"
 #include "Media.h"
 
@@ -219,6 +220,7 @@ class CLAVAudioStatusProp : public CBaseDSPropPage
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     ILAVOpenJocSettings *m_pOpenJocSettings = nullptr;
     ILAVOpenJocStatus *m_pOpenJocStatus = nullptr;
+    ILAVOpenJocDiagnostics2 *m_pOpenJocDiagnostics = nullptr;
 #endif
     int m_nMeterChannels = 0;
 };

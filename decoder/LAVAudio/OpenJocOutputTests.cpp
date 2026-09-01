@@ -5,6 +5,8 @@
 
 // Canonical OpenJOC output-policy contract tests.
 
+// pattern: Functional Core
+
 #include "LAVOpenJocSettings.h"
 #include "OpenJocOutput.h"
 
@@ -328,7 +330,8 @@ void test_multichannel_candidates_have_one_logical_lfe()
             assert(contract.ordered_channels[index] != AV_CHAN_LOW_FREQUENCY_2);
         }
 
-        if (expected.policy == LAVOpenJocOutputPolicy::Stereo)
+        if (expected.policy == LAVOpenJocOutputPolicy::Stereo ||
+            expected.policy == LAVOpenJocOutputPolicy::Binaural)
             assert(lfe_channels == 0);
         else
             assert(lfe_channels == 1);
@@ -338,7 +341,7 @@ void test_multichannel_candidates_have_one_logical_lfe()
 void test_unknown_and_unrepresentable_policy_values_are_rejected()
 {
     // These wire values stand in for Auto, 5.2.4, 7.1.6, 9.x, 22.2, and corrupt persistence.
-    constexpr std::uint32_t rejected_values[] = {7u, 8u, 9u, 10u, 14u, 16u, 24u,
+    constexpr std::uint32_t rejected_values[] = {8u, 9u, 10u, 14u, 16u, 24u,
                                                   (std::numeric_limits<std::uint32_t>::max)()};
     for (const std::uint32_t value : rejected_values)
     {

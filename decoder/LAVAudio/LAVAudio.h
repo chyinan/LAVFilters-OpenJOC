@@ -111,6 +111,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     , public ILAVOpenJocSettings
     , public ILAVOpenJocLevelSettings
     , public ILAVOpenJocDiagnostics
+    , public ILAVOpenJocDiagnostics2
 #endif
 {
   public:
@@ -195,6 +196,9 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     // ILAVOpenJocDiagnostics
     STDMETHODIMP GetOpenJocInputByteCounts(ULONGLONG *classifier_input_bytes,
                                            ULONGLONG *stream_input_bytes);
+    STDMETHODIMP GetOpenJocPlaybackDiagnostics(LAVOpenJocDiagnosticReason *reason, BOOL *warning,
+                                                BOOL *failure_au_known, ULONGLONG *failure_au,
+                                                LPWSTR detail, DWORD detail_capacity);
 #endif
 
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE) && defined(LAV_OPENJOC_TESTING)

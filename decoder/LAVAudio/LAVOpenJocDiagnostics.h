@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <windows.h>
 #include <guiddef.h>
 #include <unknwn.h>
 
@@ -22,4 +23,28 @@ interface __declspec(uuid("16C95FF3-9D9E-4282-AF61-E6C7AF32446B")) ILAVOpenJocDi
 {
     STDMETHOD(GetOpenJocInputByteCounts)
     (ULONGLONG * classifier_input_bytes, ULONGLONG * stream_input_bytes) = 0;
+};
+
+typedef enum LAVOpenJocDiagnosticReason
+{
+    LAVOpenJocDiagnosticNone = 0,
+    LAVOpenJocDiagnosticMalformedJocMetadata = 1,
+    LAVOpenJocDiagnosticUnsupportedJocProfile = 2,
+    LAVOpenJocDiagnosticInvalidJocCarriage = 3,
+    LAVOpenJocDiagnosticOpenJocDecodeError = 4,
+    LAVOpenJocDiagnosticUnsupportedOutputLayout = 5,
+} LAVOpenJocDiagnosticReason;
+
+// {A9C07B6A-4C8F-4B6A-9D1F-6C9D3E5B7A20}
+DEFINE_GUID(IID_ILAVOpenJocDiagnostics2, 0xa9c07b6a, 0x4c8f, 0x4b6a, 0x9d, 0x1f, 0x6c, 0x9d, 0x3e,
+            0x5b, 0x7a, 0x20);
+
+interface __declspec(uuid("A9C07B6A-4C8F-4B6A-9D1F-6C9D3E5B7A20")) ILAVOpenJocDiagnostics2
+    : public IUnknown
+{
+    // The detail is copied into caller-owned UTF-16 storage. If failure_au_known
+    // is FALSE, failure_au is unspecified and must be ignored.
+    STDMETHOD(GetOpenJocPlaybackDiagnostics)
+    (LAVOpenJocDiagnosticReason * reason, BOOL * warning, BOOL * failure_au_known,
+     ULONGLONG * failure_au, LPWSTR detail, DWORD detail_capacity) = 0;
 };

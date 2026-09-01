@@ -67,6 +67,7 @@ struct LAVOpenJocDecoder::Impl
     std::size_t classifier_input_bytes = 0;
     std::size_t stream_input_bytes = 0;
     std::string last_error;
+    LAVOpenJocDiagnosticSnapshot diagnostic;
     bool available = false;
     const LAVOpenJocOutputContract *output_contract =
         FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Stereo);
@@ -181,6 +182,25 @@ struct LAVOpenJocDecoder::Impl
     void SetError(const char *message)
     {
         last_error = message ? message : "OpenJOC returned an unknown error";
+    }
+
+    void ClearDiagnostic()
+    {
+        diagnostic = {};
+    }
+
+    void RecordProbeFailure(const LAVOpenJocClassification classification,
+                            const bool classifier_call_failed)
+    {
+        const LAVOpenJocFailureReason reason =
+            ClassifyLAVOpenJocProbeFailure(classification, classifier_call_failed,
+                                            last_error.c_str());
+        diagnostic = MakeLAVOpenJocFallbackDiagnostic(reason, last_error.c_str(), true, 0);
+    }
+
+    void RecordRuntimeDiagnostic(const LAVOpenJocFailureReason reason, const char *detail)
+    {
+        diagnostic = MakeLAVOpenJocRuntimeDiagnostic(reason, detail);
     }
 
 #if defined(LAV_ENABLE_OPENJOC)
@@ -376,14 +396,19 @@ struct LAVOpenJocDecoder::Impl
         }
     }
 
-    LAVOpenJocClassification Classify(const unsigned char *data, const std::size_t data_size, const bool end_of_stream)
+    LAVOpenJocClassification Classify(const unsigned char *data, const std::size_t data_size,
+                                      const bool end_of_stream, bool *call_failed)
     {
+        if (call_failed)
+            *call_failed = false;
         openjoc_classification classification = OPENJOC_CLASSIFICATION_UNKNOWN;
         const openjoc_status status = end_of_stream
                                           ? api.classifier_finish(classifier, &classification)
                                           : api.classifier_send_chunk(classifier, data, data_size, &classification);
         if (status != OPENJOC_STATUS_OK)
         {
+            if (call_failed)
+                *call_failed = true;
             SetClassifierError();
             return LAVOpenJocClassification::InvalidOrUnsupported;
         }
@@ -562,6 +587,7 @@ bool LAVOpenJocDecoder::SetConfiguration(const LAVOpenJocOutputContract *const c
     m_impl->classifier_input_bytes = 0;
     m_impl->stream_input_bytes = 0;
     m_impl->last_error.clear();
+    m_impl->ClearDiagnostic();
     return true;
 }
 
@@ -580,7 +606,7 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
 {
     if (!m_impl->available)
     {
-        m_impl->admission.resolve(LAVOpenJocClassification::InvalidOrUnsupported, data_size);
+        m_impl->admission.resolve(LAVOpenJocClassification::ConfirmedNonJoc, 0);
         return LAVOpenJocProcessResult::UseStockDecoder;
     }
 
@@ -588,6 +614,7 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
     {
         m_impl->SetError("invalid null OpenJOC input buffer");
         m_impl->admission.resolve(LAVOpenJocClassification::InvalidOrUnsupported, data_size);
+        m_impl->RecordProbeFailure(LAVOpenJocClassification::InvalidOrUnsupported, true);
         return LAVOpenJocProcessResult::UseStockDecoder;
     }
 
@@ -598,6 +625,7 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
             m_impl->admission_pts_samples = pts_samples;
 
         LAVOpenJocClassification classification = LAVOpenJocClassification::Unknown;
+        bool classifier_call_failed = false;
         const std::size_t classified_bytes = m_impl->admission.classified_bytes();
         const std::size_t classification_offset =
             m_impl->admission.classification_offset(data_size);
@@ -614,13 +642,22 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
 
         if (classification_input_size > 0)
         {
-            classification = m_impl->Classify(data + classification_offset, classification_input_size, false);
+            classification = m_impl->Classify(data + classification_offset, classification_input_size, false,
+                                               &classifier_call_failed);
             m_impl->admission.note_classified(classification_offset + classification_input_size);
         }
         if (end_of_stream)
         {
-            classification = m_impl->Classify(nullptr, 0, true);
+            bool finish_call_failed = false;
+            classification = m_impl->Classify(nullptr, 0, true, &finish_call_failed);
+            classifier_call_failed = classifier_call_failed || finish_call_failed;
         }
+
+        if (classification == LAVOpenJocClassification::ConfirmedJoc ||
+            classification == LAVOpenJocClassification::ConfirmedNonJoc)
+            m_impl->ClearDiagnostic();
+        else if (classification == LAVOpenJocClassification::InvalidOrUnsupported)
+            m_impl->RecordProbeFailure(classification, classifier_call_failed);
 
         LAVOpenJocAdmissionAction action = m_impl->admission.resolve(
             classification, m_impl->admission.classified_bytes());
@@ -630,6 +667,7 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
         {
             if (end_of_stream)
             {
+                m_impl->RecordProbeFailure(LAVOpenJocClassification::InvalidOrUnsupported, false);
                 m_impl->admission.resolve(LAVOpenJocClassification::InvalidOrUnsupported,
                                            m_impl->admission.classified_bytes());
                 return LAVOpenJocProcessResult::UseStockDecoder;
@@ -638,12 +676,17 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
         }
 
         if (!m_impl->FeedDecoder(data, data_size, m_impl->admission_pts_samples))
+        {
+            m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::OpenJocDecodeError,
+                                             m_impl->last_error.c_str());
             return LAVOpenJocProcessResult::Error;
+        }
 #else
         return LAVOpenJocProcessResult::UseStockDecoder;
 #endif
     }
-    else if (m_impl->admission.state() == LAVOpenJocState::StockCodec)
+    else if (m_impl->admission.state() == LAVOpenJocState::StockCodec ||
+             m_impl->admission.state() == LAVOpenJocState::StockAfterOpenJocFailure)
     {
         return LAVOpenJocProcessResult::UseStockDecoder;
     }
@@ -651,13 +694,21 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
     {
 #if defined(LAV_ENABLE_OPENJOC)
         if (!m_impl->FeedDecoder(data, data_size, pts_samples))
+        {
+            m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::OpenJocDecodeError,
+                                             m_impl->last_error.c_str());
             return LAVOpenJocProcessResult::Error;
+        }
 #endif
     }
 
 #if defined(LAV_ENABLE_OPENJOC)
     if (end_of_stream && !m_impl->FinishDecoder())
+    {
+        m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::OpenJocDecodeError,
+                                         m_impl->last_error.c_str());
         return LAVOpenJocProcessResult::Error;
+    }
 #else
     (void)end_of_stream;
 #endif
@@ -763,6 +814,12 @@ void LAVOpenJocDecoder::Reset()
     m_impl->stream_input_bytes = 0;
 }
 
+void LAVOpenJocDecoder::ResetForNewStream()
+{
+    Reset();
+    m_impl->ClearDiagnostic();
+}
+
 bool LAVOpenJocDecoder::HasError() const
 {
     return !m_impl->last_error.empty();
@@ -771,6 +828,17 @@ bool LAVOpenJocDecoder::HasError() const
 const char *LAVOpenJocDecoder::LastError() const
 {
     return m_impl->last_error.c_str();
+}
+
+LAVOpenJocDiagnosticSnapshot LAVOpenJocDecoder::DiagnosticSnapshot() const
+{
+    return m_impl->diagnostic;
+}
+
+void LAVOpenJocDecoder::RecordRuntimeDiagnostic(const LAVOpenJocFailureReason reason,
+                                                const char *detail)
+{
+    m_impl->RecordRuntimeDiagnostic(reason, detail);
 }
 
 std::size_t LAVOpenJocDecoder::ClassifierInputBytes() const

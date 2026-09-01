@@ -35,7 +35,9 @@
 #endif
 
 #include <MMReg.h>
+#include <algorithm>
 #include <assert.h>
+#include <string>
 
 #include "moreuuids.h"
 #include "DShowUtil.h"
@@ -666,6 +668,7 @@ STDMETHODIMP CLAVAudio::NonDelegatingQueryInterface(REFIID riid, void **ppv)
         QI2(ILAVAudioStatus) QI2(ILAVOpenJocStatus)
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
             QI2(ILAVOpenJocSettings) QI2(ILAVOpenJocLevelSettings) QI2(ILAVOpenJocDiagnostics)
+                QI2(ILAVOpenJocDiagnostics2)
 #endif
                 __super::NonDelegatingQueryInterface(riid, ppv);
 }
@@ -1308,6 +1311,8 @@ LAVOpenJocAdmissionState CLAVAudio::GetOpenJocAdmissionState()
     {
     case LAVOpenJocState::StockCodec:
         return LAVOpenJocAdmissionStockEac3;
+    case LAVOpenJocState::StockAfterOpenJocFailure:
+        return LAVOpenJocAdmissionStockOpenJocFallback;
     case LAVOpenJocState::OpenJoc:
         return LAVOpenJocAdmissionOpenJoc;
     case LAVOpenJocState::Undecided:
@@ -1325,6 +1330,79 @@ HRESULT CLAVAudio::GetOpenJocInputByteCounts(ULONGLONG *classifier_input_bytes,
     CAutoLock receive_lock(&m_csReceive);
     *classifier_input_bytes = static_cast<ULONGLONG>(m_openJoc.ClassifierInputBytes());
     *stream_input_bytes = static_cast<ULONGLONG>(m_openJoc.StreamInputBytes());
+    return S_OK;
+}
+
+namespace
+{
+LAVOpenJocDiagnosticReason ToPublicOpenJocDiagnosticReason(const LAVOpenJocFailureReason reason) noexcept
+{
+    switch (reason)
+    {
+    case LAVOpenJocFailureReason::MalformedJocMetadata:
+        return LAVOpenJocDiagnosticMalformedJocMetadata;
+    case LAVOpenJocFailureReason::UnsupportedJocProfile:
+        return LAVOpenJocDiagnosticUnsupportedJocProfile;
+    case LAVOpenJocFailureReason::InvalidJocCarriage:
+        return LAVOpenJocDiagnosticInvalidJocCarriage;
+    case LAVOpenJocFailureReason::OpenJocDecodeError:
+        return LAVOpenJocDiagnosticOpenJocDecodeError;
+    case LAVOpenJocFailureReason::UnsupportedOutputLayout:
+        return LAVOpenJocDiagnosticUnsupportedOutputLayout;
+    case LAVOpenJocFailureReason::None:
+    default:
+        return LAVOpenJocDiagnosticNone;
+    }
+}
+
+bool CopyOpenJocDiagnosticDetailToWide(const std::string &detail, LPWSTR output,
+                                       const DWORD capacity) noexcept
+{
+    if (capacity == 0)
+        return output == nullptr;
+    if (!output)
+        return false;
+    output[0] = L'\0';
+    if (detail.empty())
+        return true;
+
+    const int source_length = static_cast<int>(detail.size());
+    const int required = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, detail.data(),
+                                             source_length, nullptr, 0);
+    if (required <= 0)
+        return false;
+
+    std::wstring converted(static_cast<std::size_t>(required), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, detail.data(), source_length,
+                            converted.data(), required) != required)
+        return false;
+
+    const std::size_t copied = std::min<std::size_t>(converted.size(), capacity - 1);
+    std::copy_n(converted.data(), copied, output);
+    output[copied] = L'\0';
+    return true;
+}
+} // namespace
+
+STDMETHODIMP CLAVAudio::GetOpenJocPlaybackDiagnostics(
+    LAVOpenJocDiagnosticReason *reason, BOOL *warning, BOOL *failure_au_known,
+    ULONGLONG *failure_au, LPWSTR detail, DWORD detail_capacity)
+{
+    CheckPointer(reason, E_POINTER);
+    CheckPointer(warning, E_POINTER);
+    CheckPointer(failure_au_known, E_POINTER);
+    CheckPointer(failure_au, E_POINTER);
+    if (detail_capacity > 0 && !detail)
+        return E_POINTER;
+
+    CAutoLock receive_lock(&m_csReceive);
+    const LAVOpenJocDiagnosticSnapshot snapshot = m_openJoc.DiagnosticSnapshot();
+    *reason = ToPublicOpenJocDiagnosticReason(snapshot.reason);
+    *warning = snapshot.warning ? TRUE : FALSE;
+    *failure_au_known = snapshot.failure_au_known ? TRUE : FALSE;
+    *failure_au = static_cast<ULONGLONG>(snapshot.failure_au);
+    if (!CopyOpenJocDiagnosticDetailToWide(snapshot.detail, detail, detail_capacity))
+        return E_FAIL;
     return S_OK;
 }
 #endif
@@ -2178,7 +2256,7 @@ HRESULT CLAVAudio::Receive(IMediaSample *pIn)
         DeleteMediaType(pmt);
         pmt = nullptr;
         m_buff.Clear();
-        m_openJoc.Reset();
+        m_openJoc.ResetForNewStream();
 
         m_bQueueResync = TRUE;
     }
@@ -2592,6 +2670,9 @@ HRESULT CLAVAudio::DecodeOpenJoc(HRESULT *hrDeliver)
                 frame.samples.size(), &out.layout, &prepared_samples, &prepared_bytes))
         {
             DbgLog((LOG_ERROR, 10, L"::DecodeOpenJoc(): invalid PCM frame contract"));
+            m_openJoc.RecordRuntimeDiagnostic(
+                LAVOpenJocFailureReason::OpenJocDecodeError,
+                "OpenJOC PCM frame contract rejected by LAV");
             return E_FAIL;
         }
 
@@ -2605,12 +2686,20 @@ HRESULT CLAVAudio::DecodeOpenJoc(HRESULT *hrDeliver)
         if (FAILED(out.bBuffer->Allocate(prepared_bytes)) ||
             FAILED(out.bBuffer->Append(reinterpret_cast<const BYTE *>(frame.samples.data()), prepared_bytes)))
         {
+            m_openJoc.RecordRuntimeDiagnostic(
+                LAVOpenJocFailureReason::OpenJocDecodeError,
+                "failed to allocate OpenJOC PCM delivery buffer");
             return E_OUTOFMEMORY;
         }
 
         m_DecodeFormat = out.sfFormat;
         if (av_channel_layout_copy(&m_DecodeLayout, &out.layout) < 0)
+        {
+            m_openJoc.RecordRuntimeDiagnostic(
+                LAVOpenJocFailureReason::OpenJocDecodeError,
+                "failed to copy OpenJOC PCM channel layout");
             return E_OUTOFMEMORY;
+        }
         out.openjoc_contract = contract;
         if (SUCCEEDED(PostProcess(&out)))
         {
@@ -2620,6 +2709,9 @@ HRESULT CLAVAudio::DecodeOpenJoc(HRESULT *hrDeliver)
         }
         else
         {
+            m_openJoc.RecordRuntimeDiagnostic(
+                LAVOpenJocFailureReason::OpenJocDecodeError,
+                "OpenJOC PCM post-processing failed");
             return E_FAIL;
         }
     }
@@ -3223,8 +3315,17 @@ HRESULT CLAVAudio::Deliver(BufferDetails &buffer)
         operations.deliver = [this, &buffer](void *sample, BYTE *data, const long bytes) {
             return CompleteOpenJocDelivery(buffer, static_cast<IMediaSample *>(sample), data, bytes);
         };
-        return DeliverLAVOpenJocStrictMediaType(buffer.openjoc_contract, strict_media_type,
-                                                strict_type_changed, strict_buffer_bytes, operations);
+        const HRESULT delivery_hr = DeliverLAVOpenJocStrictMediaType(
+            buffer.openjoc_contract, strict_media_type, strict_type_changed, strict_buffer_bytes, operations);
+        if (delivery_hr == VFW_E_TYPE_NOT_ACCEPTED || delivery_hr == VFW_E_UNSUPPORTED_AUDIO)
+        {
+            std::string detail = "target ";
+            detail += buffer.openjoc_contract->property_page_label;
+            detail += " has no exact downstream route";
+            m_openJoc.RecordRuntimeDiagnostic(LAVOpenJocFailureReason::UnsupportedOutputLayout,
+                                              detail.c_str());
+        }
+        return delivery_hr;
     }
 
     CMediaType mt = CreateMediaType(buffer.sfFormat, buffer.dwSamplesPerSec, buffer.layout.nb_channels,

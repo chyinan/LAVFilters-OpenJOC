@@ -42,6 +42,14 @@ built-in HRTF is generic and uses the embedded offline resource documented in
 the OpenJOC third-party notices; this integration does not add custom SOFA,
 head tracking, or personalized HRTF controls.
 
+The Status page distinguishes three playback states: OpenJOC, Stock decoder,
+and Stock decoder (OpenJOC fallback). Ordinary AC-3/E-AC-3 remains normal
+stock decoding with no warning. A fallback warning retains its structured
+reason and bounded detail for the current stream; it is cleared when a new
+stream is positively classified. A downstream output-layout rejection is
+shown as an OpenJOC output error and is not relabeled as file corruption or
+silently switched to stock decoding after promotion.
+
 ---
 
 LAV Filters - ffmpeg based DirectShow Splitter and Decoders

@@ -13,6 +13,7 @@ enum class LAVOpenJocState
 {
     Undecided,
     StockCodec,
+    StockAfterOpenJocFailure,
     OpenJoc,
 };
 

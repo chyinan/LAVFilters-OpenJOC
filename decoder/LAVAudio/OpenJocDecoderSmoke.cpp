@@ -53,6 +53,38 @@ static void classify_as_stock(const std::vector<unsigned char> &bytes)
     assert(decoder.StreamInputBytes() == 0);
     assert(decoder.ClassifierInputBytes() > 0);
     assert(decoder.ClassifierInputBytes() <= LAVOpenJocAdmission::MaxRetainedBytes);
+    const LAVOpenJocDiagnosticSnapshot diagnostic = decoder.DiagnosticSnapshot();
+    assert(!diagnostic.warning);
+    assert(diagnostic.reason == LAVOpenJocFailureReason::None);
+}
+
+static void classify_malformed_probe_as_sticky_fallback()
+{
+    const std::vector<unsigned char> malformed = {0x58, 0x38, 0x00, 0x04};
+    LAVOpenJocDecoder decoder;
+    assert(decoder.IsAvailable());
+    assert(decoder.Process(malformed.data(), malformed.size(), INT64_MIN, true) ==
+           LAVOpenJocProcessResult::UseStockDecoder);
+    assert(decoder.State() == LAVOpenJocState::StockAfterOpenJocFailure);
+
+    const LAVOpenJocDiagnosticSnapshot diagnostic = decoder.DiagnosticSnapshot();
+    assert(diagnostic.warning);
+    assert(diagnostic.reason != LAVOpenJocFailureReason::None);
+    assert(diagnostic.failure_au_known);
+    assert(diagnostic.failure_au == 0);
+    assert(!diagnostic.detail.empty());
+
+    assert(decoder.Process(nullptr, 0, INT64_MIN, false) ==
+           LAVOpenJocProcessResult::UseStockDecoder);
+    const LAVOpenJocDiagnosticSnapshot after_stock = decoder.DiagnosticSnapshot();
+    assert(after_stock.warning);
+    assert(after_stock.reason == diagnostic.reason);
+    assert(after_stock.detail == diagnostic.detail);
+
+    decoder.ResetForNewStream();
+    const LAVOpenJocDiagnosticSnapshot after_reset = decoder.DiagnosticSnapshot();
+    assert(!after_reset.warning);
+    assert(after_reset.reason == LAVOpenJocFailureReason::None);
 }
 
 static std::size_t assert_frames_match_contract(LAVOpenJocDecoder &decoder,
@@ -336,6 +368,7 @@ int main(int argc, char **argv)
 {
     assert(argc == 3);
     classify_as_stock(read_file(argv[1]));
+    classify_malformed_probe_as_sticky_fallback();
     const std::vector<unsigned char> joc = read_file(argv[2]);
     classify_and_feed_joc_for_all_policies(joc);
     policy_assignment_and_switch_are_safe(joc);

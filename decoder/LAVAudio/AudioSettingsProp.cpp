@@ -1045,6 +1045,12 @@ HRESULT CLAVAudioStatusProp::OnConnect(IUnknown *pUnk)
         hr = pUnk->QueryInterface(&m_pOpenJocSettings);
     if (SUCCEEDED(hr))
         hr = pUnk->QueryInterface(&m_pOpenJocStatus);
+    if (SUCCEEDED(hr))
+    {
+        // Diagnostics2 is an additive read-only interface. Keep the status
+        // page usable with an older side-by-side filter if it is encountered.
+        pUnk->QueryInterface(&m_pOpenJocDiagnostics);
+    }
     if (FAILED(hr))
     {
         SafeRelease(&m_pAudioStatus);
@@ -1061,6 +1067,7 @@ HRESULT CLAVAudioStatusProp::OnDisconnect()
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     SafeRelease(&m_pOpenJocSettings);
     SafeRelease(&m_pOpenJocStatus);
+    SafeRelease(&m_pOpenJocDiagnostics);
 #endif
     return S_OK;
 }
@@ -1219,7 +1226,10 @@ void CLAVAudioStatusProp::UpdateOpenJocStatusDisplay()
     switch (m_pOpenJocStatus->GetOpenJocAdmissionState())
     {
     case LAVOpenJocAdmissionStockEac3: admission = L"Stock decoder"; break;
-    case LAVOpenJocAdmissionOpenJoc: admission = L"OpenJoc"; break;
+    case LAVOpenJocAdmissionStockOpenJocFallback:
+        admission = L"Stock decoder (OpenJOC fallback)";
+        break;
+    case LAVOpenJocAdmissionOpenJoc: admission = L"OpenJOC"; break;
     case LAVOpenJocAdmissionUndecided:
     default: break;
     }
@@ -1258,6 +1268,59 @@ void CLAVAudioStatusProp::UpdateOpenJocStatusDisplay()
         SendDlgItemMessage(m_Dlg, IDC_OUTPUT_SAMPLERATE, WM_SETTEXT, 0, (LPARAM)L"");
         SendDlgItemMessage(m_Dlg, IDC_OUTPUT_FORMAT, WM_SETTEXT, 0, (LPARAM)L"");
     }
+
+    LAVOpenJocDiagnosticReason reason = LAVOpenJocDiagnosticNone;
+    BOOL warning = FALSE;
+    BOOL failure_au_known = FALSE;
+    ULONGLONG failure_au = 0;
+    WCHAR detail[513] = {};
+    if (!m_pOpenJocDiagnostics ||
+        FAILED(m_pOpenJocDiagnostics->GetOpenJocPlaybackDiagnostics(
+            &reason, &warning, &failure_au_known, &failure_au, detail, ARRAYSIZE(detail))))
+    {
+        reason = LAVOpenJocDiagnosticNone;
+        warning = FALSE;
+        failure_au_known = FALSE;
+        failure_au = 0;
+        detail[0] = L'\0';
+    }
+
+    const wchar_t *reason_label = L"";
+    switch (reason)
+    {
+    case LAVOpenJocDiagnosticMalformedJocMetadata:
+        reason_label = L"Malformed JOC metadata";
+        break;
+    case LAVOpenJocDiagnosticUnsupportedJocProfile:
+        reason_label = L"Unsupported JOC profile";
+        break;
+    case LAVOpenJocDiagnosticInvalidJocCarriage:
+        reason_label = L"Invalid JOC carriage";
+        break;
+    case LAVOpenJocDiagnosticOpenJocDecodeError:
+        reason_label = L"OpenJOC decode error";
+        break;
+    case LAVOpenJocDiagnosticUnsupportedOutputLayout:
+        reason_label = L"Unsupported output layout";
+        break;
+    case LAVOpenJocDiagnosticNone:
+    default:
+        break;
+    }
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_WARNING, WM_SETTEXT, 0,
+                       (LPARAM)(warning ? L"Warning" : L""));
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_REASON, WM_SETTEXT, 0, (LPARAM)reason_label);
+
+    WCHAR displayed_detail[640] = {};
+    if (detail[0] != L'\0')
+    {
+        if (failure_au_known)
+            _snwprintf_s(displayed_detail, _TRUNCATE, L"AU %I64u: %s", failure_au, detail);
+        else
+            wcsncpy_s(displayed_detail, detail, _TRUNCATE);
+    }
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_STATUS_DETAILS, WM_SETTEXT, 0,
+                       (LPARAM)displayed_detail);
     UpdateMeterLayout(hr == S_OK ? channels : 0, hr == S_OK ? mask : 0);
 }
 #endif

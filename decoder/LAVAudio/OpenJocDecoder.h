@@ -8,6 +8,7 @@
 #pragma once
 
 #include "OpenJocAdmission.h"
+#include "OpenJocDiagnostic.h"
 #include "OpenJocOutput.h"
 
 #include <cstddef>
@@ -53,9 +54,12 @@ class LAVOpenJocDecoder final
     bool ReceiveFrame(LAVOpenJocFrame &frame);
     bool Drain();
     void Reset();
+    void ResetForNewStream();
 
     bool HasError() const;
     const char *LastError() const;
+    [[nodiscard]] LAVOpenJocDiagnosticSnapshot DiagnosticSnapshot() const;
+    void RecordRuntimeDiagnostic(LAVOpenJocFailureReason reason, const char *detail);
     std::size_t ClassifierInputBytes() const;
     std::size_t StreamInputBytes() const;
 

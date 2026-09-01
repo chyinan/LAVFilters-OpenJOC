@@ -21,6 +21,7 @@
 
 #include "ISpecifyPropertyPages2.h"
 #include "LAVAudioSettings.h"
+#include "LAVOpenJocDiagnostics.h"
 #include "LAVOpenJocSettings.h"
 
 namespace
@@ -42,6 +43,9 @@ constexpr int kOpenJocOutputCompatControl = 1145;
 constexpr int kOpenJocDialnormPolicyControl = 1140;
 constexpr int kOpenJocStatusPolicyControl = 1138;
 constexpr int kOpenJocStatusAdmissionControl = 1139;
+constexpr int kOpenJocStatusWarningControl = 1146;
+constexpr int kOpenJocStatusReasonControl = 1147;
+constexpr int kOpenJocStatusDetailsControl = 1148;
 constexpr int kTrayIconControl = 1131;
 constexpr int kOutputChannelControl = 1086;
 constexpr int kOutputCodecControl = 1085;
@@ -207,7 +211,8 @@ bool MeterPositionsMatch(HWND parent, const int active_count)
 
 class FakeStatusInstance final : public ILAVAudioStatus,
                                  public ILAVOpenJocSettings,
-                                 public ILAVOpenJocStatus
+                                 public ILAVOpenJocStatus,
+                                 public ILAVOpenJocDiagnostics2
 {
   public:
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **object) override
@@ -221,6 +226,8 @@ class FakeStatusInstance final : public ILAVAudioStatus,
             *object = static_cast<ILAVOpenJocSettings *>(this);
         else if (iid == __uuidof(ILAVOpenJocStatus))
             *object = static_cast<ILAVOpenJocStatus *>(this);
+        else if (iid == __uuidof(ILAVOpenJocDiagnostics2))
+            *object = static_cast<ILAVOpenJocDiagnostics2 *>(this);
         else
             return E_NOINTERFACE;
         AddRef();
@@ -295,6 +302,23 @@ class FakeStatusInstance final : public ILAVAudioStatus,
         return admission_;
     }
 
+    HRESULT STDMETHODCALLTYPE GetOpenJocPlaybackDiagnostics(
+        LAVOpenJocDiagnosticReason *reason, BOOL *warning, BOOL *failure_au_known,
+        ULONGLONG *failure_au, LPWSTR detail, DWORD detail_capacity) override
+    {
+        if (!reason || !warning || !failure_au_known || !failure_au)
+            return E_POINTER;
+        if (detail_capacity > 0 && !detail)
+            return E_POINTER;
+        *reason = reason_;
+        *warning = warning_;
+        *failure_au_known = failure_au_known_;
+        *failure_au = failure_au_;
+        if (detail_capacity > 0)
+            wcsncpy_s(detail, detail_capacity, detail_.c_str(), _TRUNCATE);
+        return S_OK;
+    }
+
     void SetOutput(const int channels, const DWORD mask, const LAVOpenJocOutputPolicy policy,
                    const LAVOpenJocAdmissionState admission)
     {
@@ -303,8 +327,24 @@ class FakeStatusInstance final : public ILAVAudioStatus,
         policy_ = policy;
         admission_ = admission;
         output_result_ = S_OK;
+        reason_ = LAVOpenJocDiagnosticNone;
+        warning_ = FALSE;
+        failure_au_known_ = FALSE;
+        failure_au_ = 0;
+        detail_.clear();
         volume_queries_ = 0;
         max_volume_channel_ = -1;
+    }
+
+    void SetDiagnostic(const LAVOpenJocDiagnosticReason reason, const BOOL warning,
+                       const BOOL failure_au_known, const ULONGLONG failure_au,
+                       const wchar_t *detail)
+    {
+        reason_ = reason;
+        warning_ = warning;
+        failure_au_known_ = failure_au_known;
+        failure_au_ = failure_au;
+        detail_ = detail ? detail : L"";
     }
     void SetOutputResult(const HRESULT result)
     {
@@ -330,6 +370,11 @@ class FakeStatusInstance final : public ILAVAudioStatus,
     int output_detail_queries_ = 0;
     int policy_queries_ = 0;
     int admission_queries_ = 0;
+    LAVOpenJocDiagnosticReason reason_ = LAVOpenJocDiagnosticNone;
+    BOOL warning_ = FALSE;
+    BOOL failure_au_known_ = FALSE;
+    ULONGLONG failure_au_ = 0;
+    std::wstring detail_;
 };
 
 HRESULT ActivatePage(IPropertyPage *page, IUnknown *object, PropertyPageSite *site, HWND parent, HWND *page_window)
@@ -365,7 +410,8 @@ bool TestSettingsPageHasNoOpenJocControls(IBaseFilter *filter, ISpecifyPropertyP
         hr = ActivatePage(page, filter, &site, parent, &page_window);
     const bool active = SUCCEEDED(hr);
     if (SUCCEEDED(hr) &&
-        (FindControl(page_window, kOpenJocOutputPolicyControl) != nullptr ||
+        (!page_window ||
+         FindControl(page_window, kOpenJocOutputPolicyControl) != nullptr ||
          FindControl(page_window, kOpenJocDialnormPolicyControl) != nullptr ||
          FindControl(page_window, kTrayIconControl) == nullptr))
         hr = E_UNEXPECTED;
@@ -578,10 +624,16 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
     HWND format = SUCCEEDED(hr) ? FindControl(parent, kOutputFormatControl) : nullptr;
     HWND policy = SUCCEEDED(hr) ? FindControl(parent, kOpenJocStatusPolicyControl) : nullptr;
     HWND admission = SUCCEEDED(hr) ? FindControl(parent, kOpenJocStatusAdmissionControl) : nullptr;
+    HWND warning = SUCCEEDED(hr) ? FindControl(parent, kOpenJocStatusWarningControl) : nullptr;
+    HWND reason = SUCCEEDED(hr) ? FindControl(parent, kOpenJocStatusReasonControl) : nullptr;
+    HWND details = SUCCEEDED(hr) ? FindControl(parent, kOpenJocStatusDetailsControl) : nullptr;
     if (!output || !codec || !sample_rate || !format || !policy || !admission ||
+        !warning || !reason || !details ||
         WindowText(output) != L"10 / 0x2d60f" || WindowText(codec) != L"PCM" ||
         WindowText(sample_rate) != L"48000" || WindowText(format) != L"32-bit Floating-point" ||
-        WindowText(policy) != L"5.1.4" || WindowText(admission) != L"OpenJoc" ||
+        WindowText(policy) != L"5.1.4" || WindowText(admission) != L"OpenJOC" ||
+        !WindowText(warning).empty() || !WindowText(reason).empty() ||
+        !WindowText(details).empty() ||
         !MeterLabelsMatch(parent, labels_514))
         hr = E_UNEXPECTED;
 
@@ -610,6 +662,29 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
     if (SUCCEEDED(hr) &&
         (status.volume_queries() != 2 || status.max_volume_channel() != 1 ||
          !MeterLabelsMatch(parent, labels_stereo) || !MeterPositionsMatch(parent, 2)))
+        hr = E_UNEXPECTED;
+
+    status.SetOutput(12, 0x0002d63f, LAVOpenJocOutputPolicy::Layout714,
+                     LAVOpenJocAdmissionStockOpenJocFallback);
+    status.SetDiagnostic(LAVOpenJocDiagnosticMalformedJocMetadata, TRUE, TRUE, 0,
+                         L"EMDF declares 573 bytes, but only 507 are available.");
+    if (SUCCEEDED(hr))
+        SendMessageW(page_window, WM_TIMER, 1, 0);
+    if (SUCCEEDED(hr) &&
+        (WindowText(admission) != L"Stock decoder (OpenJOC fallback)" ||
+         WindowText(warning) != L"Warning" ||
+         WindowText(reason) != L"Malformed JOC metadata" ||
+         WindowText(details) != L"AU 0: EMDF declares 573 bytes, but only 507 are available."))
+        hr = E_UNEXPECTED;
+
+    status.SetOutput(2, 0x00000003, LAVOpenJocOutputPolicy::Binaural, LAVOpenJocAdmissionOpenJoc);
+    if (SUCCEEDED(hr))
+        SendMessageW(page_window, WM_TIMER, 1, 0);
+    if (SUCCEEDED(hr) &&
+        (WindowText(policy) != L"Binaural (Headphones)" ||
+         WindowText(admission) != L"OpenJOC" ||
+         !WindowText(warning).empty() || !WindowText(reason).empty() ||
+         !WindowText(details).empty() || !MeterLabelsMatch(parent, labels_stereo)))
         hr = E_UNEXPECTED;
 
     status.SetOutputResult(S_FALSE);
@@ -666,8 +741,10 @@ int wmain(int argc, wchar_t **argv)
         HRESULT hr = module.CreateFilter(&filter);
         if (SUCCEEDED(hr))
             hr = filter->QueryInterface(__uuidof(ISpecifyPropertyPages2), reinterpret_cast<void **>(&pages));
-        passed = SUCCEEDED(hr) && TestSettingsPageHasNoOpenJocControls(filter, pages, parent) &&
-                 TestOpenJocPage(filter, pages, parent) && TestStatusPage(pages, parent);
+        const bool settings_page = SUCCEEDED(hr) && TestSettingsPageHasNoOpenJocControls(filter, pages, parent);
+        const bool openjoc_page = settings_page && TestOpenJocPage(filter, pages, parent);
+        const bool status_page = openjoc_page && TestStatusPage(pages, parent);
+        passed = settings_page && openjoc_page && status_page;
         Release(pages);
         Release(filter);
     }

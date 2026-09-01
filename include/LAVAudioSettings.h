@@ -24,6 +24,8 @@
 
 #pragma once
 
+// pattern: Functional Core
+
 // {4158A22B-6553-45D0-8069-24716F8FF171}
 DEFINE_GUID(IID_ILAVAudioSettings, 0x4158a22b, 0x6553, 0x45d0, 0x80, 0x69, 0x24, 0x71, 0x6f, 0x8f, 0xf1, 0x71);
 
@@ -38,6 +40,7 @@ typedef enum LAVOpenJocAdmissionState
     LAVOpenJocAdmissionUndecided = 0,
     LAVOpenJocAdmissionStockEac3 = 1,
     LAVOpenJocAdmissionOpenJoc = 2,
+    LAVOpenJocAdmissionStockOpenJocFallback = 3,
 } LAVOpenJocAdmissionState;
 
 interface __declspec(uuid("7C0EED4F-59D9-4D3A-9B26-1B6C2C4A8A5D")) ILAVOpenJocStatus : public IUnknown

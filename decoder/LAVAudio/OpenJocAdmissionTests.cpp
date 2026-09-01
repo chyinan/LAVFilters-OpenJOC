@@ -5,6 +5,8 @@
 
 // OpenJOC admission state-machine tests.
 
+// pattern: Functional Core
+
 #include "OpenJocAdmission.h"
 #include "OpenJocCandidate.h"
 
@@ -39,19 +41,21 @@ static void test_positive_evidence_promotes_retained_bytes_once()
            LAVOpenJocActionKind::NoAction);
 }
 
-static void test_non_joc_and_errors_preserve_stock_path()
+static void test_non_joc_is_normal_stock_but_invalid_candidate_is_fallback()
 {
-    for (const LAVOpenJocClassification classification : {
-             LAVOpenJocClassification::ConfirmedNonJoc,
-             LAVOpenJocClassification::InvalidOrUnsupported,
-         })
-    {
-        LAVOpenJocAdmission admission;
-        const LAVOpenJocAdmissionAction action = admission.resolve(classification, 512);
-        assert(action.kind == LAVOpenJocActionKind::UseStockDecoder);
-        assert(action.bytes_to_feed == 0);
-        assert(admission.state() == LAVOpenJocState::StockCodec);
-    }
+    LAVOpenJocAdmission ordinary;
+    const LAVOpenJocAdmissionAction ordinary_action =
+        ordinary.resolve(LAVOpenJocClassification::ConfirmedNonJoc, 512);
+    assert(ordinary_action.kind == LAVOpenJocActionKind::UseStockDecoder);
+    assert(ordinary_action.bytes_to_feed == 0);
+    assert(ordinary.state() == LAVOpenJocState::StockCodec);
+
+    LAVOpenJocAdmission fallback;
+    const LAVOpenJocAdmissionAction fallback_action =
+        fallback.resolve(LAVOpenJocClassification::InvalidOrUnsupported, 512);
+    assert(fallback_action.kind == LAVOpenJocActionKind::UseStockDecoder);
+    assert(fallback_action.bytes_to_feed == 0);
+    assert(fallback.state() == LAVOpenJocState::StockAfterOpenJocFailure);
 }
 
 static void test_retention_limit_falls_back_without_unbounded_growth()
@@ -62,7 +66,7 @@ static void test_retention_limit_falls_back_without_unbounded_growth()
                           LAVOpenJocAdmission::MaxRetainedBytes + 1);
 
     assert(action.kind == LAVOpenJocActionKind::UseStockDecoder);
-    assert(admission.state() == LAVOpenJocState::StockCodec);
+    assert(admission.state() == LAVOpenJocState::StockAfterOpenJocFailure);
 }
 
 static void test_reset_reopens_admission_for_a_new_timeline()
@@ -97,7 +101,7 @@ int wmain()
 {
     test_classification_cursor_tracks_only_new_retained_bytes();
     test_positive_evidence_promotes_retained_bytes_once();
-    test_non_joc_and_errors_preserve_stock_path();
+    test_non_joc_is_normal_stock_but_invalid_candidate_is_fallback();
     test_retention_limit_falls_back_without_unbounded_growth();
     test_reset_reopens_admission_for_a_new_timeline();
     test_only_ac3_codec_families_enter_the_openjoc_candidate_lane();

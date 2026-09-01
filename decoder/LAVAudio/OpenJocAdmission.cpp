@@ -32,11 +32,23 @@ LAVOpenJocAdmissionAction LAVOpenJocAdmission::resolve(const LAVOpenJocClassific
     if (m_state != LAVOpenJocState::Undecided)
         return {};
 
-    if (buffered_bytes < m_classified_bytes || buffered_bytes > MaxRetainedBytes ||
-        classification == LAVOpenJocClassification::ConfirmedNonJoc ||
-        classification == LAVOpenJocClassification::InvalidOrUnsupported)
+    if (buffered_bytes < m_classified_bytes || buffered_bytes > MaxRetainedBytes)
+    {
+        m_state = LAVOpenJocState::StockAfterOpenJocFailure;
+        m_classified_bytes = 0;
+        return {LAVOpenJocActionKind::UseStockDecoder, 0};
+    }
+
+    if (classification == LAVOpenJocClassification::ConfirmedNonJoc)
     {
         m_state = LAVOpenJocState::StockCodec;
+        m_classified_bytes = 0;
+        return {LAVOpenJocActionKind::UseStockDecoder, 0};
+    }
+
+    if (classification == LAVOpenJocClassification::InvalidOrUnsupported)
+    {
+        m_state = LAVOpenJocState::StockAfterOpenJocFailure;
         m_classified_bytes = 0;
         return {LAVOpenJocActionKind::UseStockDecoder, 0};
     }

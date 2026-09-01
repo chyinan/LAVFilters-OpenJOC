@@ -55,7 +55,7 @@ constexpr AVChannel kLayout714Channels[] = {
     AV_CHAN_TOP_FRONT_RIGHT, AV_CHAN_TOP_BACK_LEFT,   AV_CHAN_TOP_BACK_RIGHT};
 
 constexpr std::array<LAVOpenJocOutputContract, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT> kContracts = {{
-    {LAVOpenJocOutputPolicy::Stereo, "Stereo", nullptr, "2.0", "stereo", kStereoLabels,
+    {LAVOpenJocOutputPolicy::Stereo, "Stereo (Speakers)", nullptr, "2.0", "stereo", kStereoLabels,
      kStereoChannels, 2, 0x00000003u, 0x00000003u},
     {LAVOpenJocOutputPolicy::Layout51, "5.1", "5.1", "5.1", "5.1(side)", kLayout51Labels,
      kLayout51Channels, 6, 0x0000060fu, 0x0000060fu},

@@ -478,7 +478,7 @@ void TestStrictDeliveryPrecedesSampleAndStockFallbacks()
     const auto deliver = source.find("HRESULT CLAVAudio::Deliver(BufferDetails &buffer)");
     const auto strict_marker = source.find("const bool strict_openjoc = buffer.openjoc_contract != nullptr", deliver);
     const auto strict_branch = source.find("if (strict_openjoc)", strict_marker);
-    const auto orchestration = source.find("return DeliverLAVOpenJocStrictMediaType", strict_branch);
+    const auto orchestration = source.find("DeliverLAVOpenJocStrictMediaType(", strict_branch);
     const auto stock_fallback = source.find("retry_qa:", strict_branch);
     assert(deliver != std::string::npos && strict_marker != std::string::npos && strict_branch != std::string::npos);
     assert(orchestration != std::string::npos && stock_fallback != std::string::npos && orchestration < stock_fallback);

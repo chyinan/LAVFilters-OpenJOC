@@ -68,6 +68,9 @@
     <ClCompile Include="OpenJocCandidate.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="OpenJocDiagnostic.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -122,6 +125,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="OpenJocCandidate.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OpenJocDiagnostic.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

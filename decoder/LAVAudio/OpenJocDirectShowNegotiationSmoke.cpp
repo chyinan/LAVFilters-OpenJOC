@@ -7,6 +7,8 @@
 // CONTROLLED_SINK_COMPLETE proves this exact private graph and capture sink;
 // only a later named-renderer run may classify renderer support.
 
+// pattern: Mixed (needs refactoring)
+
 #include <windows.h>
 
 #include "streams.h"
@@ -60,6 +62,8 @@ constexpr GUID kDolbyDdPlus = {
     0xa7fb87af, 0x2d02, 0x42fb, {0xa4, 0xd4, 0x05, 0xcd, 0x93, 0x84, 0x3b, 0xdd}};
 constexpr GUID kOpenJocDiagnosticsIidOracle = {
     0x16c95ff3, 0x9d9e, 0x4282, {0xaf, 0x61, 0xe6, 0xc7, 0xaf, 0x32, 0x44, 0x6b}};
+constexpr GUID kOpenJocDiagnostics2IidOracle = {
+    0xa9c07b6a, 0x4c8f, 0x4b6a, {0x9d, 0x1f, 0x6c, 0x9d, 0x3e, 0x5b, 0x7a, 0x20}};
 constexpr GUID kLavAudioStatusPage = {
     0x20ed4a03, 0x6afd, 0x4fd9, {0x98, 0x0b, 0x2f, 0x61, 0x43, 0xaa, 0x08, 0x92}};
 constexpr wchar_t kRuntimeManifestName[] = L"OpenJocRuntimeIdentity.tsv";
@@ -2631,13 +2635,18 @@ bool SameControllingUnknown(IUnknown *left, IUnknown *right)
 bool TestDiagnosticsAbi(IBaseFilter *audio_filter, const bool target_lane)
 {
     if (!audio_filter || !IsEqualGUID(__uuidof(ILAVOpenJocDiagnostics),
-                                      kOpenJocDiagnosticsIidOracle))
+                                      kOpenJocDiagnosticsIidOracle) ||
+        !IsEqualGUID(__uuidof(ILAVOpenJocDiagnostics2),
+                     kOpenJocDiagnostics2IidOracle))
         return false;
     ComOwner<ILAVOpenJocDiagnostics> diagnostics;
     const HRESULT query = audio_filter->QueryInterface(
         __uuidof(ILAVOpenJocDiagnostics), reinterpret_cast<void **>(diagnostics.put()));
+    ComOwner<ILAVOpenJocDiagnostics2> diagnostics2;
+    const HRESULT query2 = audio_filter->QueryInterface(
+        __uuidof(ILAVOpenJocDiagnostics2), reinterpret_cast<void **>(diagnostics2.put()));
     if (!target_lane)
-        return query == E_NOINTERFACE && !diagnostics;
+        return query == E_NOINTERFACE && !diagnostics && query2 == E_NOINTERFACE && !diagnostics2;
     if (query != S_OK || !diagnostics ||
         !SameControllingUnknown(audio_filter, diagnostics.get()))
         return false;
@@ -2646,8 +2655,20 @@ bool TestDiagnosticsAbi(IBaseFilter *audio_filter, const bool target_lane)
     if (diagnostics->GetOpenJocInputByteCounts(nullptr, &stream) != E_POINTER || stream != 1 ||
         diagnostics->GetOpenJocInputByteCounts(&classifier, nullptr) != E_POINTER || classifier != 1)
         return false;
-    return diagnostics->GetOpenJocInputByteCounts(&classifier, &stream) == S_OK &&
-           classifier == 0 && stream == 0;
+    if (diagnostics->GetOpenJocInputByteCounts(&classifier, &stream) != S_OK ||
+        classifier != 0 || stream != 0 || query2 != S_OK || !diagnostics2 ||
+        !SameControllingUnknown(audio_filter, diagnostics2.get()))
+        return false;
+
+    LAVOpenJocDiagnosticReason reason = LAVOpenJocDiagnosticMalformedJocMetadata;
+    BOOL warning = TRUE;
+    BOOL failure_au_known = TRUE;
+    ULONGLONG failure_au = 99;
+    WCHAR detail[32] = L"stale";
+    return diagnostics2->GetOpenJocPlaybackDiagnostics(
+               &reason, &warning, &failure_au_known, &failure_au, detail, ARRAYSIZE(detail)) == S_OK &&
+           reason == LAVOpenJocDiagnosticNone && warning == FALSE &&
+           failure_au_known == FALSE && failure_au == 0 && detail[0] == L'\0';
 }
 
 std::wstring WindowText(HWND window)
