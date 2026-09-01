@@ -131,8 +131,8 @@ BEGIN
     GROUPBOX        "Output",IDC_STATIC,7,7,355,65
     LTEXT           "OpenJOC output:",IDC_LBL_OPENJOC_OUTPUT_POLICY,17,24,66,8
     COMBOBOX        IDC_OPENJOC_OUTPUT_POLICY,91,21,118,68,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Choose a layout supported by your downstream audio renderer/device.",IDC_LBL_OPENJOC_OUTPUT_GUIDANCE,17,37,335,8
-    LTEXT           "Selecting an unsupported multichannel layout may cause playback failure, stuttering, or downstream conversion. For stereo headphones or 2.0 speakers, use Stereo.",IDC_LBL_OPENJOC_OUTPUT_COMPAT,17,47,335,17
+    LTEXT           "Speakers: choose the layout matching your playback system. Headphones: choose Binaural for HRTF spatial rendering.",IDC_LBL_OPENJOC_OUTPUT_GUIDANCE,17,37,335,17
+    LTEXT           "Stereo (Speakers) and Binaural (Headphones) both output 2-channel PCM with different rendering semantics.",IDC_LBL_OPENJOC_OUTPUT_COMPAT,17,54,335,17
     GROUPBOX        "Program Level",IDC_STATIC,7,77,355,74
     LTEXT           "Dialnorm:",IDC_LBL_OPENJOC_DIALNORM_POLICY,17,95,66,8
     COMBOBOX        IDC_OPENJOC_DIALNORM_POLICY,91,92,144,36,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP

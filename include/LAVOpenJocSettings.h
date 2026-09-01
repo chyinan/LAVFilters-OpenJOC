@@ -22,6 +22,7 @@ enum class LAVOpenJocOutputPolicy : std::uint32_t
     Layout514 = 4,
     Layout712 = 5,
     Layout714 = 6,
+    Binaural = 7,
 };
 
 static_assert(sizeof(LAVOpenJocOutputPolicy) == sizeof(std::uint32_t));

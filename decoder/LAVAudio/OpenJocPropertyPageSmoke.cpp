@@ -382,7 +382,8 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
         LAVOpenJocOutputPolicy policy;
         const wchar_t *label;
     } expected_policies[] = {
-        {LAVOpenJocOutputPolicy::Stereo, L"Stereo"},
+        {LAVOpenJocOutputPolicy::Stereo, L"Stereo (Speakers)"},
+        {LAVOpenJocOutputPolicy::Binaural, L"Binaural (Headphones)"},
         {LAVOpenJocOutputPolicy::Layout51, L"5.1"},
         {LAVOpenJocOutputPolicy::Layout71, L"7.1"},
         {LAVOpenJocOutputPolicy::Layout512, L"5.1.2"},
@@ -430,11 +431,11 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     HWND dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
     if (!combo || !output_guidance || !output_compat || !dialnorm ||
         WindowText(output_guidance) !=
-            L"Choose a layout supported by your downstream audio renderer/device." ||
+            L"Speakers: choose the layout matching your playback system. Headphones: choose Binaural for HRTF spatial rendering." ||
         WindowText(output_compat) !=
-            L"Selecting an unsupported multichannel layout may cause playback failure, stuttering, or downstream conversion. For stereo headphones or 2.0 speakers, use Stereo." ||
+            L"Stereo (Speakers) and Binaural (Headphones) both output 2-channel PCM with different rendering semantics." ||
         SendMessageW(combo, CB_GETCOUNT, 0, 0) != std::size(expected_policies) ||
-        SendMessageW(combo, CB_GETCURSEL, 0, 0) != 6 ||
+        SendMessageW(combo, CB_GETCURSEL, 0, 0) != 7 ||
         SendMessageW(dialnorm, CB_GETCOUNT, 0, 0) != std::size(expected_dialnorm) ||
         SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0)
         hr = E_UNEXPECTED;
@@ -494,7 +495,7 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     const bool apply_active = SUCCEEDED(hr);
     combo = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputPolicyControl) : nullptr;
     dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
-    if (!combo || !dialnorm || SendMessageW(combo, CB_GETCURSEL, 0, 0) != 6 ||
+    if (!combo || !dialnorm || SendMessageW(combo, CB_GETCURSEL, 0, 0) != 7 ||
         SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0)
         hr = E_UNEXPECTED;
     if (SUCCEEDED(hr) &&

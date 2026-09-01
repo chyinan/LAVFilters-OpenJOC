@@ -263,6 +263,15 @@ struct LAVOpenJocDecoder::Impl
             config.render_mode = OPENJOC_RENDER_STEREO;
             config.speaker_layout = nullptr;
         }
+        else if (contract->policy == LAVOpenJocOutputPolicy::Binaural)
+        {
+            config.render_mode = OPENJOC_RENDER_BINAURAL;
+            config.speaker_layout = contract->abi_preset_name;
+            config.virtual_layout = nullptr;
+            config.sofa_data = nullptr;
+            config.sofa_size = 0;
+            config.lfe_policy = OPENJOC_LFE_EXCLUDE;
+        }
         else
         {
             if (!contract->abi_preset_name)

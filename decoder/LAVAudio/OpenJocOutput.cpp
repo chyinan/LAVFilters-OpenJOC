@@ -15,6 +15,8 @@ namespace
 {
 constexpr const char *kStereoLabels[] = {"FL", "FR"};
 constexpr AVChannel kStereoChannels[] = {AV_CHAN_FRONT_LEFT, AV_CHAN_FRONT_RIGHT};
+constexpr const char *kBinauralLabels[] = {"Left Ear", "Right Ear"};
+constexpr const char *kBinauralFrameLabels[] = {"BIL", "BIR"};
 
 constexpr const char *kLayout51Labels[] = {"FL", "FR", "FC", "LFE", "Ls", "Rs"};
 constexpr AVChannel kLayout51Channels[] = {AV_CHAN_FRONT_LEFT, AV_CHAN_FRONT_RIGHT, AV_CHAN_FRONT_CENTER,
@@ -67,6 +69,8 @@ constexpr std::array<LAVOpenJocOutputContract, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT
      kLayout712Channels, 10, 0x0000563fu, 0x0000563fu},
     {LAVOpenJocOutputPolicy::Layout714, "7.1.4", "7.1.4", "7.1.4", "7.1.4", kLayout714Labels,
      kLayout714Channels, 12, 0x0002d63fu, 0x0002d63fu},
+    {LAVOpenJocOutputPolicy::Binaural, "Binaural (Headphones)", "7.1.4", "binaural", "stereo",
+     kBinauralLabels, kStereoChannels, 2, 0x00000003u, 0x00000003u, kBinauralFrameLabels, "binaural"},
 }};
 
 constexpr std::uint64_t kMappedWindowsSpeakerBits = 0x0003ffffu;
@@ -110,6 +114,10 @@ AVChannel SemanticLabelToAvChannel(const char *label) noexcept
         return AV_CHAN_TOP_BACK_LEFT;
     if (std::strcmp(label, "TBR") == 0)
         return AV_CHAN_TOP_BACK_RIGHT;
+    if (std::strcmp(label, "Left Ear") == 0)
+        return AV_CHAN_FRONT_LEFT;
+    if (std::strcmp(label, "Right Ear") == 0)
+        return AV_CHAN_FRONT_RIGHT;
     return AV_CHAN_NONE;
 }
 
@@ -131,6 +139,14 @@ const char *AvChannelToFfmpegLabel(const AVChannel channel) noexcept
     case AV_CHAN_TOP_BACK_RIGHT: return "TBR";
     default: return nullptr;
     }
+}
+
+const char *FrameLabelForContract(const LAVOpenJocOutputContract &contract,
+                                  const std::uint32_t index) noexcept
+{
+    if (contract.frame_channel_labels)
+        return contract.frame_channel_labels[index];
+    return AvChannelToFfmpegLabel(contract.ordered_channels[index]);
 }
 
 bool IsCanonicalContractShape(const LAVOpenJocOutputContract &contract) noexcept
@@ -220,7 +236,10 @@ bool ValidateLAVOpenJocFrameMetadata(
     if (!IsCanonicalContractShape(contract) || !contract.ffmpeg_standard_layout_name ||
         sample_format != LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32 ||
         sample_rate != 48000 || channel_count != contract.channel_count || sample_count == 0 || !layout_name ||
-        std::strcmp(layout_name, contract.ffmpeg_standard_layout_name) != 0 || !channel_labels ||
+        std::strcmp(layout_name, contract.openjoc_frame_layout_name
+                                  ? contract.openjoc_frame_layout_name
+                                  : contract.ffmpeg_standard_layout_name) != 0 ||
+        !channel_labels ||
         channel_label_count != contract.channel_count)
     {
         return false;
@@ -229,7 +248,7 @@ bool ValidateLAVOpenJocFrameMetadata(
     for (std::uint32_t index = 0; index < contract.channel_count; ++index)
     {
         const char *label = channel_labels[index];
-        const char *expected_label = AvChannelToFfmpegLabel(contract.ordered_channels[index]);
+        const char *expected_label = FrameLabelForContract(contract, index);
         if (!label || !expected_label || std::strcmp(label, expected_label) != 0)
         {
             return false;

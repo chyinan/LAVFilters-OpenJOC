@@ -451,9 +451,18 @@ bool TestDefaultAndSetters(const FilterModule &module)
         return false;
     }
 
-    for (std::uint32_t value = 0; value <= 6; ++value)
+    constexpr LAVOpenJocOutputPolicy policies[] = {
+        LAVOpenJocOutputPolicy::Stereo,
+        LAVOpenJocOutputPolicy::Binaural,
+        LAVOpenJocOutputPolicy::Layout51,
+        LAVOpenJocOutputPolicy::Layout71,
+        LAVOpenJocOutputPolicy::Layout512,
+        LAVOpenJocOutputPolicy::Layout514,
+        LAVOpenJocOutputPolicy::Layout712,
+        LAVOpenJocOutputPolicy::Layout714,
+    };
+    for (const auto policy : policies)
     {
-        const auto policy = static_cast<LAVOpenJocOutputPolicy>(value);
         if (settings->SetOutputPolicy(policy) != S_OK ||
             settings->GetOutputPolicy(&actual) != S_OK || actual != policy)
         {
@@ -493,7 +502,7 @@ bool TestPersistenceMatrix(const FilterModule &module)
         DWORD version;
         DWORD policy;
     };
-    constexpr Case fallback_cases[] = {{0, 6}, {2, 6}, {1, 7}, {1, 0xffffffffu}};
+    constexpr Case fallback_cases[] = {{0, 6}, {2, 6}, {1, 8}, {1, 0xffffffffu}};
     for (const auto &test : fallback_cases)
     {
         if (!ResetPolicyKey() || !WriteDword(kPolicyVersionValue, test.version) ||

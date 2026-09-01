@@ -75,7 +75,8 @@ static_assert(static_cast<std::uint32_t>(LAVOpenJocOutputPolicy::Layout512) == 3
 static_assert(static_cast<std::uint32_t>(LAVOpenJocOutputPolicy::Layout514) == 4);
 static_assert(static_cast<std::uint32_t>(LAVOpenJocOutputPolicy::Layout712) == 5);
 static_assert(static_cast<std::uint32_t>(LAVOpenJocOutputPolicy::Layout714) == 6);
-static_assert(LAV_OPENJOC_OUTPUT_CONTRACT_COUNT == 7);
+static_assert(static_cast<std::uint32_t>(LAVOpenJocOutputPolicy::Binaural) == 7);
+static_assert(LAV_OPENJOC_OUTPUT_CONTRACT_COUNT == 8);
 static_assert(!HasAutoPolicy<LAVOpenJocOutputPolicy>::value);
 static_assert(!HasLayout524Policy<LAVOpenJocOutputPolicy>::value);
 static_assert(!HasLayout716Policy<LAVOpenJocOutputPolicy>::value);
@@ -176,6 +177,15 @@ const std::array<ExpectedContract, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT> kExpectedC
       AV_CHAN_TOP_BACK_RIGHT},
      12,
      0x0002d63fu},
+    {LAVOpenJocOutputPolicy::Binaural,
+     "Binaural (Headphones)",
+     "7.1.4",
+     "binaural",
+     "stereo",
+     {"Left Ear", "Right Ear"},
+     {AV_CHAN_FRONT_LEFT, AV_CHAN_FRONT_RIGHT},
+     2,
+     0x00000003u},
 }};
 
 std::uint32_t popcount(std::uint64_t value)
@@ -220,7 +230,37 @@ void test_schema_and_wire_values_are_fixed()
     assert(static_cast<std::uint32_t>(LAVOpenJocOutputPolicy::Layout514) == 4);
     assert(static_cast<std::uint32_t>(LAVOpenJocOutputPolicy::Layout712) == 5);
     assert(static_cast<std::uint32_t>(LAVOpenJocOutputPolicy::Layout714) == 6);
-    assert(LAV_OPENJOC_OUTPUT_CONTRACT_COUNT == 7);
+    assert(static_cast<std::uint32_t>(LAVOpenJocOutputPolicy::Binaural) == 7);
+    assert(LAV_OPENJOC_OUTPUT_CONTRACT_COUNT == 8);
+}
+
+void test_binaural_uses_ear_labels_with_stereo_transport()
+{
+    const LAVOpenJocOutputContract *contract =
+        FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Binaural);
+    assert(contract != nullptr);
+    assert(std::strcmp(contract->property_page_label, "Binaural (Headphones)") == 0);
+    assert(std::strcmp(contract->abi_preset_name, "7.1.4") == 0);
+    assert(contract->channel_count == 2);
+    assert(contract->ffmpeg_channel_mask == 0x00000003u);
+    assert(contract->frame_channel_labels != nullptr);
+    assert(std::strcmp(contract->frame_channel_labels[0], "BIL") == 0);
+    assert(std::strcmp(contract->frame_channel_labels[1], "BIR") == 0);
+
+    constexpr std::size_t sample_count = 64;
+    const char *frame_labels[] = {"BIL", "BIR"};
+    std::size_t element_count = 0;
+    std::size_t byte_count = 0;
+    assert(ValidateLAVOpenJocFrameMetadata(
+        *contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, 2, sample_count,
+        sample_count * 2, "binaural", frame_labels, 2, &element_count, &byte_count));
+    assert(element_count == sample_count * 2);
+    assert(byte_count == sample_count * 2 * sizeof(float));
+
+    const char *physical_labels[] = {"FL", "FR"};
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        *contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, 2, sample_count,
+        sample_count * 2, "binaural", physical_labels, 2, nullptr, nullptr));
 }
 
 void test_every_policy_has_the_exact_canonical_contract()
@@ -508,6 +548,7 @@ void test_decode_openjoc_source_cannot_restore_count_default_or_eight_channel_ca
 int wmain()
 {
     test_schema_and_wire_values_are_fixed();
+    test_binaural_uses_ear_labels_with_stereo_transport();
     test_every_policy_has_the_exact_canonical_contract();
     test_masks_and_orders_are_exact_native_windows_order();
     test_multichannel_candidates_have_one_logical_lfe();

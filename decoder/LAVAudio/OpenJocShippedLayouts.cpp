@@ -15,6 +15,7 @@ namespace
 constexpr std::array<LAVOpenJocOutputPolicy, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT>
     kShippedOutputPolicies = {
     LAVOpenJocOutputPolicy::Stereo,
+    LAVOpenJocOutputPolicy::Binaural,
     LAVOpenJocOutputPolicy::Layout51,
     LAVOpenJocOutputPolicy::Layout71,
     LAVOpenJocOutputPolicy::Layout512,

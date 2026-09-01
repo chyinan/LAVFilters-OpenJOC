@@ -11,7 +11,8 @@ This repository is a downstream fork of [Nevcairiel/LAVFilters](https://github.c
 - Malformed or unsupported streams remain fail-closed; no user toggle is required
 - E-AC-3 passthrough: existing LAV bitstream path takes precedence
 - OpenJOC DirectShow output in this integration: explicit fixed 48 kHz IEEE
-  float PCM policies for Stereo, 5.1, 7.1, 5.1.2, 5.1.4, 7.1.2, and 7.1.4
+  float PCM policies for Stereo (Speakers), Binaural (Headphones), 5.1, 7.1,
+  5.1.2, 5.1.4, 7.1.2, and 7.1.4
 - Negotiation: one exact semantic `WAVEFORMATEXTENSIBLE` proposal per selected
   policy, with no fallback mask or alternate proposal
 - Automatic layout selection: `AUTO_NOT_RELIABLE`; Stereo is the default
@@ -23,6 +24,23 @@ This repository is a downstream fork of [Nevcairiel/LAVFilters](https://github.c
 This downstream project is not endorsed by Nevcairiel, FFmpeg, PotPlayer,
 Dolby, Microsoft, or SADIE. See `docs/openjoc/` and the upstream `COPYING`
 file for provenance and applicable license information.
+
+---
+
+## Playback output UX
+
+**Stereo (Speakers)** is conventional two-channel speaker playback without
+HRTF processing. **Binaural (Headphones)** renders the selected OpenJOC
+virtual speaker field through the built-in SADIE II D1 KU100 HRTF and emits
+two-channel headphone PCM. Both policies use ordinary two-channel
+WAVEFORMATEXTENSIBLE output, but their rendering semantics are different.
+
+The output policy is an explicit user choice. The filter does not detect
+headphones, speakers, endpoints, Bluetooth devices, HDMI capabilities, or
+USB DACs. Speaker layouts must match a supported downstream layout. The
+built-in HRTF is generic and uses the embedded offline resource documented in
+the OpenJOC third-party notices; this integration does not add custom SOFA,
+head tracking, or personalized HRTF controls.
 
 ---
 

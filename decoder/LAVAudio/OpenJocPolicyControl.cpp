@@ -310,7 +310,7 @@ bool ReportAndVerify(const PrivateComModule &module, const wchar_t *operation,
     const bool exact_persistent =
         IsExactDword(version, LAV_OPENJOC_OUTPUT_POLICY_SCHEMA_VERSION) &&
         policy.status == ERROR_SUCCESS && policy.type == REG_DWORD &&
-        policy.size == sizeof(DWORD) && policy.value <= 6 &&
+        policy.size == sizeof(DWORD) && policy.value < LAV_OPENJOC_OUTPUT_CONTRACT_COUNT &&
         static_cast<std::uint32_t>(instance) == policy.value;
     const bool expected_persistent =
         expected && get_status == S_OK && instance == *expected &&
@@ -361,7 +361,7 @@ bool ParsePolicy(const wchar_t *text, LAVOpenJocOutputPolicy *policy)
         return false;
     wchar_t *end = nullptr;
     const unsigned long value = wcstoul(text, &end, 10);
-    if (!end || *end != L'\0' || value > 6)
+    if (!end || *end != L'\0' || value >= LAV_OPENJOC_OUTPUT_CONTRACT_COUNT)
         return false;
     *policy = static_cast<LAVOpenJocOutputPolicy>(value);
     return true;
@@ -461,7 +461,7 @@ int RunSelfTest(const wchar_t *module_path)
                           static_cast<unsigned long>(module.status()));
             result = 1;
         }
-        for (std::uint32_t value = 0; result == 0 && value <= 6; ++value)
+        for (std::uint32_t value = 0; result == 0 && value < LAV_OPENJOC_OUTPUT_CONTRACT_COUNT; ++value)
         {
             const auto policy = static_cast<LAVOpenJocOutputPolicy>(value);
             const HRESULT set_status = SetPersistent(module, policy);
@@ -483,9 +483,10 @@ int RunSelfTest(const wchar_t *module_path)
     if (!(real_before == real_after))
         result = 1;
     if (result == 0)
-        std::wprintf(L"POLICY_CONTROL_SELF_TEST_COMPLETE policies=7 "
+        std::wprintf(L"POLICY_CONTROL_SELF_TEST_COMPLETE policies=%zu "
                      L"registry_override_restored=1 temporary_tree_absent=1 "
-                     L"real_policy_values_restored=1\n");
+                     L"real_policy_values_restored=1\n",
+                     static_cast<std::size_t>(LAV_OPENJOC_OUTPUT_CONTRACT_COUNT));
     return result;
 }
 } // namespace
@@ -525,7 +526,7 @@ int wmain(const int argc, wchar_t **argv)
             LAVOpenJocOutputPolicy policy = LAVOpenJocOutputPolicy::Stereo;
             if (!ParsePolicy(argv[2], &policy))
             {
-                std::fwprintf(stderr, L"invalid policy: expected integer 0 through 6\n");
+                std::fwprintf(stderr, L"invalid policy: expected integer 0 through 7\n");
                 result = 64;
             }
             else
@@ -544,7 +545,7 @@ int wmain(const int argc, wchar_t **argv)
     else
     {
         std::fwprintf(stderr,
-                      L"usage: OpenJocPolicyControl.exe --set-persistent <0..6> "
+                      L"usage: OpenJocPolicyControl.exe --set-persistent <0..7> "
                       L"<absolute-target-LAVAudio.ax>\n"
                       L"   or: OpenJocPolicyControl.exe --get <absolute-target-LAVAudio.ax>\n"
                       L"   or: OpenJocPolicyControl.exe --self-test "

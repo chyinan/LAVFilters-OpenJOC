@@ -28,7 +28,8 @@ static_assert(std::is_same_v<decltype(LAVOpenJocFrame{}.output_contract),
                              const LAVOpenJocOutputContract *>);
 
 static constexpr std::array<LAVOpenJocOutputPolicy, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT> kPolicies = {
-    LAVOpenJocOutputPolicy::Stereo,   LAVOpenJocOutputPolicy::Layout51,
+    LAVOpenJocOutputPolicy::Stereo,   LAVOpenJocOutputPolicy::Binaural,
+    LAVOpenJocOutputPolicy::Layout51,
     LAVOpenJocOutputPolicy::Layout71, LAVOpenJocOutputPolicy::Layout512,
     LAVOpenJocOutputPolicy::Layout514, LAVOpenJocOutputPolicy::Layout712,
     LAVOpenJocOutputPolicy::Layout714,
@@ -104,6 +105,15 @@ static std::size_t decode_policy(const std::vector<unsigned char> &bytes,
     assert(decoder.StreamInputBytes() == bytes.size());
     assert(decoder.ClassifierInputBytes() > 0);
     assert(decoder.ClassifierInputBytes() <= LAVOpenJocAdmission::MaxRetainedBytes);
+#if defined(LAV_OPENJOC_TESTING)
+    if (policy == LAVOpenJocOutputPolicy::Binaural)
+    {
+        const char *descriptor = decoder.ConfigDescriptorForTesting();
+        assert(descriptor != nullptr);
+        assert(std::strstr(descriptor, "render_mode=binaural") != nullptr);
+        assert(std::strstr(descriptor, "binaural_hrtf_source=builtin:SADIE_II_D1_KU100_v2-2") != nullptr);
+    }
+#endif
     const std::size_t frame_count = assert_frames_match_contract(decoder, contract);
     std::printf("policy=%s openjoc_layout=%s api_layout=%s channels=%u mask=0x%08x frames=%zu\n",
                 contract->property_page_label, contract->openjoc_layout_name,

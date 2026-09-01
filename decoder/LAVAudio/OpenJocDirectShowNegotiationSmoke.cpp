@@ -3052,8 +3052,7 @@ bool WriteTask3CaptureEvidence(const std::filesystem::path &path,
 {
     if (!path.is_absolute() || std::filesystem::exists(path) ||
         !FixtureIdentityMatches(fixture) ||
-        policy < LAVOpenJocOutputPolicy::Stereo ||
-        policy > LAVOpenJocOutputPolicy::Layout714)
+        static_cast<std::uint32_t>(policy) >= LAV_OPENJOC_OUTPUT_CONTRACT_COUNT)
         return false;
     const CMediaType output_type = sink.expected_type();
     const std::string source = SerializeMediaType(source_type);
@@ -3301,8 +3300,7 @@ bool ParseTask3Evidence(const std::filesystem::path &path, const bool expect_tar
                         const bool expected_passthrough, ParsedTask3Evidence *parsed)
 {
     if (!parsed || !path.is_absolute() ||
-        expected_policy < LAVOpenJocOutputPolicy::Stereo ||
-        expected_policy > LAVOpenJocOutputPolicy::Layout714)
+        static_cast<std::uint32_t>(expected_policy) >= LAV_OPENJOC_OUTPUT_CONTRACT_COUNT)
         return false;
     const DWORD attributes = GetFileAttributesW(path.c_str());
     std::string payload;
@@ -4417,7 +4415,8 @@ HRESULT RunSameFilterPolicyRenegotiation(const PrivateComModule &audio,
                                          const FixtureIdentity &fixture)
 {
     constexpr std::array<LAVOpenJocOutputPolicy, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT> policies = {
-        LAVOpenJocOutputPolicy::Stereo, LAVOpenJocOutputPolicy::Layout51,
+        LAVOpenJocOutputPolicy::Stereo, LAVOpenJocOutputPolicy::Binaural,
+        LAVOpenJocOutputPolicy::Layout51,
         LAVOpenJocOutputPolicy::Layout71, LAVOpenJocOutputPolicy::Layout512,
         LAVOpenJocOutputPolicy::Layout514, LAVOpenJocOutputPolicy::Layout712,
         LAVOpenJocOutputPolicy::Layout714};
@@ -4635,7 +4634,8 @@ HRESULT RunOpenJocLifecycleMatrix(const std::filesystem::path &runtime_dir,
         !BuildFixtureIdentity(fixture_dir / L"ordinary.fingerprint.eac3", &ordinary))
         return E_INVALIDARG;
     constexpr std::array<LAVOpenJocOutputPolicy, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT> policies = {
-        LAVOpenJocOutputPolicy::Stereo, LAVOpenJocOutputPolicy::Layout51,
+        LAVOpenJocOutputPolicy::Stereo, LAVOpenJocOutputPolicy::Binaural,
+        LAVOpenJocOutputPolicy::Layout51,
         LAVOpenJocOutputPolicy::Layout71, LAVOpenJocOutputPolicy::Layout512,
         LAVOpenJocOutputPolicy::Layout514, LAVOpenJocOutputPolicy::Layout712,
         LAVOpenJocOutputPolicy::Layout714};
@@ -5110,7 +5110,8 @@ HRESULT RunControlledSinkMatrix(const std::filesystem::path &runtime_dir,
         return E_UNEXPECTED;
 
     constexpr std::array<LAVOpenJocOutputPolicy, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT> policies = {
-        LAVOpenJocOutputPolicy::Stereo,   LAVOpenJocOutputPolicy::Layout51,
+        LAVOpenJocOutputPolicy::Stereo,   LAVOpenJocOutputPolicy::Binaural,
+        LAVOpenJocOutputPolicy::Layout51,
         LAVOpenJocOutputPolicy::Layout71, LAVOpenJocOutputPolicy::Layout512,
         LAVOpenJocOutputPolicy::Layout514, LAVOpenJocOutputPolicy::Layout712,
         LAVOpenJocOutputPolicy::Layout714};
@@ -7456,7 +7457,8 @@ HRESULT WriteAudioEndpointCapabilities(const wchar_t *endpoint_id,
              << "\n";
 
     constexpr std::array<LAVOpenJocOutputPolicy, LAV_OPENJOC_OUTPUT_CONTRACT_COUNT> policies = {
-        LAVOpenJocOutputPolicy::Stereo,   LAVOpenJocOutputPolicy::Layout51,
+        LAVOpenJocOutputPolicy::Stereo,   LAVOpenJocOutputPolicy::Binaural,
+        LAVOpenJocOutputPolicy::Layout51,
         LAVOpenJocOutputPolicy::Layout71, LAVOpenJocOutputPolicy::Layout512,
         LAVOpenJocOutputPolicy::Layout514, LAVOpenJocOutputPolicy::Layout712,
         LAVOpenJocOutputPolicy::Layout714};

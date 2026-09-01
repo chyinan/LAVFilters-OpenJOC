@@ -17,7 +17,7 @@ extern "C"
 #include <cstddef>
 #include <cstdint>
 
-inline constexpr std::size_t LAV_OPENJOC_OUTPUT_CONTRACT_COUNT = 7;
+inline constexpr std::size_t LAV_OPENJOC_OUTPUT_CONTRACT_COUNT = 8;
 inline constexpr std::uint32_t LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32 = 1;
 
 struct LAVOpenJocOutputContract
@@ -32,6 +32,8 @@ struct LAVOpenJocOutputContract
     std::uint32_t channel_count;
     std::uint64_t ffmpeg_channel_mask;
     std::uint32_t windows_channel_mask;
+    const char *const *frame_channel_labels;
+    const char *openjoc_frame_layout_name;
 };
 
 [[nodiscard]] const LAVOpenJocOutputContract *
