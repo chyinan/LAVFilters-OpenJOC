@@ -60,6 +60,24 @@ void test_details_are_bounded_and_single_line()
            LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES);
 }
 
+std::size_t bounded_detail_length(const char *detail)
+{
+    return BoundLAVOpenJocDiagnosticDetail(detail).size();
+}
+
+bool try_bounded_detail_length(const char *detail, std::size_t *length)
+{
+    __try
+    {
+        *length = bounded_detail_length(detail);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
+
 void test_bounded_detail_does_not_read_past_an_unterminated_buffer()
 {
     SYSTEM_INFO system_info{};
@@ -77,16 +95,9 @@ void test_bounded_detail_does_not_read_past_an_unterminated_buffer()
                                                 PAGE_NOACCESS, &previous_protection);
     assert(protected_guard != FALSE);
 
-    bool completed = false;
-    __try
-    {
-        const std::string bounded = BoundLAVOpenJocDiagnosticDetail(detail);
-        completed = bounded.size() == LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER)
-    {
-        completed = false;
-    }
+    std::size_t bounded_length = 0;
+    const bool completed = try_bounded_detail_length(detail, &bounded_length) &&
+                           bounded_length == LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES;
 
     VirtualFree(region, 0, MEM_RELEASE);
     assert(completed);
