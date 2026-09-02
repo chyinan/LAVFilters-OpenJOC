@@ -2,8 +2,8 @@
   "schema_version": 1,
   "copyright": "2026 OpenJOC contributors",
   "license": "GPL-2.0-or-later",
-  "release": "openjoc-0.15.0",
-  "census_date": "2026-09-01",
+  "release": "openjoc-0.16.0",
+  "census_date": "2026-09-02",
   "lav_upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
   "microsoft_sample_revision": "d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c",
   "mpc_hc_evidence_revision": "dcbf6bf36a37438f8eb25536aafe419c835fcd1c",
@@ -13,7 +13,7 @@
       "common/DSUtilLite/DSUtilLite.vcxproj",
       "common/baseclasses/baseclasses.vcxproj"
     ],
-    "compiled_input_count": 65,
+    "compiled_input_count": 66,
     "method": "All ClCompile Include entries in the three projects"
   },
   "compiled_inputs": [
@@ -83,7 +83,7 @@
       "upstream_revision": "fefb6987994ed56e4525e8a125f5fbb53707bc52",
       "original_license_evidence": "explicit per-file GPL v2-or-later notice",
       "lav_modification_state": "upstream compilation unit",
-      "openjoc_modification_state": "unmodified",
+      "openjoc_modification_state": "modified for openjoc-0.16.0; dated notice present",
       "resulting_classification": "GPL-2.0-or-later",
       "confidence": "high"
     },
@@ -108,22 +108,22 @@
       "confidence": "high"
     },
     {
-      "source_path": "decoder/LAVAudio/OpenJocBinauralSettings.h",
-      "origin": "OpenJOC downstream integration",
-      "upstream_revision": "not-applicable (new downstream file)",
-      "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
-      "lav_modification_state": "not-applicable",
-      "openjoc_modification_state": "new for openjoc-0.15.0",
-      "resulting_classification": "GPL-2.0-or-later",
-      "confidence": "high"
-    },
-    {
       "source_path": "decoder/LAVAudio/OpenJocDecoder.cpp",
       "origin": "OpenJOC downstream integration",
       "upstream_revision": "not-applicable (new downstream file)",
       "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
       "lav_modification_state": "not-applicable",
       "openjoc_modification_state": "new for openjoc-0.10.0",
+      "resulting_classification": "GPL-2.0-or-later",
+      "confidence": "high"
+    },
+    {
+      "source_path": "decoder/LAVAudio/OpenJocDiagnostic.cpp",
+      "origin": "OpenJOC downstream integration",
+      "upstream_revision": "not-applicable (new downstream file)",
+      "original_license_evidence": "file SPDX header and OpenJOC contributor copyright",
+      "lav_modification_state": "not-applicable",
+      "openjoc_modification_state": "new for openjoc-0.16.0",
       "resulting_classification": "GPL-2.0-or-later",
       "confidence": "high"
     },
@@ -673,12 +673,28 @@
       "upstream_revision": "Microsoft Windows-classic-samples d59e5f1dc9c768615e4e1ab1f0f009e6a3ed747c; LAV import 61628549ed7f3b8ed4aa2596767659a5b698e4c8",
       "original_license_evidence": "Microsoft copyright header plus MIT LICENSE at the official Windows-classic-samples repository root",
       "lav_modification_state": "modified in LAV lineage relative to the current Microsoft sample",
-      "openjoc_modification_state": "unmodified",
+      "openjoc_modification_state": "modified for openjoc-0.16.0; dated notice present",
       "resulting_classification": "MIT AND GPL-2.0-or-later",
       "confidence": "medium-high"
     }
   ],
   "modified_upstream_files": [
+    {
+      "file": "common/baseclasses/wxutil.cpp",
+      "upstream_status": "tracked Microsoft DirectShow Base Classes source imported by LAV",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.16.0 on 2026-09-02",
+      "original_license": "MIT sample license with LAV GPL-2.0-or-later lineage",
+      "modification_notice_present": true,
+      "final_license_classification": "MIT AND GPL-2.0-or-later"
+    },
+    {
+      "file": "common/baseclasses/wxutil.h",
+      "upstream_status": "tracked Microsoft DirectShow Base Classes header imported by LAV",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.16.0 on 2026-09-02",
+      "original_license": "MIT sample license with LAV GPL-2.0-or-later lineage",
+      "modification_notice_present": true,
+      "final_license_classification": "MIT AND GPL-2.0-or-later"
+    },
     {
       "file": "common/DSUtilLite/growarray.h",
       "upstream_status": "tracked LAV Filters upstream file",
@@ -731,6 +747,14 @@
       "file": "decoder/LAVAudio/LAVAudio.h",
       "upstream_status": "tracked LAV Filters upstream file",
       "modified_status": "OpenJOC downstream modification for openjoc-0.10.0 on 2026-08-22",
+      "original_license": "GPL-2.0-or-later explicit per-file notice",
+      "modification_notice_present": true,
+      "final_license_classification": "GPL-2.0-or-later"
+    },
+    {
+      "file": "decoder/LAVAudio/Media.cpp",
+      "upstream_status": "tracked LAV Filters upstream file",
+      "modified_status": "OpenJOC downstream modification for openjoc-0.16.0 on 2026-09-02",
       "original_license": "GPL-2.0-or-later explicit per-file notice",
       "modification_notice_present": true,
       "final_license_classification": "GPL-2.0-or-later"

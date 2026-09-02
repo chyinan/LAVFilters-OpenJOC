@@ -7,6 +7,9 @@
 // Copyright (c) 1992-2001 Microsoft Corporation.  All rights reserved.
 //------------------------------------------------------------------------------
 
+// OpenJOC downstream modification (openjoc-0.16.0, 2026-09-02):
+// provide non-blocking critical-section acquisition for status/UI reads.
+
 #ifndef __WXUTIL__
 #define __WXUTIL__
 

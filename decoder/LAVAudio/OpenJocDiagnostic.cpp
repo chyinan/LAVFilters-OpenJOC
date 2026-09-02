@@ -7,7 +7,6 @@
 
 #include "OpenJocDiagnostic.h"
 
-#include <algorithm>
 #include <cctype>
 #include <string_view>
 
@@ -83,12 +82,12 @@ std::string BoundLAVOpenJocDiagnosticDetail(const char *detail)
         return {};
 
     std::string result;
-    result.reserve(std::min<std::size_t>(
-        std::char_traits<char>::length(detail), LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES));
-    for (const char *cursor = detail;
-         *cursor != '\0' && result.size() < LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES; ++cursor)
+    result.reserve(LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES);
+    for (std::size_t index = 0; index < LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES; ++index)
     {
-        const unsigned char value = static_cast<unsigned char>(*cursor);
+        const unsigned char value = static_cast<unsigned char>(detail[index]);
+        if (value == '\0')
+            break;
         result.push_back(value == '\r' || value == '\n' || value == '\t' ? ' ' : static_cast<char>(value));
     }
     return result;

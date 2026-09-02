@@ -17,6 +17,9 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+// OpenJOC downstream modification (openjoc-0.16.0, 2026-09-02):
+// keep meter state exchange under a short-lived dedicated lock.
+
 // pattern: Mixed (unavoidable)
 // Reason: the existing meter producer combines PCM inspection with its
 // intentionally stateful in-filter statistics accumulator.

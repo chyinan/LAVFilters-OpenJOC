@@ -10,7 +10,10 @@
 #include "OpenJocDiagnostic.h"
 
 #include <cassert>
+#include <cstring>
+#include <cstdlib>
 #include <string>
+#include <windows.h>
 
 namespace
 {
@@ -56,6 +59,40 @@ void test_details_are_bounded_and_single_line()
     assert(BoundLAVOpenJocDiagnosticDetail(long_detail.c_str()).size() <=
            LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES);
 }
+
+void test_bounded_detail_does_not_read_past_an_unterminated_buffer()
+{
+    SYSTEM_INFO system_info{};
+    GetSystemInfo(&system_info);
+    const std::size_t page_size = system_info.dwPageSize;
+    assert(page_size > LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES);
+
+    void *region = VirtualAlloc(nullptr, page_size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    assert(region != nullptr);
+    char *detail = static_cast<char *>(region) + page_size - LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES;
+    std::memset(detail, 'x', LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES);
+
+    DWORD previous_protection = 0;
+    const BOOL protected_guard = VirtualProtect(static_cast<char *>(region) + page_size, page_size,
+                                                PAGE_NOACCESS, &previous_protection);
+    assert(protected_guard != FALSE);
+
+    bool completed = false;
+    __try
+    {
+        const std::string bounded = BoundLAVOpenJocDiagnosticDetail(detail);
+        completed = bounded.size() == LAV_OPENJOC_MAX_DIAGNOSTIC_DETAIL_BYTES;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        completed = false;
+    }
+
+    VirtualFree(region, 0, MEM_RELEASE);
+    assert(completed);
+    if (!completed)
+        std::abort();
+}
 } // namespace
 
 int wmain()
@@ -65,5 +102,6 @@ int wmain()
     test_structural_and_metadata_failures_are_distinct();
     test_unrecognized_probe_failure_is_generic_decode_error();
     test_details_are_bounded_and_single_line();
+    test_bounded_detail_does_not_read_past_an_unterminated_buffer();
     return 0;
 }
