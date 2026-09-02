@@ -9,12 +9,14 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <dshow.h>
@@ -547,6 +549,70 @@ bool TestDialnormNamespaceAndRuntimeIsolation(const FilterModule &module)
            ValueIsAbsent(kParentAudioKey, kDialnormValue);
 }
 
+bool TestDialnormGetterReadbackSourceContract()
+{
+    std::ifstream source_file(std::filesystem::path("decoder/LAVAudio/LAVAudio.cpp"), std::ios::binary);
+    const std::string source((std::istreambuf_iterator<char>(source_file)), std::istreambuf_iterator<char>());
+    const std::size_t getter_begin = source.find("HRESULT CLAVAudio::GetDialnormPolicy(");
+    const std::size_t getter_end = source.find("HRESULT CLAVAudio::SetDialnormPolicy(", getter_begin);
+    if (getter_begin == std::string::npos || getter_end == std::string::npos || getter_begin >= getter_end)
+        return false;
+
+    const std::string getter = source.substr(getter_begin, getter_end - getter_begin);
+    return getter.find("CAutoLock receive_lock(&m_csReceive)") != std::string::npos &&
+           getter.find("CAutoTryLock") == std::string::npos &&
+           getter.find("m_settings.OpenJocDialnormPolicy") != std::string::npos &&
+           getter.find("return S_OK") != std::string::npos;
+}
+
+bool TestDialnormReadbackDuringConcurrentUpdates(const FilterModule &module)
+{
+    ILAVOpenJocLevelSettings *settings = nullptr;
+    ITestRuntimeSettings *runtime = nullptr;
+    HRESULT hr = module.CreateLevel(&settings, &runtime);
+    if (SUCCEEDED(hr))
+        hr = runtime->SetRuntimeConfig(TRUE);
+    if (FAILED(hr))
+    {
+        Release(runtime);
+        Release(settings);
+        return false;
+    }
+
+    std::atomic<bool> start{false};
+    std::atomic<bool> failed{false};
+    std::thread writer([&]() {
+        while (!start.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        for (int index = 0; index < 10000 && !failed.load(std::memory_order_relaxed); ++index)
+        {
+            const auto policy = (index & 1) == 0 ? LAVOpenJocDialnormPolicy::Calibrated
+                                                 : LAVOpenJocDialnormPolicy::UnityCompatibility;
+            if (settings->SetDialnormPolicy(policy) != S_OK)
+                failed.store(true, std::memory_order_release);
+        }
+    });
+
+    start.store(true, std::memory_order_release);
+    for (int index = 0; index < 10000 && !failed.load(std::memory_order_relaxed); ++index)
+    {
+        LAVOpenJocDialnormPolicy actual = LAVOpenJocDialnormPolicy::Calibrated;
+        const HRESULT get_hr = settings->GetDialnormPolicy(&actual);
+        if (get_hr != S_OK ||
+            (actual != LAVOpenJocDialnormPolicy::Calibrated &&
+             actual != LAVOpenJocDialnormPolicy::UnityCompatibility))
+        {
+            failed.store(true, std::memory_order_release);
+            break;
+        }
+    }
+    writer.join();
+    const HRESULT reset_hr = runtime->SetRuntimeConfig(FALSE);
+    Release(runtime);
+    Release(settings);
+    return SUCCEEDED(reset_hr) && !failed.load(std::memory_order_acquire);
+}
+
 bool TestDefaultAndSetters(const FilterModule &module)
 {
     if (!ResetPolicyKey())
@@ -1000,6 +1066,11 @@ int wmain(int argc, wchar_t **argv)
         std::fwprintf(stderr, L"policy reload queue-reset source contract failed\n");
         return 1;
     }
+    if (!TestDialnormGetterReadbackSourceContract())
+    {
+        std::fwprintf(stderr, L"dialnorm getter readback source contract failed\n");
+        return 1;
+    }
 
     CurrentUserOverride registry_override;
     if (!registry_override.ready())
@@ -1064,6 +1135,11 @@ int wmain(int argc, wchar_t **argv)
         else if (!TestDialnormNamespaceAndRuntimeIsolation(module))
         {
             std::fwprintf(stderr, L"dialnorm namespace/runtime isolation failed\n");
+            test_result = 1;
+        }
+        else if (!TestDialnormReadbackDuringConcurrentUpdates(module))
+        {
+            std::fwprintf(stderr, L"dialnorm readback during concurrent updates failed\n");
             test_result = 1;
         }
     }

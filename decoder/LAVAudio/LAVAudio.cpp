@@ -1168,9 +1168,9 @@ HRESULT CLAVAudio::GetBinauralConfigurationError(LPWSTR detail, const DWORD capa
 HRESULT CLAVAudio::GetDialnormPolicy(LAVOpenJocDialnormPolicy *policy)
 {
     CheckPointer(policy, E_POINTER);
-    CAutoTryLock receive_lock(&m_csReceive);
-    if (!receive_lock.IsLocked())
-        return S_FALSE;
+    // Property-page readback must return the committed setting, not a page-local
+    // default when playback briefly owns the receive lock.
+    CAutoLock receive_lock(&m_csReceive);
     *policy = m_settings.OpenJocDialnormPolicy;
     return S_OK;
 }

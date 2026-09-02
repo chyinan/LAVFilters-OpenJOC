@@ -565,7 +565,7 @@ HRESULT CLAVAudioOpenJocProp::OnActivate()
         LAVOpenJocBinauralVirtualLayout layout;
         const wchar_t *label;
     } virtual_layout_options[] = {
-        {LAVOpenJocBinauralVirtualLayout::Layout714, L"7.1.4 (Recommended)"},
+        {LAVOpenJocBinauralVirtualLayout::Layout714, L"7.1.4 (Default)"},
         {LAVOpenJocBinauralVirtualLayout::Layout916, L"9.1.6 (Experimental)"},
     };
     LRESULT selected_layout = CB_ERR;
@@ -591,7 +591,7 @@ HRESULT CLAVAudioOpenJocProp::OnActivate()
         LAVOpenJocHrtfSource source;
         const wchar_t *label;
     } hrtf_options[] = {
-        {LAVOpenJocHrtfSource::BuiltinSadieIiD1, L"Built-in SADIE II D1 (Recommended)"},
+        {LAVOpenJocHrtfSource::BuiltinSadieIiD1, L"Built-in SADIE II D1 (Default)"},
         {LAVOpenJocHrtfSource::CustomSofa, L"Custom SOFA..."},
     };
     LRESULT selected_source = CB_ERR;

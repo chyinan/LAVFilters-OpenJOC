@@ -524,7 +524,7 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
             hr = E_UNEXPECTED;
     }
     constexpr const wchar_t *expected_virtual_layouts[] = {
-        L"7.1.4 (Recommended)", L"9.1.6 (Experimental)"};
+        L"7.1.4 (Default)", L"9.1.6 (Experimental)"};
     for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_virtual_layouts); ++index)
     {
         wchar_t label[64] = {};
@@ -534,7 +534,7 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
             hr = E_UNEXPECTED;
     }
     constexpr const wchar_t *expected_hrtf_sources[] = {
-        L"Built-in SADIE II D1 (Recommended)", L"Custom SOFA..."};
+        L"Built-in SADIE II D1 (Default)", L"Custom SOFA..."};
     for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_hrtf_sources); ++index)
     {
         wchar_t label[96] = {};
@@ -606,6 +606,47 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
                           dialnorm_policy != LAVOpenJocDialnormPolicy::Calibrated))
         hr = E_UNEXPECTED;
 
+    if (SUCCEEDED(hr))
+    {
+        page = nullptr;
+        page_window = nullptr;
+        hr = pages->CreatePage(kOpenJocPage, &page);
+        PropertyPageSite cancel_site;
+        if (SUCCEEDED(hr))
+            hr = ActivatePage(page, filter, &cancel_site, parent, &page_window);
+        const bool cancel_active = SUCCEEDED(hr);
+        dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
+        if (!dialnorm || SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0 ||
+            SendMessageW(dialnorm, CB_SETCURSEL, 1, 0) != 1)
+            hr = E_UNEXPECTED;
+        if (SUCCEEDED(hr))
+            SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocDialnormPolicyControl, CBN_SELCHANGE),
+                         reinterpret_cast<LPARAM>(dialnorm));
+        DisconnectPage(page, cancel_active);
+        Release(page);
+        page = nullptr;
+        if (SUCCEEDED(hr))
+            hr = level_settings->GetDialnormPolicy(&dialnorm_policy);
+        if (SUCCEEDED(hr) && dialnorm_policy != LAVOpenJocDialnormPolicy::Calibrated)
+            hr = E_UNEXPECTED;
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        page_window = nullptr;
+        hr = pages->CreatePage(kOpenJocPage, &page);
+        PropertyPageSite reopen_cancel_site;
+        if (SUCCEEDED(hr))
+            hr = ActivatePage(page, filter, &reopen_cancel_site, parent, &page_window);
+        const bool reopen_cancel_active = SUCCEEDED(hr);
+        dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
+        if (!dialnorm || SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0)
+            hr = E_UNEXPECTED;
+        DisconnectPage(page, reopen_cancel_active);
+        Release(page);
+        page = nullptr;
+    }
+
     page = nullptr;
     page_window = nullptr;
     if (SUCCEEDED(hr))
@@ -676,14 +717,41 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     {
         SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocDialnormPolicyControl, CBN_SELCHANGE),
                      reinterpret_cast<LPARAM>(dialnorm));
-        hr = page->Apply();
     }
+    DisconnectPage(page, reopen_active);
+    Release(page);
+    page = nullptr;
     if (SUCCEEDED(hr))
         hr = level_settings->GetDialnormPolicy(&dialnorm_policy);
+    if (SUCCEEDED(hr) && dialnorm_policy != LAVOpenJocDialnormPolicy::UnityCompatibility)
+        hr = E_UNEXPECTED;
+
+    bool reopen_after_cancel_active = false;
+    if (SUCCEEDED(hr))
+    {
+        page_window = nullptr;
+        hr = pages->CreatePage(kOpenJocPage, &page);
+        PropertyPageSite apply_after_cancel_site;
+        if (SUCCEEDED(hr))
+            hr = ActivatePage(page, filter, &apply_after_cancel_site, parent, &page_window);
+        reopen_after_cancel_active = SUCCEEDED(hr);
+        dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
+        if (!dialnorm || SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 1 ||
+            SendMessageW(dialnorm, CB_SETCURSEL, 0, 0) != 0)
+            hr = E_UNEXPECTED;
+        if (SUCCEEDED(hr))
+        {
+            SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocDialnormPolicyControl, CBN_SELCHANGE),
+                         reinterpret_cast<LPARAM>(dialnorm));
+            hr = page->Apply();
+        }
+        if (SUCCEEDED(hr))
+            hr = level_settings->GetDialnormPolicy(&dialnorm_policy);
+    }
     const bool passed = SUCCEEDED(hr) && policy == LAVOpenJocOutputPolicy::Stereo &&
                         dialnorm_policy == LAVOpenJocDialnormPolicy::Calibrated;
 
-    DisconnectPage(page, reopen_active);
+    DisconnectPage(page, reopen_after_cancel_active);
     Release(page);
     Release(runtime);
     Release(binaural_settings);
