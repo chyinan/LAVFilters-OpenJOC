@@ -19,6 +19,7 @@
 
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocSettings.h"
+#include "OpenJocOutput.h"
 
 namespace
 {
