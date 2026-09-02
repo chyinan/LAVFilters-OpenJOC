@@ -61,7 +61,7 @@ int main(const int argc, char **argv)
     assert(source.find("CB_GETITEMDATA") != std::string::npos);
     assert(source.find("CLAVAudioOpenJocProp::OnActivate") != std::string::npos);
     assert(source.find("selected_output == CB_ERR") != std::string::npos);
-    assert(source.find("SetOutputPolicy") != std::string::npos);
+    assert(source.find("SetBinauralConfiguration") != std::string::npos);
     const auto settings_apply = source.find("HRESULT CLAVAudioSettingsProp::OnApplyChanges()");
     const auto openjoc_page = source.find("CLAVAudioOpenJocProp::CLAVAudioOpenJocProp");
     assert(settings_apply != std::string::npos && openjoc_page != std::string::npos && settings_apply < openjoc_page);
