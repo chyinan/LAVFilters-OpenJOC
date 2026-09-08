@@ -9,8 +9,10 @@
 #include "OpenJocDecoder.h"
 #include "OpenJocDialnorm.h"
 
+#include <algorithm>
 #include <array>
 #include <deque>
+#include <cstring>
 #include <limits>
 #include <new>
 #include <stdexcept>
@@ -66,6 +68,7 @@ struct LAVOpenJocDecoder::Impl
     std::int64_t admission_pts_samples = kNoPts;
     std::size_t classifier_input_bytes = 0;
     std::size_t stream_input_bytes = 0;
+    std::vector<unsigned char> admission_bytes;
     std::string last_error;
     LAVOpenJocDiagnosticSnapshot diagnostic;
     bool available = false;
@@ -649,6 +652,7 @@ bool LAVOpenJocDecoder::SetBinauralConfiguration(
     m_impl->admission_pts_samples = kNoPts;
     m_impl->classifier_input_bytes = 0;
     m_impl->stream_input_bytes = 0;
+    m_impl->admission_bytes.clear();
     m_impl->last_error.clear();
     m_impl->ClearDiagnostic();
     return true;
@@ -707,6 +711,7 @@ bool LAVOpenJocDecoder::SetConfiguration(const LAVOpenJocOutputContract *const c
     m_impl->admission_pts_samples = kNoPts;
     m_impl->classifier_input_bytes = 0;
     m_impl->stream_input_bytes = 0;
+    m_impl->admission_bytes.clear();
     m_impl->last_error.clear();
     m_impl->ClearDiagnostic();
     return true;
@@ -763,24 +768,45 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
         LAVOpenJocClassification classification = LAVOpenJocClassification::Unknown;
         bool classifier_call_failed = false;
         const std::size_t classified_bytes = m_impl->admission.classified_bytes();
-        const std::size_t classification_offset =
-            m_impl->admission.classification_offset(data_size);
+        const bool cumulative_input =
+            !m_impl->admission_bytes.empty() && data_size >= m_impl->admission_bytes.size() &&
+            std::memcmp(data, m_impl->admission_bytes.data(), m_impl->admission_bytes.size()) == 0;
+        const std::size_t classification_offset = cumulative_input ? classified_bytes : 0;
         const std::size_t classification_budget =
             classified_bytes < LAVOpenJocAdmission::MaxRetainedBytes
                 ? LAVOpenJocAdmission::MaxRetainedBytes - classified_bytes
                 : 0;
+        const std::size_t available_input = cumulative_input
+                                                ? (data_size > classification_offset
+                                                       ? data_size - classification_offset
+                                                       : 0)
+                                                : data_size;
         const std::size_t classification_input_size =
-            data_size > classification_offset
-                ? ((data_size - classification_offset) < classification_budget
-                       ? data_size - classification_offset
-                       : classification_budget)
-                : 0;
+            (available_input < classification_budget) ? available_input : classification_budget;
+
+        if (data_size > 0)
+        {
+            if (cumulative_input)
+            {
+                const std::size_t retained =
+                    (std::min)(data_size, LAVOpenJocAdmission::MaxRetainedBytes);
+                m_impl->admission_bytes.assign(data, data + retained);
+            }
+            else if (m_impl->admission_bytes.size() < LAVOpenJocAdmission::MaxRetainedBytes)
+            {
+                const std::size_t room =
+                    LAVOpenJocAdmission::MaxRetainedBytes - m_impl->admission_bytes.size();
+                const std::size_t copied = (std::min)(room, data_size);
+                m_impl->admission_bytes.insert(m_impl->admission_bytes.end(), data, data + copied);
+            }
+        }
 
         if (classification_input_size > 0)
         {
-            classification = m_impl->Classify(data + classification_offset, classification_input_size, false,
+            const unsigned char *classification_data = cumulative_input ? data + classification_offset : data;
+            classification = m_impl->Classify(classification_data, classification_input_size, false,
                                                &classifier_call_failed);
-            m_impl->admission.note_classified(classification_offset + classification_input_size);
+            m_impl->admission.note_classified(classified_bytes + classification_input_size);
         }
         if (end_of_stream)
         {
@@ -805,9 +831,16 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
                 // bytes while stock LAV remains the actual ordinary E-AC-3
                 // renderer. The OpenJOC stream bridge does not emit PCM for
                 // this classification.
-                (void)m_impl->FeedDecoder(data, data_size, m_impl->admission_pts_samples);
+                const unsigned char *observed_data = m_impl->admission_bytes.empty()
+                                                          ? data
+                                                          : m_impl->admission_bytes.data();
+                const std::size_t observed_size = m_impl->admission_bytes.empty()
+                                                      ? data_size
+                                                      : m_impl->admission_bytes.size();
+                (void)m_impl->FeedDecoder(observed_data, observed_size, m_impl->admission_pts_samples);
                 if (end_of_stream)
                     (void)m_impl->FinishDecoder();
+                m_impl->admission_bytes.clear();
             }
             return LAVOpenJocProcessResult::UseStockDecoder;
         }
@@ -831,12 +864,21 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
             return LAVOpenJocProcessResult::Error;
         }
 
-        if (!m_impl->FeedDecoder(data, data_size, m_impl->admission_pts_samples))
+        const bool promoted = action.kind == LAVOpenJocActionKind::PromoteToOpenJoc;
+        const unsigned char *observed_data = promoted && !m_impl->admission_bytes.empty()
+                                                  ? m_impl->admission_bytes.data()
+                                                  : data;
+        const std::size_t observed_size = promoted && !m_impl->admission_bytes.empty()
+                                              ? m_impl->admission_bytes.size()
+                                              : data_size;
+        if (!m_impl->FeedDecoder(observed_data, observed_size, m_impl->admission_pts_samples))
         {
             m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::OpenJocDecodeError,
                                              m_impl->last_error.c_str());
             return LAVOpenJocProcessResult::Error;
         }
+        if (promoted)
+            m_impl->admission_bytes.clear();
 #else
         return LAVOpenJocProcessResult::UseStockDecoder;
 #endif
@@ -981,6 +1023,7 @@ void LAVOpenJocDecoder::Reset()
     m_impl->admission_pts_samples = kNoPts;
     m_impl->classifier_input_bytes = 0;
     m_impl->stream_input_bytes = 0;
+    m_impl->admission_bytes.clear();
 }
 
 void LAVOpenJocDecoder::ResetForNewStream()

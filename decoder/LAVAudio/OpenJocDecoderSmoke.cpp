@@ -499,6 +499,28 @@ static void live_inspection_snapshot_is_forwarded_for_stock_and_joc(
     assert(joc_decoder.GetLiveInspectionSnapshot(&joc_snapshot));
     assert(joc_snapshot.stream_present == 0);
 }
+
+static void live_inspection_snapshot_survives_directshow_sized_chunks(
+    const std::vector<unsigned char> &joc)
+{
+    LAVOpenJocDecoder decoder;
+    assert(decoder.IsAvailable());
+    constexpr std::size_t kChunkBytes = 512;
+    for (std::size_t offset = 0; offset < joc.size(); offset += kChunkBytes)
+    {
+        const std::size_t count = (std::min)(kChunkBytes, joc.size() - offset);
+        const LAVOpenJocProcessResult result =
+            decoder.Process(joc.data() + offset, count, INT64_MIN, false);
+        assert(result != LAVOpenJocProcessResult::Error);
+    }
+    const LAVOpenJocProcessResult eos_result = decoder.Process(nullptr, 0, INT64_MIN, true);
+    assert(eos_result == LAVOpenJocProcessResult::OpenJoc);
+    openjoc_live_inspection_snapshot snapshot{};
+    assert(decoder.GetLiveInspectionSnapshot(&snapshot));
+    assert(snapshot.stream_present != 0);
+    assert(snapshot.joc_present != 0);
+    assert(snapshot.observed_au_count > 0);
+}
 #endif
 
 int main(int argc, char **argv)
@@ -513,6 +535,7 @@ int main(int argc, char **argv)
         custom_sofa_is_used_and_changes_binaural_pcm(joc, argv[3]);
     classify_as_stock(ordinary);
     live_inspection_snapshot_is_forwarded_for_stock_and_joc(ordinary, joc);
+    live_inspection_snapshot_survives_directshow_sized_chunks(joc);
     classify_malformed_probe_as_sticky_fallback();
     classify_and_feed_joc_for_all_policies(joc);
     policy_assignment_and_switch_are_safe(joc);
