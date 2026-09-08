@@ -975,7 +975,7 @@ STDMETHODIMP CLAVAudio::NonDelegatingQueryInterface(REFIID riid, void **ppv)
         QI2(ILAVAudioStatus) QI2(ILAVOpenJocStatus)
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
             QI2(ILAVOpenJocSettings) QI2(ILAVOpenJocLevelSettings) QI2(ILAVOpenJocDiagnostics)
-                QI2(ILAVOpenJocBinauralSettings) QI2(ILAVOpenJocDiagnostics2)
+                QI2(ILAVOpenJocBinauralSettings) QI2(ILAVOpenJocDiagnostics2) QI2(ILAVOpenJocInspection)
 #endif
                 __super::NonDelegatingQueryInterface(riid, ppv);
 }
@@ -986,7 +986,7 @@ STDMETHODIMP CLAVAudio::GetPages(CAUUID *pPages)
     CheckPointer(pPages, E_POINTER);
     BOOL bShowStatusPage = m_pInput && m_pInput->IsConnected();
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-    pPages->cElems = bShowStatusPage ? 5 : 4;
+    pPages->cElems = bShowStatusPage ? 6 : 5;
 #else
     pPages->cElems = bShowStatusPage ? 4 : 3;
 #endif
@@ -998,10 +998,11 @@ STDMETHODIMP CLAVAudio::GetPages(CAUUID *pPages)
     pPages->pElems[0] = CLSID_LAVAudioSettingsProp;
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     pPages->pElems[1] = CLSID_LAVAudioOpenJocProp;
-    pPages->pElems[2] = CLSID_LAVAudioMixingProp;
-    pPages->pElems[3] = CLSID_LAVAudioFormatsProp;
+    pPages->pElems[2] = CLSID_LAVAudioJocStreamProp;
+    pPages->pElems[3] = CLSID_LAVAudioMixingProp;
+    pPages->pElems[4] = CLSID_LAVAudioFormatsProp;
     if (bShowStatusPage)
-        pPages->pElems[4] = CLSID_LAVAudioStatusProp;
+        pPages->pElems[5] = CLSID_LAVAudioStatusProp;
 #else
     pPages->pElems[1] = CLSID_LAVAudioMixingProp;
     pPages->pElems[2] = CLSID_LAVAudioFormatsProp;
@@ -1024,6 +1025,8 @@ STDMETHODIMP CLAVAudio::CreatePage(const GUID &guid, IPropertyPage **ppPage)
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     else if (guid == CLSID_LAVAudioOpenJocProp)
         *ppPage = new CLAVAudioOpenJocProp(nullptr, &hr);
+    else if (guid == CLSID_LAVAudioJocStreamProp)
+        *ppPage = new CLAVAudioJocStreamProp(nullptr, &hr);
 #endif
     else if (guid == CLSID_LAVAudioMixingProp)
         *ppPage = new CLAVAudioMixingProp(nullptr, &hr);
@@ -1783,6 +1786,28 @@ STDMETHODIMP CLAVAudio::GetOpenJocPlaybackDiagnostics(
     if (!CopyOpenJocDiagnosticDetailToWide(snapshot.detail, detail, detail_capacity))
         return E_FAIL;
     return S_OK;
+}
+
+STDMETHODIMP CLAVAudio::GetOpenJocLiveInspectionSnapshot(openjoc_live_inspection_snapshot *snapshot)
+{
+    CheckPointer(snapshot, E_POINTER);
+    CAutoTryLock receive_lock(&m_csReceive);
+    if (!receive_lock.IsLocked())
+        return S_FALSE;
+    return m_openJoc.GetLiveInspectionSnapshot(snapshot) ? S_OK : S_FALSE;
+}
+
+STDMETHODIMP CLAVAudio::CopyOpenJocLiveInspectionJson(char *output, const std::size_t output_capacity,
+                                                      std::size_t *required_size)
+{
+    if (output_capacity > 0 && !output)
+        return E_POINTER;
+    if (!required_size)
+        return E_POINTER;
+    CAutoTryLock receive_lock(&m_csReceive);
+    if (!receive_lock.IsLocked())
+        return S_FALSE;
+    return m_openJoc.CopyLiveInspectionJson(output, output_capacity, required_size) ? S_OK : S_FALSE;
 }
 #endif
 

@@ -88,6 +88,9 @@
     <ClInclude Include="AudioSettingsProp.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\include\LAVOpenJocInspection.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="Media.h">
       <Filter>Header Files</Filter>
     </ClInclude>

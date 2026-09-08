@@ -465,6 +465,40 @@ static void failed_dialnorm_change_is_atomic(const std::vector<unsigned char> &b
     assert(decoder.ReceiveFrame(pending));
     assert(pending.output_contract == decoder.OutputContract());
 }
+
+static void live_inspection_snapshot_is_forwarded_for_stock_and_joc(
+    const std::vector<unsigned char> &ordinary, const std::vector<unsigned char> &joc)
+{
+    LAVOpenJocDecoder ordinary_decoder;
+    assert(ordinary_decoder.Process(ordinary.data(), ordinary.size(), INT64_MIN, true) ==
+           LAVOpenJocProcessResult::UseStockDecoder);
+    openjoc_live_inspection_snapshot ordinary_snapshot{};
+    assert(ordinary_decoder.GetLiveInspectionSnapshot(&ordinary_snapshot));
+    assert(ordinary_snapshot.stream_present != 0);
+    assert(ordinary_snapshot.joc_present == 0);
+    assert(ordinary_snapshot.observed_au_count > 0);
+
+    LAVOpenJocDecoder joc_decoder;
+    assert(joc_decoder.Process(joc.data(), joc.size(), INT64_MIN, true) ==
+           LAVOpenJocProcessResult::OpenJoc);
+    openjoc_live_inspection_snapshot joc_snapshot{};
+    assert(joc_decoder.GetLiveInspectionSnapshot(&joc_snapshot));
+    assert(joc_snapshot.stream_present != 0);
+    assert(joc_snapshot.joc_present != 0);
+    assert(joc_snapshot.observed_au_count > 0);
+    assert(joc_snapshot.profile_index >= 0);
+    assert(joc_snapshot.object_count > 0);
+
+    std::vector<char> json(16 * 1024);
+    std::size_t required = 0;
+    assert(joc_decoder.CopyLiveInspectionJson(json.data(), json.size(), &required));
+    assert(required > 1);
+    assert(std::strstr(json.data(), "live_decode_snapshot") != nullptr);
+
+    joc_decoder.Reset();
+    assert(joc_decoder.GetLiveInspectionSnapshot(&joc_snapshot));
+    assert(joc_snapshot.stream_present == 0);
+}
 #endif
 
 int main(int argc, char **argv)
@@ -478,6 +512,7 @@ int main(int argc, char **argv)
     if (argc == 4)
         custom_sofa_is_used_and_changes_binaural_pcm(joc, argv[3]);
     classify_as_stock(ordinary);
+    live_inspection_snapshot_is_forwarded_for_stock_and_joc(ordinary, joc);
     classify_malformed_probe_as_sticky_fallback();
     classify_and_feed_joc_for_all_policies(joc);
     policy_assignment_and_switch_are_safe(joc);

@@ -33,6 +33,7 @@
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocSettings.h"
 #include "LAVOpenJocDiagnostics.h"
+#include "LAVOpenJocInspection.h"
 #include "FloatingAverage.h"
 #include "Media.h"
 #include "BitstreamParser.h"
@@ -117,6 +118,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     , public ILAVOpenJocBinauralSettings
     , public ILAVOpenJocDiagnostics
     , public ILAVOpenJocDiagnostics2
+    , public ILAVOpenJocInspection
 #endif
 {
   public:
@@ -214,6 +216,10 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     STDMETHODIMP GetOpenJocPlaybackDiagnostics(LAVOpenJocDiagnosticReason *reason, BOOL *warning,
                                                 BOOL *failure_au_known, ULONGLONG *failure_au,
                                                 LPWSTR detail, DWORD detail_capacity);
+    // ILAVOpenJocInspection
+    STDMETHODIMP GetOpenJocLiveInspectionSnapshot(openjoc_live_inspection_snapshot *snapshot);
+    STDMETHODIMP CopyOpenJocLiveInspectionJson(char *output, std::size_t output_capacity,
+                                               std::size_t *required_size);
 #endif
 
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE) && defined(LAV_OPENJOC_TESTING)

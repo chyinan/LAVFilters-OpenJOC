@@ -22,6 +22,7 @@
 #include "ISpecifyPropertyPages2.h"
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocDiagnostics.h"
+#include "LAVOpenJocInspection.h"
 #include "LAVOpenJocSettings.h"
 #include "OpenJocBinauralSettings.h"
 
@@ -35,6 +36,8 @@ constexpr GUID kStatusPage = {
     0x20ed4a03, 0x6afd, 0x4fd9, {0x98, 0x0b, 0x2f, 0x61, 0x43, 0xaa, 0x08, 0x92}};
 constexpr GUID kOpenJocPage = {
     0xb316b03c, 0x8c27, 0x4adb, {0xb4, 0x2b, 0x00, 0xde, 0xc7, 0x82, 0x25, 0xdf}};
+constexpr GUID kJocStreamPage = {
+    0xd5e8a8b2, 0x3a4e, 0x4f87, {0x9c, 0xe5, 0x4f, 0x8a, 0xb1, 0x3c, 0x5a, 0x22}};
 constexpr GUID kAudioSettings = {
     0x4158a22b, 0x6553, 0x45d0, {0x80, 0x69, 0x24, 0x71, 0x6f, 0x8f, 0xf1, 0x71}};
 
@@ -51,6 +54,8 @@ constexpr int kOpenJocStatusAdmissionControl = 1139;
 constexpr int kOpenJocStatusWarningControl = 1146;
 constexpr int kOpenJocStatusReasonControl = 1147;
 constexpr int kOpenJocStatusDetailsControl = 1148;
+constexpr int kJocStreamSummaryControl = 1160;
+constexpr int kJocStreamCopyJsonControl = 1182;
 constexpr int kTrayIconControl = 1131;
 constexpr int kOutputChannelControl = 1086;
 constexpr int kOutputCodecControl = 1085;
@@ -882,6 +887,24 @@ bool TestStatusPage(ISpecifyPropertyPages2 *pages, HWND parent)
     Release(page);
     return SUCCEEDED(hr);
 }
+
+bool TestJocStreamPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND parent)
+{
+    IPropertyPage *page = nullptr;
+    HRESULT hr = pages->CreatePage(kJocStreamPage, &page);
+    PropertyPageSite site;
+    HWND page_window = nullptr;
+    if (SUCCEEDED(hr))
+        hr = ActivatePage(page, filter, &site, parent, &page_window);
+    const bool active = SUCCEEDED(hr);
+    const HWND summary = SUCCEEDED(hr) ? FindControl(page_window, kJocStreamSummaryControl) : nullptr;
+    const HWND copy_json = SUCCEEDED(hr) ? FindControl(page_window, kJocStreamCopyJsonControl) : nullptr;
+    if (!summary || !copy_json || WindowText(summary) != L"No active stream")
+        hr = E_UNEXPECTED;
+    DisconnectPage(page, active);
+    Release(page);
+    return SUCCEEDED(hr);
+}
 } // namespace
 
 int wmain(int argc, wchar_t **argv)
@@ -914,8 +937,9 @@ int wmain(int argc, wchar_t **argv)
             hr = filter->QueryInterface(__uuidof(ISpecifyPropertyPages2), reinterpret_cast<void **>(&pages));
         const bool settings_page = SUCCEEDED(hr) && TestSettingsPageHasNoOpenJocControls(filter, pages, parent);
         const bool openjoc_page = settings_page && TestOpenJocPage(filter, pages, parent);
-        const bool status_page = openjoc_page && TestStatusPage(pages, parent);
-        passed = settings_page && openjoc_page && status_page;
+        const bool joc_stream_page = openjoc_page && TestJocStreamPage(filter, pages, parent);
+        const bool status_page = joc_stream_page && TestStatusPage(pages, parent);
+        passed = settings_page && openjoc_page && joc_stream_page && status_page;
         Release(pages);
         Release(filter);
     }

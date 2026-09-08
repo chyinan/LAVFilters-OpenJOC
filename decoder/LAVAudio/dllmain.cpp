@@ -72,6 +72,7 @@ CFactoryTemplate g_Templates[] = {
     {L"LAV Audio Properties", &CLSID_LAVAudioSettingsProp, CreateInstance<CLAVAudioSettingsProp>, nullptr, nullptr},
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     {L"OpenJOC", &CLSID_LAVAudioOpenJocProp, CreateInstance<CLAVAudioOpenJocProp>, nullptr, nullptr},
+    {L"JOC Stream", &CLSID_LAVAudioJocStreamProp, CreateInstance<CLAVAudioJocStreamProp>, nullptr, nullptr},
 #endif
     {L"LAV Audio Mixer", &CLSID_LAVAudioMixingProp, CreateInstance<CLAVAudioMixingProp>, nullptr, nullptr},
     {L"LAV Audio Format Settings", &CLSID_LAVAudioFormatsProp, CreateInstance<CLAVAudioFormatsProp>, nullptr, nullptr},

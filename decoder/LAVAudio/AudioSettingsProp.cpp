@@ -31,11 +31,50 @@
 #include "OpenJocOutput.h"
 #include "OpenJocShippedLayouts.h"
 
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+#include "openjoc.h"
+#endif
+
 #include <Commctrl.h>
+
+#include <vector>
 
 #include "resource.h"
 #include "version.h"
 #include <commdlg.h>
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+namespace
+{
+template <std::size_t N> std::wstring SnapshotText(const char (&value)[N])
+{
+    const int length = static_cast<int>(strnlen_s(value, N));
+    if (length <= 0)
+        return {};
+    const int required = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value, length, nullptr, 0);
+    if (required <= 0)
+        return L"Unavailable";
+    std::wstring output(static_cast<std::size_t>(required), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value, length, output.data(), required) != required)
+        return L"Unavailable";
+    return output;
+}
+
+std::wstring SnapshotNumber(const unsigned long long value)
+{
+    wchar_t text[32] = {};
+    _snwprintf_s(text, _TRUNCATE, L"%I64u", value);
+    return text;
+}
+
+std::wstring SnapshotDouble(const double value)
+{
+    wchar_t text[64] = {};
+    _snwprintf_s(text, _TRUNCATE, L"%.3f s", value);
+    return text;
+}
+}
+#endif
 
 CLAVAudioSettingsProp::CLAVAudioSettingsProp(LPUNKNOWN pUnk, HRESULT *phr)
     : CBaseDSPropPage(NAME("LAVCAudioProp"), pUnk, IDD_PROPPAGE_AUDIO_SETTINGS, IDS_SETTINGS)
@@ -1474,3 +1513,189 @@ INT_PTR CLAVAudioStatusProp::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wPara
     // Let the parent class handle the message.
     return __super::OnReceiveMessage(hwnd, uMsg, wParam, lParam);
 }
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+CLAVAudioJocStreamProp::CLAVAudioJocStreamProp(LPUNKNOWN pUnk, HRESULT *phr)
+    : CBaseDSPropPage(NAME("LAVCAudioJocStreamProp"), pUnk, IDD_PROPPAGE_JOC_STREAM, IDS_JOC_STREAM)
+{
+    if (phr)
+        *phr = S_OK;
+}
+
+CLAVAudioJocStreamProp::~CLAVAudioJocStreamProp() = default;
+
+HRESULT CLAVAudioJocStreamProp::OnConnect(IUnknown *pUnk)
+{
+    CheckPointer(pUnk, E_POINTER);
+    ASSERT(!m_pInspection);
+    return pUnk->QueryInterface(__uuidof(ILAVOpenJocInspection),
+                                reinterpret_cast<void **>(&m_pInspection));
+}
+
+HRESULT CLAVAudioJocStreamProp::OnDisconnect()
+{
+    if (m_timer)
+    {
+        KillTimer(m_Dlg, m_timer);
+        m_timer = 0;
+    }
+    SafeRelease(&m_pInspection);
+    return S_OK;
+}
+
+HRESULT CLAVAudioJocStreamProp::OnActivate()
+{
+    if (!m_timer)
+        m_timer = SetTimer(m_Dlg, 2, 500, nullptr);
+    UpdateDisplay();
+    return S_OK;
+}
+
+HRESULT CLAVAudioJocStreamProp::OnDeactivate()
+{
+    if (m_timer)
+    {
+        KillTimer(m_Dlg, m_timer);
+        m_timer = 0;
+    }
+    return S_OK;
+}
+
+void CLAVAudioJocStreamProp::SetField(const int control, const std::wstring &value)
+{
+    SetDlgItemTextW(m_Dlg, control, value.c_str());
+}
+
+void CLAVAudioJocStreamProp::UpdateDisplay()
+{
+    openjoc_live_inspection_snapshot snapshot{};
+    if (!m_pInspection || m_pInspection->GetOpenJocLiveInspectionSnapshot(&snapshot) != S_OK ||
+        snapshot.stream_present == 0)
+    {
+        SetField(IDC_JOC_STREAM_SUMMARY, L"No active stream");
+        const int controls[] = {
+            IDC_JOC_STREAM_FORMAT, IDC_JOC_STREAM_PROFILE, IDC_JOC_STREAM_OBJECTS,
+            IDC_JOC_STREAM_DYNAMIC, IDC_JOC_STREAM_SAMPLE_RATE, IDC_JOC_STREAM_COVERAGE,
+            IDC_JOC_STREAM_TOPOLOGY, IDC_JOC_STREAM_PARTITION, IDC_JOC_STREAM_LFE,
+            IDC_JOC_STREAM_OWNER, IDC_JOC_STREAM_CARRIERS, IDC_JOC_STREAM_DEPENDENTS,
+            IDC_JOC_STREAM_STRICT, IDC_JOC_STREAM_COMPAT, IDC_JOC_STREAM_MALFORMED,
+            IDC_JOC_STREAM_OBSERVED, IDC_JOC_STREAM_PAYLOADS, IDC_JOC_STREAM_CARRIAGE,
+            IDC_JOC_STREAM_EPOCH, IDC_JOC_STREAM_TIMESTAMP, IDC_JOC_STREAM_ERROR,
+            IDC_JOC_STREAM_SCOPE, IDC_JOC_STREAM_FIRST_CHANGE,
+        };
+        for (const int control : controls)
+            SetField(control, L"Not observed");
+        return;
+    }
+
+    const bool joc = snapshot.joc_present != 0;
+    SetField(IDC_JOC_STREAM_SUMMARY, joc ? L"JOC present - semantics observed from in-band E-AC-3"
+                                        : L"E-AC-3 - JOC not detected");
+    SetField(IDC_JOC_STREAM_FORMAT, joc ? L"E-AC-3 JOC" : L"E-AC-3");
+    SetField(IDC_JOC_STREAM_PROFILE, SnapshotText(snapshot.profile_display_name));
+    SetField(IDC_JOC_STREAM_OBJECTS,
+             snapshot.has_object_count ? SnapshotNumber(snapshot.object_count) : L"Not observed yet");
+    SetField(IDC_JOC_STREAM_DYNAMIC,
+             snapshot.dynamic_scene_observed == 2
+                 ? L"Yes"
+                 : snapshot.dynamic_scene_observed == 1 ? L"No" : L"Not observed yet");
+    SetField(IDC_JOC_STREAM_SAMPLE_RATE,
+             snapshot.has_sample_rate ? SnapshotNumber(snapshot.sample_rate_hz) + L" Hz" : L"Not observed yet");
+    SetField(IDC_JOC_STREAM_COVERAGE, SnapshotText(snapshot.coverage));
+    SetField(IDC_JOC_STREAM_TOPOLOGY, SnapshotText(snapshot.programme_topology));
+    SetField(IDC_JOC_STREAM_PARTITION, SnapshotText(snapshot.block_partition));
+
+    std::wstring lfe;
+    if (snapshot.lfe_presence == 2)
+    {
+        lfe = L"Present";
+        const std::wstring owner = SnapshotText(snapshot.lfe_owner);
+        if (!owner.empty())
+            lfe += L" - " + owner;
+    }
+    else if (snapshot.lfe_presence == 1)
+        lfe = L"Absent";
+    else
+        lfe = L"Not observed yet";
+    SetField(IDC_JOC_STREAM_LFE, lfe);
+    SetField(IDC_JOC_STREAM_OWNER, SnapshotText(snapshot.joc_owner));
+    SetField(IDC_JOC_STREAM_CARRIERS, SnapshotText(snapshot.reconstruction_carriers));
+    SetField(IDC_JOC_STREAM_DEPENDENTS, SnapshotText(snapshot.dependent_ids));
+    SetField(IDC_JOC_STREAM_STRICT, SnapshotText(snapshot.etsi_strict));
+    SetField(IDC_JOC_STREAM_COMPAT, SnapshotText(snapshot.deployed_compatibility));
+    SetField(IDC_JOC_STREAM_MALFORMED, SnapshotNumber(snapshot.malformed_observed_count));
+    SetField(IDC_JOC_STREAM_OBSERVED, SnapshotNumber(snapshot.observed_au_count));
+    SetField(IDC_JOC_STREAM_PAYLOADS, SnapshotText(snapshot.emdf_payloads));
+    SetField(IDC_JOC_STREAM_CARRIAGE, SnapshotText(snapshot.carriage_locations));
+    SetField(IDC_JOC_STREAM_SCOPE, SnapshotText(snapshot.observation_scope));
+
+    std::wstring epoch = L"Decode epoch: " + SnapshotNumber(snapshot.observation_epoch);
+    SetField(IDC_JOC_STREAM_EPOCH, epoch);
+    SetField(IDC_JOC_STREAM_TIMESTAMP,
+             snapshot.has_timestamp ? L"Timestamp: " + SnapshotDouble(snapshot.current_timestamp_seconds)
+                                     : L"Timestamp: not observed");
+    SetField(IDC_JOC_STREAM_ERROR, SnapshotText(snapshot.last_error_summary));
+
+    if (snapshot.has_first_change)
+    {
+        SetField(IDC_JOC_STREAM_FIRST_CHANGE,
+                 L"AU " + SnapshotNumber(snapshot.first_change_au) + L" / " +
+                     SnapshotDouble(snapshot.first_change_seconds));
+    }
+    else
+        SetField(IDC_JOC_STREAM_FIRST_CHANGE, L"None observed");
+}
+
+bool CLAVAudioJocStreamProp::CopyJsonToClipboard()
+{
+    if (!m_pInspection)
+        return false;
+    std::vector<char> json(16 * 1024);
+    std::size_t required = 0;
+    if (m_pInspection->CopyOpenJocLiveInspectionJson(json.data(), json.size(), &required) != S_OK)
+    {
+        if (required == 0 || required > 1024 * 1024)
+            return false;
+        json.resize(required);
+        if (m_pInspection->CopyOpenJocLiveInspectionJson(json.data(), json.size(), &required) != S_OK)
+            return false;
+    }
+
+    if (!OpenClipboard(m_Dlg))
+        return false;
+    EmptyClipboard();
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, json.size());
+    if (!memory)
+    {
+        CloseClipboard();
+        return false;
+    }
+    void *target = GlobalLock(memory);
+    if (!target)
+    {
+        GlobalFree(memory);
+        CloseClipboard();
+        return false;
+    }
+    std::memcpy(target, json.data(), json.size());
+    GlobalUnlock(memory);
+    if (!SetClipboardData(CF_TEXT, memory))
+    {
+        GlobalFree(memory);
+        CloseClipboard();
+        return false;
+    }
+    CloseClipboard();
+    return true;
+}
+
+INT_PTR CLAVAudioJocStreamProp::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    if (uMsg == WM_TIMER && wParam == m_timer)
+        UpdateDisplay();
+    else if (uMsg == WM_COMMAND && LOWORD(wParam) == IDC_JOC_STREAM_COPY_JSON &&
+             HIWORD(wParam) == BN_CLICKED)
+        CopyJsonToClipboard();
+    return __super::OnReceiveMessage(hwnd, uMsg, wParam, lParam);
+}
+#endif

@@ -32,6 +32,7 @@
 #include "LAVOpenJocSettings.h"
 #include "OpenJocBinauralSettings.h"
 #include "LAVOpenJocDiagnostics.h"
+#include "LAVOpenJocInspection.h"
 #include "BaseDSPropPage.h"
 #include "Media.h"
 
@@ -55,6 +56,9 @@ DEFINE_GUID(CLSID_LAVAudioStatusProp, 0x20ed4a03, 0x6afd, 0x4fd9, 0x98, 0xb, 0x2
 
 // {BD72668E-6BFF-4CD1-8480-D465708B336B}
 DEFINE_GUID(CLSID_LAVAudioFormatsProp, 0xbd72668e, 0x6bff, 0x4cd1, 0x84, 0x80, 0xd4, 0x65, 0x70, 0x8b, 0x33, 0x6b);
+
+// {D5E8A8B2-3A4E-4F87-9CE5-4F8AB13C5A22}
+DEFINE_GUID(CLSID_LAVAudioJocStreamProp, 0xd5e8a8b2, 0x3a4e, 0x4f87, 0x9c, 0xe5, 0x4f, 0x8a, 0xb1, 0x3c, 0x5a, 0x22);
 
 class CLAVAudioSettingsProp : public CBaseDSPropPage
 {
@@ -232,3 +236,26 @@ class CLAVAudioStatusProp : public CBaseDSPropPage
 #endif
     int m_nMeterChannels = 0;
 };
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+class CLAVAudioJocStreamProp : public CBaseDSPropPage
+{
+  public:
+    CLAVAudioJocStreamProp(LPUNKNOWN pUnk, HRESULT *phr);
+    ~CLAVAudioJocStreamProp();
+
+    HRESULT OnActivate();
+    HRESULT OnDeactivate();
+    HRESULT OnConnect(IUnknown *pUnk);
+    HRESULT OnDisconnect();
+    INT_PTR OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+  private:
+    void UpdateDisplay();
+    void SetField(int control, const std::wstring &value);
+    bool CopyJsonToClipboard();
+
+    ILAVOpenJocInspection *m_pInspection = nullptr;
+    UINT_PTR m_timer = 0;
+};
+#endif

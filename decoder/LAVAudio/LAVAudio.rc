@@ -151,6 +151,65 @@ BEGIN
 END
 #endif
 
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+IDD_PROPPAGE_JOC_STREAM DIALOGEX 0, 0, 430, 330
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_VSCROLL
+FONT 8, "MS Shell Dlg", 400, 0, 0x0
+BEGIN
+    GROUPBOX        "Summary",IDC_STATIC,7,7,416,75
+    LTEXT           "",IDC_JOC_STREAM_SUMMARY,16,19,398,10
+    LTEXT           "Format:",IDC_STATIC,16,34,48,8
+    LTEXT           "",IDC_JOC_STREAM_FORMAT,70,34,145,8
+    LTEXT           "Profile:",IDC_STATIC,220,34,44,8
+    LTEXT           "",IDC_JOC_STREAM_PROFILE,268,34,145,8
+    LTEXT           "Objects:",IDC_STATIC,16,48,48,8
+    LTEXT           "",IDC_JOC_STREAM_OBJECTS,70,48,145,8
+    LTEXT           "Dynamic scene:",IDC_STATIC,220,48,60,8
+    LTEXT           "",IDC_JOC_STREAM_DYNAMIC,284,48,129,8
+    LTEXT           "Sample rate:",IDC_STATIC,16,62,55,8
+    LTEXT           "",IDC_JOC_STREAM_SAMPLE_RATE,75,62,140,8
+    LTEXT           "Coverage:",IDC_STATIC,220,62,48,8
+    LTEXT           "",IDC_JOC_STREAM_COVERAGE,272,62,141,8
+
+    GROUPBOX        "Programme",IDC_STATIC,7,87,416,91
+    LTEXT           "Topology:",IDC_STATIC,16,100,52,8
+    LTEXT           "",IDC_JOC_STREAM_TOPOLOGY,72,100,341,8
+    LTEXT           "Block partition:",IDC_STATIC,16,114,70,8
+    LTEXT           "",IDC_JOC_STREAM_PARTITION,90,114,323,8
+    LTEXT           "LFE:",IDC_STATIC,16,128,52,8
+    LTEXT           "",IDC_JOC_STREAM_LFE,72,128,341,8
+    LTEXT           "JOC owner:",IDC_STATIC,16,142,52,8
+    LTEXT           "",IDC_JOC_STREAM_OWNER,72,142,341,8
+    LTEXT           "Carriers:",IDC_STATIC,16,156,52,8
+    LTEXT           "",IDC_JOC_STREAM_CARRIERS,72,156,341,8
+    LTEXT           "Dependent IDs:",IDC_STATIC,220,170,70,8
+    LTEXT           "",IDC_JOC_STREAM_DEPENDENTS,294,170,119,8
+
+    GROUPBOX        "Validation",IDC_STATIC,7,183,416,63
+    LTEXT           "ETSI Strict:",IDC_STATIC,16,196,60,8
+    LTEXT           "",IDC_JOC_STREAM_STRICT,80,196,115,8
+    LTEXT           "Deployed Compat:",IDC_STATIC,220,196,78,8
+    LTEXT           "",IDC_JOC_STREAM_COMPAT,302,196,111,8
+    LTEXT           "Malformed observed:",IDC_STATIC,16,210,90,8
+    LTEXT           "",IDC_JOC_STREAM_MALFORMED,110,210,85,8
+    LTEXT           "Observed AUs:",IDC_STATIC,220,210,70,8
+    LTEXT           "",IDC_JOC_STREAM_OBSERVED,294,210,119,8
+    LTEXT           "First observed metadata change:",IDC_STATIC,16,224,140,8
+    LTEXT           "",IDC_JOC_STREAM_FIRST_CHANGE,160,224,253,8
+
+    GROUPBOX        "Advanced details",IDC_STATIC,7,251,416,57
+    LTEXT           "EMDF payloads:",IDC_STATIC,16,264,70,8
+    LTEXT           "",IDC_JOC_STREAM_PAYLOADS,90,264,105,8
+    LTEXT           "Carriage:",IDC_STATIC,220,264,48,8
+    LTEXT           "",IDC_JOC_STREAM_CARRIAGE,272,264,141,8
+    LTEXT           "",IDC_JOC_STREAM_SCOPE,16,278,199,8
+    LTEXT           "",IDC_JOC_STREAM_EPOCH,220,278,193,8
+    LTEXT           "",IDC_JOC_STREAM_TIMESTAMP,16,292,199,8
+    LTEXT           "",IDC_JOC_STREAM_ERROR,220,292,193,8,SS_LEFT | SS_NOPREFIX
+    PUSHBUTTON      "Copy JSON",IDC_JOC_STREAM_COPY_JSON,338,310,75,13
+END
+#endif
+
 IDD_PROPPAGE_AUDIO_MIXING DIALOGEX 0, 0, 369, 215
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x0
@@ -280,6 +339,14 @@ BEGIN
         TOPMARGIN, 7
         BOTTOMMARGIN, 148
     END
+
+    IDD_PROPPAGE_JOC_STREAM, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 423
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 323
+    END
 END
 #endif    // APSTUDIO_INVOKED
 
@@ -296,6 +363,7 @@ BEGIN
     IDS_MIXER               "Mixing"
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     IDS_OPENJOC             "OpenJOC"
+    IDS_JOC_STREAM          "JOC Stream"
 #endif
 END
 

@@ -145,6 +145,7 @@
     <ClInclude Include="LAVAudio.h" />
     <ClInclude Include="LAVOpenJocDiagnostics.h" />
     <ClInclude Include="AudioSettingsProp.h" />
+    <ClInclude Include="..\..\include\LAVOpenJocInspection.h" />
     <ClInclude Include="Media.h" />
     <ClInclude Include="OpenJocAdmission.h" />
     <ClInclude Include="OpenJocBinauralSettings.h" />

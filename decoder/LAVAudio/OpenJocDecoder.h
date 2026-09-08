@@ -11,9 +11,14 @@
 #include "OpenJocDiagnostic.h"
 #include "OpenJocOutput.h"
 
+#if defined(LAV_ENABLE_OPENJOC)
+#include "openjoc.h"
+#endif
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -69,6 +74,11 @@ class LAVOpenJocDecoder final
     void RecordRuntimeDiagnostic(LAVOpenJocFailureReason reason, const char *detail);
     std::size_t ClassifierInputBytes() const;
     std::size_t StreamInputBytes() const;
+#if defined(LAV_ENABLE_OPENJOC)
+    bool GetLiveInspectionSnapshot(openjoc_live_inspection_snapshot *snapshot) const;
+    bool CopyLiveInspectionJson(char *output, std::size_t output_capacity,
+                                std::size_t *required_size) const;
+#endif
 
 #if defined(LAV_OPENJOC_TESTING)
     void FailNextClassifierCreateForTesting();
@@ -81,4 +91,5 @@ class LAVOpenJocDecoder final
     bool SetConfiguration(const LAVOpenJocOutputContract *contract, LAVOpenJocDialnormPolicy dialnorm_policy);
     struct Impl;
     std::unique_ptr<Impl> m_impl;
+    mutable std::recursive_mutex m_mutex;
 };

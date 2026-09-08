@@ -11,6 +11,7 @@
 #define IDD_PROPPAGE_STATUS             12
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
 #define IDD_PROPPAGE_OPENJOC            13
+#define IDD_PROPPAGE_JOC_STREAM         14
 #endif
 #define IDS_SETTINGS                    101
 #define IDS_STATUS                      102
@@ -19,6 +20,7 @@
 #define IDS_MIXER                       105
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
 #define IDS_OPENJOC                     106
+#define IDS_JOC_STREAM                  107
 #endif
 #define IDC_INPUT_STATUS                1013
 #define IDC_OUTPUT_STATUS               1026
@@ -139,6 +141,31 @@
 #define IDC_OPENJOC_SOFA_FILE           1153
 #define IDC_OPENJOC_SOFA_BROWSE         1154
 #define IDC_LBL_OPENJOC_SOFA_FILE       1155
+#define IDC_JOC_STREAM_SUMMARY          1160
+#define IDC_JOC_STREAM_FORMAT           1161
+#define IDC_JOC_STREAM_PROFILE          1162
+#define IDC_JOC_STREAM_OBJECTS          1163
+#define IDC_JOC_STREAM_DYNAMIC          1164
+#define IDC_JOC_STREAM_SAMPLE_RATE      1165
+#define IDC_JOC_STREAM_COVERAGE         1166
+#define IDC_JOC_STREAM_TOPOLOGY         1167
+#define IDC_JOC_STREAM_PARTITION        1168
+#define IDC_JOC_STREAM_LFE              1169
+#define IDC_JOC_STREAM_OWNER            1170
+#define IDC_JOC_STREAM_CARRIERS         1171
+#define IDC_JOC_STREAM_DEPENDENTS       1172
+#define IDC_JOC_STREAM_STRICT           1173
+#define IDC_JOC_STREAM_COMPAT           1174
+#define IDC_JOC_STREAM_MALFORMED        1175
+#define IDC_JOC_STREAM_OBSERVED         1176
+#define IDC_JOC_STREAM_PAYLOADS         1177
+#define IDC_JOC_STREAM_CARRIAGE         1178
+#define IDC_JOC_STREAM_EPOCH            1179
+#define IDC_JOC_STREAM_TIMESTAMP        1180
+#define IDC_JOC_STREAM_ERROR            1181
+#define IDC_JOC_STREAM_COPY_JSON        1182
+#define IDC_JOC_STREAM_SCOPE            1183
+#define IDC_JOC_STREAM_FIRST_CHANGE     1184
 #endif
 
 // Next default values for new objects
@@ -147,7 +174,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        107
 #define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1146
+#define _APS_NEXT_CONTROL_VALUE         1185
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

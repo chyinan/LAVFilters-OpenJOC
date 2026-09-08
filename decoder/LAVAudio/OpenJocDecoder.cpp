@@ -97,6 +97,11 @@ struct LAVOpenJocDecoder::Impl
         openjoc_status (*stream_decoder_receive_frame)(openjoc_stream_decoder *, openjoc_pcm_frame *) = nullptr;
         openjoc_status (*stream_decoder_drain)(openjoc_stream_decoder *) = nullptr;
         openjoc_status (*stream_decoder_reset)(openjoc_stream_decoder *) = nullptr;
+        openjoc_status (*live_inspection_snapshot_init)(openjoc_live_inspection_snapshot *) = nullptr;
+        openjoc_status (*stream_decoder_get_live_inspection_snapshot)(
+            const openjoc_stream_decoder *, openjoc_live_inspection_snapshot *) = nullptr;
+        openjoc_status (*stream_decoder_copy_live_inspection_json)(
+            const openjoc_stream_decoder *, char *, std::size_t, std::size_t *) = nullptr;
         const char *(*stream_decoder_last_error)(const openjoc_stream_decoder *) = nullptr;
         const char *(*stream_decoder_get_channel_label)(const openjoc_stream_decoder *, std::size_t) = nullptr;
 #if defined(LAV_OPENJOC_TESTING)
@@ -125,6 +130,12 @@ struct LAVOpenJocDecoder::Impl
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_receive_frame", stream_decoder_receive_frame) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_drain", stream_decoder_drain) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_reset", stream_decoder_reset) ||
+                !LoadOpenJocSymbol(module, "openjoc_live_inspection_snapshot_init",
+                                   live_inspection_snapshot_init) ||
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_get_live_inspection_snapshot",
+                                   stream_decoder_get_live_inspection_snapshot) ||
+                !LoadOpenJocSymbol(module, "openjoc_stream_decoder_copy_live_inspection_json",
+                                   stream_decoder_copy_live_inspection_json) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_last_error", stream_decoder_last_error) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_get_channel_label",
                                    stream_decoder_get_channel_label) ||
@@ -468,12 +479,13 @@ struct LAVOpenJocDecoder::Impl
                 continue;
             }
             if (status != OPENJOC_STATUS_OK && status != OPENJOC_STATUS_NEED_MORE_INPUT &&
-                status != OPENJOC_STATUS_FRAME_AVAILABLE)
+                status != OPENJOC_STATUS_FRAME_AVAILABLE && status != OPENJOC_STATUS_NOT_JOC)
             {
                 SetDecoderError();
                 return false;
             }
-            stream_input_bytes += chunk_size;
+            if (status != OPENJOC_STATUS_NOT_JOC)
+                stream_input_bytes += chunk_size;
             next += chunk_size;
             remaining -= chunk_size;
             first_chunk = false;
@@ -525,7 +537,7 @@ struct LAVOpenJocDecoder::Impl
                 continue;
             }
             if (status != OPENJOC_STATUS_OK && status != OPENJOC_STATUS_NEED_MORE_INPUT &&
-                status != OPENJOC_STATUS_END_OF_STREAM)
+                status != OPENJOC_STATUS_END_OF_STREAM && status != OPENJOC_STATUS_NOT_JOC)
             {
                 SetDecoderError();
                 return false;
@@ -558,6 +570,7 @@ LAVOpenJocState LAVOpenJocDecoder::State() const
 
 bool LAVOpenJocDecoder::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     const LAVOpenJocOutputContract *contract = FindLAVOpenJocOutputContract(policy);
     if (!contract)
         return false;
@@ -570,6 +583,7 @@ bool LAVOpenJocDecoder::SetBinauralConfiguration(
     std::vector<unsigned char> sofa_data,
     std::string virtual_layout)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!contract || !IsLAVOpenJocDialnormPolicy(dialnorm_policy) || virtual_layout.empty())
         return false;
     const bool unchanged = contract == m_impl->output_contract &&
@@ -642,6 +656,7 @@ bool LAVOpenJocDecoder::SetBinauralConfiguration(
 
 bool LAVOpenJocDecoder::SetDialnormPolicy(const LAVOpenJocDialnormPolicy policy)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!IsLAVOpenJocDialnormPolicy(policy))
         return false;
     return SetConfiguration(m_impl->output_contract, policy);
@@ -699,6 +714,7 @@ bool LAVOpenJocDecoder::SetConfiguration(const LAVOpenJocOutputContract *const c
 
 void LAVOpenJocDecoder::SetConfigurationError(const char *const detail)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_impl->configuration_error = true;
     m_impl->configuration_error_detail =
         BoundLAVOpenJocDiagnosticDetail(detail ? detail : "binaural HRTF configuration failed");
@@ -723,6 +739,7 @@ LAVOpenJocDialnormPolicy LAVOpenJocDecoder::DialnormPolicy() const
 LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, const std::size_t data_size,
                                                    const std::int64_t pts_samples, const bool end_of_stream)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_impl->available)
     {
         m_impl->admission.resolve(LAVOpenJocClassification::ConfirmedNonJoc, 0);
@@ -781,7 +798,19 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
         LAVOpenJocAdmissionAction action = m_impl->admission.resolve(
             classification, m_impl->admission.classified_bytes());
         if (action.kind == LAVOpenJocActionKind::UseStockDecoder)
+        {
+            if (classification == LAVOpenJocClassification::ConfirmedNonJoc)
+            {
+                // Keep the live read-only observer fed from the same in-band
+                // bytes while stock LAV remains the actual ordinary E-AC-3
+                // renderer. The OpenJOC stream bridge does not emit PCM for
+                // this classification.
+                (void)m_impl->FeedDecoder(data, data_size, m_impl->admission_pts_samples);
+                if (end_of_stream)
+                    (void)m_impl->FinishDecoder();
+            }
             return LAVOpenJocProcessResult::UseStockDecoder;
+        }
         if (action.kind == LAVOpenJocActionKind::NoAction)
         {
             if (end_of_stream)
@@ -852,6 +881,7 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
 
 bool LAVOpenJocDecoder::ReceiveFrame(LAVOpenJocFrame &frame)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
 #if defined(LAV_ENABLE_OPENJOC)
     if (!m_impl->pending_frames.empty())
     {
@@ -888,6 +918,7 @@ bool LAVOpenJocDecoder::ReceiveFrame(LAVOpenJocFrame &frame)
 
 bool LAVOpenJocDecoder::Drain()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
 #if defined(LAV_ENABLE_OPENJOC)
     return m_impl->available && m_impl->FinishDecoder();
 #else
@@ -897,6 +928,7 @@ bool LAVOpenJocDecoder::Drain()
 
 void LAVOpenJocDecoder::Reset()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (m_impl->configuration_error)
         m_impl->last_error = m_impl->configuration_error_detail;
     else
@@ -953,6 +985,7 @@ void LAVOpenJocDecoder::Reset()
 
 void LAVOpenJocDecoder::ResetForNewStream()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     Reset();
     if (!m_impl->configuration_error)
         m_impl->ClearDiagnostic();
@@ -970,6 +1003,7 @@ const char *LAVOpenJocDecoder::LastError() const
 
 void LAVOpenJocDecoder::ClearTransientError()
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     if (!m_impl->configuration_error)
         m_impl->last_error.clear();
 }
@@ -982,6 +1016,7 @@ LAVOpenJocDiagnosticSnapshot LAVOpenJocDecoder::DiagnosticSnapshot() const
 void LAVOpenJocDecoder::RecordRuntimeDiagnostic(const LAVOpenJocFailureReason reason,
                                                 const char *detail)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_impl->RecordRuntimeDiagnostic(reason, detail);
 }
 
@@ -994,6 +1029,30 @@ std::size_t LAVOpenJocDecoder::StreamInputBytes() const
 {
     return m_impl->stream_input_bytes;
 }
+
+#if defined(LAV_ENABLE_OPENJOC)
+bool LAVOpenJocDecoder::GetLiveInspectionSnapshot(openjoc_live_inspection_snapshot *snapshot) const
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!snapshot || !m_impl->decoder || !m_impl->api.stream_decoder_get_live_inspection_snapshot ||
+        !m_impl->api.live_inspection_snapshot_init)
+        return false;
+    if (m_impl->api.live_inspection_snapshot_init(snapshot) != OPENJOC_STATUS_OK)
+        return false;
+    return m_impl->api.stream_decoder_get_live_inspection_snapshot(m_impl->decoder, snapshot) ==
+           OPENJOC_STATUS_OK;
+}
+
+bool LAVOpenJocDecoder::CopyLiveInspectionJson(char *output, const std::size_t output_capacity,
+                                               std::size_t *required_size) const
+{
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (!m_impl->decoder || !m_impl->api.stream_decoder_copy_live_inspection_json)
+        return false;
+    return m_impl->api.stream_decoder_copy_live_inspection_json(
+               m_impl->decoder, output, output_capacity, required_size) == OPENJOC_STATUS_OK;
+}
+#endif
 
 #if defined(LAV_OPENJOC_TESTING)
 void LAVOpenJocDecoder::FailNextClassifierCreateForTesting()
