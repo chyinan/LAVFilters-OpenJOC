@@ -1576,7 +1576,8 @@ void CLAVAudioJocStreamProp::UpdateDisplay()
         const int controls[] = {
             IDC_JOC_STREAM_FORMAT, IDC_JOC_STREAM_PROFILE, IDC_JOC_STREAM_OBJECTS,
             IDC_JOC_STREAM_DYNAMIC, IDC_JOC_STREAM_SAMPLE_RATE, IDC_JOC_STREAM_COVERAGE,
-            IDC_JOC_STREAM_TOPOLOGY, IDC_JOC_STREAM_PARTITION, IDC_JOC_STREAM_LFE,
+            IDC_JOC_STREAM_PROGRAMME_LAYOUT, IDC_JOC_STREAM_TOPOLOGY,
+            IDC_JOC_STREAM_PARTITION, IDC_JOC_STREAM_LFE,
             IDC_JOC_STREAM_OWNER, IDC_JOC_STREAM_CARRIERS, IDC_JOC_STREAM_DEPENDENTS,
             IDC_JOC_STREAM_STRICT, IDC_JOC_STREAM_COMPAT, IDC_JOC_STREAM_MALFORMED,
             IDC_JOC_STREAM_OBSERVED, IDC_JOC_STREAM_PAYLOADS, IDC_JOC_STREAM_CARRIAGE,
@@ -1602,6 +1603,7 @@ void CLAVAudioJocStreamProp::UpdateDisplay()
     SetField(IDC_JOC_STREAM_SAMPLE_RATE,
              snapshot.has_sample_rate ? SnapshotNumber(snapshot.sample_rate_hz) + L" Hz" : L"Not observed yet");
     SetField(IDC_JOC_STREAM_COVERAGE, SnapshotText(snapshot.coverage));
+    SetField(IDC_JOC_STREAM_PROGRAMME_LAYOUT, SnapshotText(snapshot.programme_layout));
     SetField(IDC_JOC_STREAM_TOPOLOGY, SnapshotText(snapshot.programme_topology));
     SetField(IDC_JOC_STREAM_PARTITION, SnapshotText(snapshot.block_partition));
 

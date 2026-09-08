@@ -55,6 +55,7 @@ constexpr int kOpenJocStatusWarningControl = 1146;
 constexpr int kOpenJocStatusReasonControl = 1147;
 constexpr int kOpenJocStatusDetailsControl = 1148;
 constexpr int kJocStreamSummaryControl = 1160;
+constexpr int kJocStreamProgrammeLayoutControl = 1185;
 constexpr int kJocStreamCopyJsonControl = 1182;
 constexpr int kTrayIconControl = 1131;
 constexpr int kOutputChannelControl = 1086;
@@ -898,8 +899,9 @@ bool TestJocStreamPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND 
         hr = ActivatePage(page, filter, &site, parent, &page_window);
     const bool active = SUCCEEDED(hr);
     const HWND summary = SUCCEEDED(hr) ? FindControl(page_window, kJocStreamSummaryControl) : nullptr;
+    const HWND programme_layout = SUCCEEDED(hr) ? FindControl(page_window, kJocStreamProgrammeLayoutControl) : nullptr;
     const HWND copy_json = SUCCEEDED(hr) ? FindControl(page_window, kJocStreamCopyJsonControl) : nullptr;
-    if (!summary || !copy_json || WindowText(summary) != L"No active stream")
+    if (!summary || !programme_layout || !copy_json || WindowText(summary) != L"No active stream")
         hr = E_UNEXPECTED;
     DisconnectPage(page, active);
     Release(page);

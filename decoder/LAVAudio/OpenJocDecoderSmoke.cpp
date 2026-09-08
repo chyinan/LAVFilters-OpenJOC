@@ -477,6 +477,7 @@ static void live_inspection_snapshot_is_forwarded_for_stock_and_joc(
     assert(ordinary_snapshot.stream_present != 0);
     assert(ordinary_snapshot.joc_present == 0);
     assert(ordinary_snapshot.observed_au_count > 0);
+    assert(ordinary_snapshot.programme_layout[0] != '\0');
 
     LAVOpenJocDecoder joc_decoder;
     assert(joc_decoder.Process(joc.data(), joc.size(), INT64_MIN, true) ==
@@ -488,6 +489,7 @@ static void live_inspection_snapshot_is_forwarded_for_stock_and_joc(
     assert(joc_snapshot.observed_au_count > 0);
     assert(joc_snapshot.profile_index >= 0);
     assert(joc_snapshot.object_count > 0);
+    assert(joc_snapshot.programme_layout[0] != '\0');
 
     std::vector<char> json(16 * 1024);
     std::size_t required = 0;

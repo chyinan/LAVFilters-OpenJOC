@@ -166,6 +166,7 @@
 #define IDC_JOC_STREAM_COPY_JSON        1182
 #define IDC_JOC_STREAM_SCOPE            1183
 #define IDC_JOC_STREAM_FIRST_CHANGE     1184
+#define IDC_JOC_STREAM_PROGRAMME_LAYOUT 1185
 #endif
 
 // Next default values for new objects
@@ -174,7 +175,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        107
 #define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1185
+#define _APS_NEXT_CONTROL_VALUE         1186
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif
