@@ -68,5 +68,16 @@ int main()
     assert(lav_audio_source.find("CAutoTryLock receive_lock(&m_csReceive);") != std::string::npos);
     assert(lav_audio_source.find("m_openJocAdmissionSnapshot.load") != std::string::npos);
     assert(lav_audio_source.find("CAutoLock volume_lock(&m_csVolumeStats);") != std::string::npos);
+
+    const std::size_t live_snapshot =
+        lav_audio_source.find("STDMETHODIMP CLAVAudio::GetOpenJocLiveInspectionSnapshot");
+    const std::size_t live_json =
+        lav_audio_source.find("STDMETHODIMP CLAVAudio::CopyOpenJocLiveInspectionJson", live_snapshot);
+    const std::size_t live_end = lav_audio_source.find("#endif", live_json);
+    assert(live_snapshot != std::string::npos);
+    assert(live_json != std::string::npos);
+    assert(live_end != std::string::npos);
+    assert(lav_audio_source.find("CAutoTryLock receive_lock(&m_csReceive);", live_snapshot) >= live_json);
+    assert(lav_audio_source.find("CAutoTryLock receive_lock(&m_csReceive);", live_json) >= live_end);
     return 0;
 }

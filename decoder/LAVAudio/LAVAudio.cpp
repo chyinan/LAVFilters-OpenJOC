@@ -1791,9 +1791,6 @@ STDMETHODIMP CLAVAudio::GetOpenJocPlaybackDiagnostics(
 STDMETHODIMP CLAVAudio::GetOpenJocLiveInspectionSnapshot(openjoc_live_inspection_snapshot *snapshot)
 {
     CheckPointer(snapshot, E_POINTER);
-    CAutoTryLock receive_lock(&m_csReceive);
-    if (!receive_lock.IsLocked())
-        return S_FALSE;
     return m_openJoc.GetLiveInspectionSnapshot(snapshot) ? S_OK : S_FALSE;
 }
 
@@ -1804,9 +1801,6 @@ STDMETHODIMP CLAVAudio::CopyOpenJocLiveInspectionJson(char *output, const std::s
         return E_POINTER;
     if (!required_size)
         return E_POINTER;
-    CAutoTryLock receive_lock(&m_csReceive);
-    if (!receive_lock.IsLocked())
-        return S_FALSE;
     return m_openJoc.CopyLiveInspectionJson(output, output_capacity, required_size) ? S_OK : S_FALSE;
 }
 #endif
