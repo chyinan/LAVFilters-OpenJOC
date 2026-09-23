@@ -20,7 +20,6 @@ enum class LAVOpenJocHrtfSource : std::uint32_t
     BuiltinSadieIiD1 = 0,
     CustomSofa = 1,
     BuiltinSadieIiD2 = 2,
-    BuiltinAachenHighResolutionKemar = 3,
 };
 
 enum class LAVOpenJocBinauralVirtualLayout : std::uint32_t
@@ -33,7 +32,6 @@ inline constexpr bool IsLAVOpenJocHrtfSource(const LAVOpenJocHrtfSource source) 
 {
     return source == LAVOpenJocHrtfSource::BuiltinSadieIiD1 ||
            source == LAVOpenJocHrtfSource::BuiltinSadieIiD2 ||
-           source == LAVOpenJocHrtfSource::BuiltinAachenHighResolutionKemar ||
            source == LAVOpenJocHrtfSource::CustomSofa;
 }
 

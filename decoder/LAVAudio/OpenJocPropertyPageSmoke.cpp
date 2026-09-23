@@ -540,8 +540,7 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
             hr = E_UNEXPECTED;
     }
     constexpr const wchar_t *expected_hrtf_sources[] = {
-        L"SADIE II — KU100 (Default)", L"Custom SOFA...", L"SADIE II — KEMAR",
-        L"Aachen — High-Resolution KEMAR"};
+        L"SADIE II — KU100 (Default)", L"Custom SOFA...", L"SADIE II — KEMAR"};
     for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_hrtf_sources); ++index)
     {
         wchar_t label[96] = {};

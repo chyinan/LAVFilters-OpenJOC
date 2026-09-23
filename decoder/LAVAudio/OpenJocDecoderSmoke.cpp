@@ -199,15 +199,13 @@ static void builtin_hrtf_presets_are_forwarded_to_the_c_api()
         const char *descriptor_source;
         const char *sha256;
     };
-    constexpr std::array<PresetCase, 3> presets = {{
+    constexpr std::array<PresetCase, 2> presets = {{
         {LAVOpenJocHrtfSource::BuiltinSadieIiD1, "builtin:SADIE_II_D1_KU100_v2-2",
          "78d048a68f84d34051578c262e401e35baa0e718901f85349afe0232f985d4df"},
         {LAVOpenJocHrtfSource::BuiltinSadieIiD2, "builtin:sadie-ii-d2-kemar",
          "b2f42ca2ce9ef2dfa7e3eff263543c4f306d0ac95bd684cf5ca344c88d6bd461"},
-        {LAVOpenJocHrtfSource::BuiltinAachenHighResolutionKemar,
-         "builtin:aachen-high-resolution-kemar",
-         "2cc2f2d93194be681d4e446d66b4007060bc6c768cf7026c92e5efb87cf06dc3"},
     }};
+    assert(!IsLAVOpenJocHrtfSource(static_cast<LAVOpenJocHrtfSource>(3)));
     const LAVOpenJocOutputContract *contract =
         FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Binaural);
     assert(contract != nullptr);

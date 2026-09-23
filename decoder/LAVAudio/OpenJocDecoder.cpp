@@ -321,9 +321,6 @@ struct LAVOpenJocDecoder::Impl
             case LAVOpenJocHrtfSource::BuiltinSadieIiD2:
                 config.hrtf_preset = OPENJOC_HRTF_SADIE_D2_KEMAR;
                 break;
-            case LAVOpenJocHrtfSource::BuiltinAachenHighResolutionKemar:
-                config.hrtf_preset = OPENJOC_HRTF_AACHEN_HIGH_RESOLUTION_KEMAR;
-                break;
             case LAVOpenJocHrtfSource::CustomSofa:
                 config.hrtf_preset = OPENJOC_HRTF_SADIE_D1_KU100;
                 break;

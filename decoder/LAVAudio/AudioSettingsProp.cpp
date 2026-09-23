@@ -633,7 +633,6 @@ HRESULT CLAVAudioOpenJocProp::OnActivate()
         {LAVOpenJocHrtfSource::BuiltinSadieIiD1, L"SADIE II — KU100 (Default)"},
         {LAVOpenJocHrtfSource::CustomSofa, L"Custom SOFA..."},
         {LAVOpenJocHrtfSource::BuiltinSadieIiD2, L"SADIE II — KEMAR"},
-        {LAVOpenJocHrtfSource::BuiltinAachenHighResolutionKemar, L"Aachen — High-Resolution KEMAR"},
     };
     LRESULT selected_source = CB_ERR;
     for (const auto &option : hrtf_options)
