@@ -218,7 +218,7 @@ std::wstring BinauralErrorDetail(const LAVOpenJocHrtfSource source, const std::w
     }
     else
     {
-        detail += L"the built-in SADIE II D1 resource could not be initialized";
+        detail += L"the selected built-in HRTF resource could not be initialized";
     }
     return detail;
 }
@@ -600,7 +600,7 @@ HRESULT CLAVAudio::ConfigureOpenJocBinauralConfiguration(
         return E_INVALIDARG;
 
     std::wstring requested_path = sofa_path ? sofa_path : L"";
-    if (source == LAVOpenJocHrtfSource::BuiltinSadieIiD1)
+    if (source != LAVOpenJocHrtfSource::CustomSofa)
         requested_path.clear();
     if (source == LAVOpenJocHrtfSource::CustomSofa && requested_path.empty())
     {
@@ -624,7 +624,7 @@ HRESULT CLAVAudio::ConfigureOpenJocBinauralConfiguration(
         return E_FAIL;
     }
 
-    if (!m_openJoc.SetBinauralConfiguration(contract, m_settings.OpenJocDialnormPolicy,
+    if (!m_openJoc.SetBinauralConfiguration(contract, m_settings.OpenJocDialnormPolicy, source,
                                             std::move(sofa_data), layout_name))
     {
         m_openJocBinauralConfigurationError =

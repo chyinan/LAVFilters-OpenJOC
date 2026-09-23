@@ -75,6 +75,7 @@ struct LAVOpenJocDecoder::Impl
     const LAVOpenJocOutputContract *output_contract =
         FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Stereo);
     LAVOpenJocDialnormPolicy dialnorm_policy = LAVOpenJocDialnormPolicy::Calibrated;
+    LAVOpenJocHrtfSource binaural_hrtf_source = LAVOpenJocHrtfSource::BuiltinSadieIiD1;
     std::vector<unsigned char> binaural_sofa_data;
     std::string binaural_virtual_layout = "7.1.4";
     bool configuration_error = false;
@@ -92,7 +93,7 @@ struct LAVOpenJocDecoder::Impl
         HMODULE module = nullptr;
 
         std::uint32_t (*get_abi_version)() = nullptr;
-        openjoc_status (*decoder_config_init_v1_4)(openjoc_decoder_config *) = nullptr;
+        openjoc_status (*decoder_config_init_v1_6)(openjoc_decoder_config *) = nullptr;
         openjoc_status (*stream_decoder_create)(const openjoc_decoder_config *, openjoc_stream_decoder **) = nullptr;
         void (*stream_decoder_destroy)(openjoc_stream_decoder *) = nullptr;
         openjoc_status (*stream_decoder_send_chunk)(openjoc_stream_decoder *, const std::uint8_t *, std::size_t,
@@ -126,7 +127,7 @@ struct LAVOpenJocDecoder::Impl
                 return false;
 
             if (!LoadOpenJocSymbol(module, "openjoc_get_abi_version", get_abi_version) ||
-                !LoadOpenJocSymbol(module, "openjoc_decoder_config_init_v1_4", decoder_config_init_v1_4) ||
+                !LoadOpenJocSymbol(module, "openjoc_decoder_config_init_v1_6", decoder_config_init_v1_6) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_create", stream_decoder_create) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_destroy", stream_decoder_destroy) ||
                 !LoadOpenJocSymbol(module, "openjoc_stream_decoder_send_chunk", stream_decoder_send_chunk) ||
@@ -268,6 +269,7 @@ struct LAVOpenJocDecoder::Impl
 
     bool CreateDecoderForContract(const LAVOpenJocOutputContract *contract,
                                   const LAVOpenJocDialnormPolicy dialnorm_policy,
+                                  const LAVOpenJocHrtfSource hrtf_source,
                                   const std::vector<unsigned char> &sofa_data,
                                   const std::string &virtual_layout,
                                   openjoc_stream_decoder **output_decoder)
@@ -288,7 +290,7 @@ struct LAVOpenJocDecoder::Impl
 #endif
 
         openjoc_decoder_config config{};
-        if (!api.decoder_config_init_v1_4 || api.decoder_config_init_v1_4(&config) != OPENJOC_STATUS_OK)
+        if (!api.decoder_config_init_v1_6 || api.decoder_config_init_v1_6(&config) != OPENJOC_STATUS_OK)
         {
             SetApiError("failed to initialize OpenJOC decoder configuration");
             return false;
@@ -311,6 +313,21 @@ struct LAVOpenJocDecoder::Impl
             config.sofa_data = sofa_data.empty() ? nullptr : sofa_data.data();
             config.sofa_size = sofa_data.size();
             config.lfe_policy = OPENJOC_LFE_EXCLUDE;
+            switch (hrtf_source)
+            {
+            case LAVOpenJocHrtfSource::BuiltinSadieIiD1:
+                config.hrtf_preset = OPENJOC_HRTF_SADIE_D1_KU100;
+                break;
+            case LAVOpenJocHrtfSource::BuiltinSadieIiD2:
+                config.hrtf_preset = OPENJOC_HRTF_SADIE_D2_KEMAR;
+                break;
+            case LAVOpenJocHrtfSource::BuiltinAachenHighResolutionKemar:
+                config.hrtf_preset = OPENJOC_HRTF_AACHEN_HIGH_RESOLUTION_KEMAR;
+                break;
+            case LAVOpenJocHrtfSource::CustomSofa:
+                config.hrtf_preset = OPENJOC_HRTF_SADIE_D1_KU100;
+                break;
+            }
         }
         else
         {
@@ -369,7 +386,8 @@ struct LAVOpenJocDecoder::Impl
     bool CreateDecoder()
     {
         return decoder ||
-               CreateDecoderForContract(output_contract, dialnorm_policy, binaural_sofa_data,
+               CreateDecoderForContract(output_contract, dialnorm_policy, binaural_hrtf_source,
+                                        binaural_sofa_data,
                                         binaural_virtual_layout, &decoder);
     }
 
@@ -583,14 +601,17 @@ bool LAVOpenJocDecoder::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
 bool LAVOpenJocDecoder::SetBinauralConfiguration(
     const LAVOpenJocOutputContract *const contract,
     const LAVOpenJocDialnormPolicy dialnorm_policy,
+    const LAVOpenJocHrtfSource hrtf_source,
     std::vector<unsigned char> sofa_data,
     std::string virtual_layout)
 {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    if (!contract || !IsLAVOpenJocDialnormPolicy(dialnorm_policy) || virtual_layout.empty())
+    if (!contract || !IsLAVOpenJocDialnormPolicy(dialnorm_policy) ||
+        !IsLAVOpenJocHrtfSource(hrtf_source) || virtual_layout.empty())
         return false;
     const bool unchanged = contract == m_impl->output_contract &&
                            dialnorm_policy == m_impl->dialnorm_policy &&
+                           hrtf_source == m_impl->binaural_hrtf_source &&
                            sofa_data == m_impl->binaural_sofa_data &&
                            virtual_layout == m_impl->binaural_virtual_layout;
     if (unchanged && !m_impl->configuration_error)
@@ -606,8 +627,8 @@ bool LAVOpenJocDecoder::SetBinauralConfiguration(
         FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Binaural);
     openjoc_stream_decoder *validation_decoder = nullptr;
     if (contract->policy != LAVOpenJocOutputPolicy::Binaural &&
-        (!binaural_contract ||
-         !m_impl->CreateDecoderForContract(binaural_contract, dialnorm_policy, sofa_data,
+         (!binaural_contract ||
+         !m_impl->CreateDecoderForContract(binaural_contract, dialnorm_policy, hrtf_source, sofa_data,
                                            virtual_layout, &validation_decoder)))
     {
         if (next_classifier)
@@ -618,7 +639,7 @@ bool LAVOpenJocDecoder::SetBinauralConfiguration(
         m_impl->api.stream_decoder_destroy(validation_decoder);
 
     openjoc_stream_decoder *next_decoder = nullptr;
-    if (!m_impl->CreateDecoderForContract(contract, dialnorm_policy, sofa_data, virtual_layout,
+    if (!m_impl->CreateDecoderForContract(contract, dialnorm_policy, hrtf_source, sofa_data, virtual_layout,
                                           &next_decoder))
     {
         if (next_classifier)
@@ -632,6 +653,7 @@ bool LAVOpenJocDecoder::SetBinauralConfiguration(
     m_impl->decoder = next_decoder;
     m_impl->output_contract = contract;
     m_impl->dialnorm_policy = dialnorm_policy;
+    m_impl->binaural_hrtf_source = hrtf_source;
     m_impl->binaural_sofa_data = std::move(sofa_data);
     m_impl->binaural_virtual_layout = std::move(virtual_layout);
     m_impl->available = true;
@@ -682,7 +704,8 @@ bool LAVOpenJocDecoder::SetConfiguration(const LAVOpenJocOutputContract *const c
         return false;
 
     openjoc_stream_decoder *next_decoder = nullptr;
-    if (!m_impl->CreateDecoderForContract(contract, dialnorm_policy, m_impl->binaural_sofa_data,
+    if (!m_impl->CreateDecoderForContract(contract, dialnorm_policy, m_impl->binaural_hrtf_source,
+                                          m_impl->binaural_sofa_data,
                                           m_impl->binaural_virtual_layout, &next_decoder))
     {
         m_impl->api.classifier_destroy(next_classifier);

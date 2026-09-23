@@ -172,12 +172,12 @@ static void binaural_virtual_layout_configuration_is_forwarded_and_switch_safe()
     LAVOpenJocDecoder decoder;
     assert(decoder.IsAvailable());
     assert(decoder.SetBinauralConfiguration(
-        contract, LAVOpenJocDialnormPolicy::Calibrated, {}, "7.1.4"));
+        contract, LAVOpenJocDialnormPolicy::Calibrated, LAVOpenJocHrtfSource::BuiltinSadieIiD1, {}, "7.1.4"));
 #if defined(LAV_OPENJOC_TESTING)
     assert(std::strstr(decoder.ConfigDescriptorForTesting(), "binaural_virtual_layout=7.1.4") != nullptr);
 #endif
     assert(decoder.SetBinauralConfiguration(
-        contract, LAVOpenJocDialnormPolicy::Calibrated, {}, "9.1.6"));
+        contract, LAVOpenJocDialnormPolicy::Calibrated, LAVOpenJocHrtfSource::BuiltinSadieIiD1, {}, "9.1.6"));
     assert(decoder.OutputContract() == contract);
 #if defined(LAV_OPENJOC_TESTING)
     assert(std::strstr(decoder.ConfigDescriptorForTesting(), "binaural_virtual_layout=9.1.6") != nullptr);
@@ -186,9 +186,53 @@ static void binaural_virtual_layout_configuration_is_forwarded_and_switch_safe()
     LAVOpenJocFrame stale;
     assert(!decoder.ReceiveFrame(stale));
     assert(decoder.SetBinauralConfiguration(
-        contract, LAVOpenJocDialnormPolicy::Calibrated, {}, "7.1.4"));
+        contract, LAVOpenJocDialnormPolicy::Calibrated, LAVOpenJocHrtfSource::BuiltinSadieIiD1, {}, "7.1.4"));
     assert(decoder.State() == LAVOpenJocState::Undecided);
 }
+
+#if defined(LAV_OPENJOC_TESTING)
+static void builtin_hrtf_presets_are_forwarded_to_the_c_api()
+{
+    struct PresetCase
+    {
+        LAVOpenJocHrtfSource source;
+        const char *descriptor_source;
+        const char *sha256;
+    };
+    constexpr std::array<PresetCase, 3> presets = {{
+        {LAVOpenJocHrtfSource::BuiltinSadieIiD1, "builtin:SADIE_II_D1_KU100_v2-2",
+         "78d048a68f84d34051578c262e401e35baa0e718901f85349afe0232f985d4df"},
+        {LAVOpenJocHrtfSource::BuiltinSadieIiD2, "builtin:sadie-ii-d2-kemar",
+         "b2f42ca2ce9ef2dfa7e3eff263543c4f306d0ac95bd684cf5ca344c88d6bd461"},
+        {LAVOpenJocHrtfSource::BuiltinAachenHighResolutionKemar,
+         "builtin:aachen-high-resolution-kemar",
+         "2cc2f2d93194be681d4e446d66b4007060bc6c768cf7026c92e5efb87cf06dc3"},
+    }};
+    const LAVOpenJocOutputContract *contract =
+        FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Binaural);
+    assert(contract != nullptr);
+    for (const PresetCase &preset : presets)
+    {
+        LAVOpenJocDecoder decoder;
+        assert(decoder.IsAvailable());
+        assert(decoder.SetBinauralConfiguration(
+            contract, LAVOpenJocDialnormPolicy::Calibrated, preset.source, {}, "7.1.4"));
+        const char *descriptor = decoder.ConfigDescriptorForTesting();
+        assert(descriptor != nullptr);
+        const std::string expected_source =
+            std::string("binaural_hrtf_source=") + preset.descriptor_source;
+        const std::string expected_hash = std::string("binaural_hrtf_sha256=") + preset.sha256;
+        if (std::strstr(descriptor, expected_source.c_str()) == nullptr ||
+            std::strstr(descriptor, expected_hash.c_str()) == nullptr)
+        {
+            std::fprintf(stderr, "expected source/hash: %s / %s\nactual descriptor: %s\n",
+                         expected_source.c_str(), expected_hash.c_str(), descriptor);
+        }
+        assert(std::strstr(descriptor, expected_source.c_str()) != nullptr);
+        assert(std::strstr(descriptor, expected_hash.c_str()) != nullptr);
+    }
+}
+#endif
 
 static void binaural_configuration_error_does_not_block_stock_admission(
     const std::vector<unsigned char> &ordinary, const std::vector<unsigned char> &joc)
@@ -219,7 +263,7 @@ static std::vector<float> render_binaural_fixture(const std::vector<unsigned cha
     LAVOpenJocDecoder decoder;
     assert(decoder.IsAvailable());
     assert(decoder.SetBinauralConfiguration(
-        contract, LAVOpenJocDialnormPolicy::Calibrated, sofa, layout));
+        contract, LAVOpenJocDialnormPolicy::Calibrated, LAVOpenJocHrtfSource::CustomSofa, sofa, layout));
 #if defined(LAV_OPENJOC_TESTING)
     const char *descriptor = decoder.ConfigDescriptorForTesting();
     assert(descriptor != nullptr);
@@ -527,8 +571,18 @@ static void live_inspection_snapshot_survives_directshow_sized_chunks(
 
 int main(int argc, char **argv)
 {
+#if defined(LAV_OPENJOC_TESTING)
+    if (argc == 2 && std::strcmp(argv[1], "--hrtf-presets") == 0)
+    {
+        builtin_hrtf_presets_are_forwarded_to_the_c_api();
+        return 0;
+    }
+#endif
     assert(argc == 3 || argc == 4);
     binaural_virtual_layout_configuration_is_forwarded_and_switch_safe();
+#if defined(LAV_OPENJOC_TESTING)
+    builtin_hrtf_presets_are_forwarded_to_the_c_api();
+#endif
     const std::vector<unsigned char> ordinary = read_file(argv[1]);
     const std::vector<unsigned char> joc = read_file(argv[2]);
     binaural_configuration_error_does_not_block_stock_admission(ordinary, joc);

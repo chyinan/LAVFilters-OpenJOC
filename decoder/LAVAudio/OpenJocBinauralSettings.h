@@ -19,6 +19,8 @@ enum class LAVOpenJocHrtfSource : std::uint32_t
 {
     BuiltinSadieIiD1 = 0,
     CustomSofa = 1,
+    BuiltinSadieIiD2 = 2,
+    BuiltinAachenHighResolutionKemar = 3,
 };
 
 enum class LAVOpenJocBinauralVirtualLayout : std::uint32_t
@@ -29,7 +31,10 @@ enum class LAVOpenJocBinauralVirtualLayout : std::uint32_t
 
 inline constexpr bool IsLAVOpenJocHrtfSource(const LAVOpenJocHrtfSource source) noexcept
 {
-    return source == LAVOpenJocHrtfSource::BuiltinSadieIiD1 || source == LAVOpenJocHrtfSource::CustomSofa;
+    return source == LAVOpenJocHrtfSource::BuiltinSadieIiD1 ||
+           source == LAVOpenJocHrtfSource::BuiltinSadieIiD2 ||
+           source == LAVOpenJocHrtfSource::BuiltinAachenHighResolutionKemar ||
+           source == LAVOpenJocHrtfSource::CustomSofa;
 }
 
 inline constexpr bool IsLAVOpenJocBinauralVirtualLayout(
@@ -52,4 +57,3 @@ interface __declspec(uuid("A4DA1C8C-3D27-4D11-8A0D-B4D03F5D21C2")) ILAVOpenJocBi
                                          LAVOpenJocBinauralVirtualLayout layout, LPCWSTR sofa_path) = 0;
     STDMETHOD(GetBinauralConfigurationError)(LPWSTR detail, DWORD capacity) = 0;
 };
-

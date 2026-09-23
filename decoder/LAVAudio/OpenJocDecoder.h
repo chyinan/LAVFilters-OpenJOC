@@ -8,6 +8,7 @@
 #pragma once
 
 #include "OpenJocAdmission.h"
+#include "OpenJocBinauralSettings.h"
 #include "OpenJocDiagnostic.h"
 #include "OpenJocOutput.h"
 
@@ -54,6 +55,7 @@ class LAVOpenJocDecoder final
     bool SetOutputPolicy(LAVOpenJocOutputPolicy policy);
     bool SetBinauralConfiguration(const LAVOpenJocOutputContract *contract,
                                   LAVOpenJocDialnormPolicy dialnorm_policy,
+                                  LAVOpenJocHrtfSource hrtf_source,
                                   std::vector<unsigned char> sofa_data,
                                   std::string virtual_layout);
     bool SetDialnormPolicy(LAVOpenJocDialnormPolicy policy);
