@@ -494,6 +494,16 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     HWND hrtf_source = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocHrtfSourceControl) : nullptr;
     HWND sofa_file = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocSofaFileControl) : nullptr;
     HWND sofa_browse = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocSofaBrowseControl) : nullptr;
+    constexpr struct
+    {
+        LAVOpenJocHrtfSource source;
+        const wchar_t *label;
+    } expected_hrtf_sources[] = {
+        {LAVOpenJocHrtfSource::BuiltinSadieIiD1, L"SADIE II — KU100 (Default)"},
+        {LAVOpenJocHrtfSource::BuiltinSadieIiD2, L"SADIE II — KEMAR"},
+        {LAVOpenJocHrtfSource::CustomSofa, L"Custom SOFA..."},
+    };
+    constexpr LRESULT custom_sofa_index = static_cast<LRESULT>(std::size(expected_hrtf_sources) - 1);
     if (!combo || !output_guidance || !output_compat || !dialnorm || !virtual_layout || !hrtf_source ||
         !sofa_file || !sofa_browse ||
         WindowText(output_guidance) !=
@@ -506,7 +516,7 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
         SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0 ||
         SendMessageW(virtual_layout, CB_GETCOUNT, 0, 0) != 2 ||
         SendMessageW(virtual_layout, CB_GETCURSEL, 0, 0) != 0 ||
-        SendMessageW(hrtf_source, CB_GETCOUNT, 0, 0) != 2 ||
+        SendMessageW(hrtf_source, CB_GETCOUNT, 0, 0) != std::size(expected_hrtf_sources) ||
         SendMessageW(hrtf_source, CB_GETCURSEL, 0, 0) != 0 ||
         WindowText(sofa_file) != L"" || IsWindowEnabled(virtual_layout) || IsWindowEnabled(hrtf_source) ||
         IsWindowEnabled(sofa_file) || IsWindowEnabled(sofa_browse))
@@ -539,14 +549,13 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
             SendMessageW(virtual_layout, CB_GETITEMDATA, index, 0) != static_cast<LRESULT>(index))
             hr = E_UNEXPECTED;
     }
-    constexpr const wchar_t *expected_hrtf_sources[] = {
-        L"SADIE II — KU100 (Default)", L"Custom SOFA...", L"SADIE II — KEMAR"};
     for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_hrtf_sources); ++index)
     {
         wchar_t label[96] = {};
         SendMessageW(hrtf_source, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(label));
-        if (std::wstring(label) != expected_hrtf_sources[index] ||
-            SendMessageW(hrtf_source, CB_GETITEMDATA, index, 0) != static_cast<LRESULT>(index))
+        if (std::wstring(label) != expected_hrtf_sources[index].label ||
+            SendMessageW(hrtf_source, CB_GETITEMDATA, index, 0) !=
+                static_cast<LRESULT>(static_cast<std::uint32_t>(expected_hrtf_sources[index].source)))
             hr = E_UNEXPECTED;
     }
 
@@ -563,7 +572,14 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
             hr = E_UNEXPECTED;
         SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocHrtfSourceControl, CBN_SELCHANGE),
                      reinterpret_cast<LPARAM>(hrtf_source));
-        if (!IsWindowEnabled(sofa_file) || !IsWindowEnabled(sofa_browse))
+        if (IsWindowEnabled(sofa_file) || IsWindowEnabled(sofa_browse))
+            hr = E_UNEXPECTED;
+        if (SUCCEEDED(hr) && SendMessageW(hrtf_source, CB_SETCURSEL, custom_sofa_index, 0) != custom_sofa_index)
+            hr = E_UNEXPECTED;
+        if (SUCCEEDED(hr))
+            SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocHrtfSourceControl, CBN_SELCHANGE),
+                         reinterpret_cast<LPARAM>(hrtf_source));
+        if (SUCCEEDED(hr) && (!IsWindowEnabled(sofa_file) || !IsWindowEnabled(sofa_browse)))
             hr = E_UNEXPECTED;
         if (SUCCEEDED(hr) && SendMessageW(virtual_layout, CB_SETCURSEL, 1, 0) != 1)
             hr = E_UNEXPECTED;

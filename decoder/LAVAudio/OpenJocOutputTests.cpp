@@ -255,14 +255,14 @@ void test_binaural_uses_ear_labels_with_stereo_transport()
     std::size_t byte_count = 0;
     assert(ValidateLAVOpenJocFrameMetadata(
         *contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, 2, sample_count,
-        sample_count * 2, "binaural", frame_labels, 2, &element_count, &byte_count));
+        sample_count * 2 * sizeof(float), "binaural", frame_labels, 2, &element_count, &byte_count));
     assert(element_count == sample_count * 2);
     assert(byte_count == sample_count * 2 * sizeof(float));
 
     const char *physical_labels[] = {"FL", "FR"};
     assert(!ValidateLAVOpenJocFrameMetadata(
         *contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, 2, sample_count,
-        sample_count * 2, "binaural", physical_labels, 2, nullptr, nullptr));
+        sample_count * 2 * sizeof(float), "binaural", physical_labels, 2, nullptr, nullptr));
 }
 
 void test_every_policy_has_the_exact_canonical_contract()
@@ -414,9 +414,10 @@ void test_invalid_contracts_leave_no_partial_ffmpeg_layout()
 void test_frame_metadata_validation_is_exact_and_checked()
 {
     const LAVOpenJocOutputContract &contract =
-        *FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Layout714);
+        *FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Stereo);
     constexpr std::size_t sample_count = 256;
-    const std::size_t data_len = sample_count * contract.channel_count;
+    const std::size_t element_count = sample_count * contract.channel_count;
+    const std::size_t data_byte_count = element_count * sizeof(float);
     std::size_t validated_elements = 0;
     std::size_t validated_bytes = 0;
     std::array<const char *, kMaximumChannels> ffmpeg_labels{};
@@ -424,11 +425,16 @@ void test_frame_metadata_validation_is_exact_and_checked()
         ffmpeg_labels[index] = ffmpeg_label_for(contract.ordered_channels[index]);
 
     assert(ValidateLAVOpenJocFrameMetadata(
-        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count,
+        data_byte_count,
         contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count,
         &validated_elements, &validated_bytes));
-    assert(validated_elements == data_len);
-    assert(validated_bytes == data_len * sizeof(float));
+    assert(validated_elements == element_count);
+    assert(validated_bytes == data_byte_count);
+    assert(!ValidateLAVOpenJocFrameMetadata(
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count,
+        element_count, contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count,
+        nullptr, nullptr));
 
     std::array<const char *, kMaximumChannels> swapped_labels{};
     for (std::uint32_t index = 0; index < contract.channel_count; ++index)
@@ -438,37 +444,45 @@ void test_frame_metadata_validation_is_exact_and_checked()
     swapped_labels[1] = first;
 
     assert(!ValidateLAVOpenJocFrameMetadata(
-        contract, 0, 48000, contract.channel_count, sample_count, data_len,
+        contract, 0, 48000, contract.channel_count, sample_count, data_byte_count,
         contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
     assert(!ValidateLAVOpenJocFrameMetadata(
-        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 44100, contract.channel_count, sample_count, data_len,
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 44100, contract.channel_count, sample_count,
+        data_byte_count,
         contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
     assert(!ValidateLAVOpenJocFrameMetadata(
-        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, 0, sample_count, data_len,
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, 0, sample_count, data_byte_count,
         contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
     assert(!ValidateLAVOpenJocFrameMetadata(
-        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count - 1, sample_count, data_len,
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count - 1, sample_count,
+        data_byte_count,
         contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
     assert(!ValidateLAVOpenJocFrameMetadata(
         contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, 0, 0,
         contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
     assert(!ValidateLAVOpenJocFrameMetadata(
-        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len - 1,
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count,
+        data_byte_count - 1,
         contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
     assert(!ValidateLAVOpenJocFrameMetadata(
-        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count,
+        data_byte_count,
         nullptr, ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
     assert(!ValidateLAVOpenJocFrameMetadata(
-        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count,
+        data_byte_count,
         "7.1.2", ffmpeg_labels.data(), contract.channel_count, nullptr, nullptr));
     assert(!ValidateLAVOpenJocFrameMetadata(
-        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count,
+        data_byte_count,
         contract.ffmpeg_standard_layout_name, nullptr, contract.channel_count, nullptr, nullptr));
     assert(!ValidateLAVOpenJocFrameMetadata(
-        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count,
+        data_byte_count,
         contract.ffmpeg_standard_layout_name, swapped_labels.data(), contract.channel_count, nullptr, nullptr));
     assert(!ValidateLAVOpenJocFrameMetadata(
-        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count, data_len,
+        contract, LAV_OPENJOC_SAMPLE_FORMAT_FLOAT32, 48000, contract.channel_count, sample_count,
+        data_byte_count,
         contract.ffmpeg_standard_layout_name, ffmpeg_labels.data(), contract.channel_count - 1, nullptr,
         nullptr));
 

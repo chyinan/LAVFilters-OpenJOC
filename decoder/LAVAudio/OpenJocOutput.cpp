@@ -229,7 +229,7 @@ bool BuildOpenJocAvChannelLayout(const LAVOpenJocOutputContract &contract, AVCha
 bool ValidateLAVOpenJocFrameMetadata(
     const LAVOpenJocOutputContract &contract, const std::uint32_t sample_format,
     const std::uint32_t sample_rate, const std::uint32_t channel_count, const std::size_t sample_count,
-    const std::size_t data_len, const char *layout_name, const char *const *channel_labels,
+    const std::size_t data_byte_count, const char *layout_name, const char *const *channel_labels,
     const std::size_t channel_label_count, std::size_t *validated_element_count,
     std::size_t *validated_byte_count) noexcept
 {
@@ -258,9 +258,11 @@ bool ValidateLAVOpenJocFrameMetadata(
     if (sample_count > (std::numeric_limits<std::size_t>::max)() / channel_count)
         return false;
     const std::size_t element_count = sample_count * channel_count;
-    if (data_len != element_count || element_count > (std::numeric_limits<std::size_t>::max)() / sizeof(float))
+    if (element_count > (std::numeric_limits<std::size_t>::max)() / sizeof(float))
         return false;
     const std::size_t byte_count = element_count * sizeof(float);
+    if (data_byte_count != byte_count)
+        return false;
 
     if (validated_element_count)
         *validated_element_count = element_count;

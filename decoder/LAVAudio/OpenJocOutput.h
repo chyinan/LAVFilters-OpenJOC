@@ -44,9 +44,9 @@ FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy policy) noexcept;
 
 [[nodiscard]] bool ValidateLAVOpenJocFrameMetadata(
     const LAVOpenJocOutputContract &contract, std::uint32_t sample_format, std::uint32_t sample_rate,
-    std::uint32_t channel_count, std::size_t sample_count, std::size_t data_len, const char *layout_name,
-    const char *const *channel_labels, std::size_t channel_label_count, std::size_t *validated_element_count,
-    std::size_t *validated_byte_count) noexcept;
+    std::uint32_t channel_count, std::size_t sample_count, std::size_t data_byte_count,
+    const char *layout_name, const char *const *channel_labels, std::size_t channel_label_count,
+    std::size_t *validated_element_count, std::size_t *validated_byte_count) noexcept;
 
 [[nodiscard]] bool PrepareLAVOpenJocFrameHandoff(
     const LAVOpenJocOutputContract *current_contract, const LAVOpenJocOutputContract *frame_contract,
