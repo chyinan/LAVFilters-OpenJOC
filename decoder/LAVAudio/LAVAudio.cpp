@@ -1278,9 +1278,16 @@ HRESULT CLAVAudio::SetOutputGain(const std::int32_t gain_tenths_db)
             return flush_hr;
         m_settings.OpenJocOutputGainTenthsDb = gain_tenths_db;
         m_openJocOutputGainSnapshot.store(gain_tenths_db, std::memory_order_release);
+        // Serialize persistence with the committed value and SetRuntimeConfig's
+        // default/reload transaction. Saving after releasing m_csReceive lets an
+        // older setter overwrite a newer value (or observe the wrong runtime mode).
+        // Reuse the recursive receive lock: FlushOutputLocked can reenter settings,
+        // so a second configuration lock would introduce a lock-order hazard.
+        // Registry I/O happens only on a changed control setting, never in the
+        // per-buffer gain path; the audio snapshot remains atomic.
+        const HRESULT save_hr = SaveOpenJocOutputGainSettings(gain_tenths_db);
+        return save_hr == S_FALSE ? S_OK : save_hr;
     }
-    const HRESULT save_hr = SaveOpenJocOutputGainSettings(gain_tenths_db);
-    return save_hr == S_FALSE ? S_OK : save_hr;
 }
 #endif
 
