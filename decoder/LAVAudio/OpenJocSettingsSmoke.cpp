@@ -596,7 +596,13 @@ bool TestDialnormNamespaceAndRuntimeIsolation(const FilterModule &module)
 
 bool TestDialnormGetterReadbackSourceContract()
 {
-    std::ifstream source_file(std::filesystem::path("decoder/LAVAudio/LAVAudio.cpp"), std::ios::binary);
+    const std::filesystem::path source_path = std::filesystem::path(__FILE__).parent_path() / "LAVAudio.cpp";
+    std::ifstream source_file(source_path, std::ios::binary);
+    if (!source_file.good())
+    {
+        std::fwprintf(stderr, L"cannot read dialnorm getter source: %ls\n", source_path.wstring().c_str());
+        return false;
+    }
     const std::string source((std::istreambuf_iterator<char>(source_file)), std::istreambuf_iterator<char>());
     const std::size_t getter_begin = source.find("HRESULT CLAVAudio::GetDialnormPolicy(");
     const std::size_t getter_end = source.find("HRESULT CLAVAudio::SetDialnormPolicy(", getter_begin);
