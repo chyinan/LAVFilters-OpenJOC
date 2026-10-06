@@ -54,3 +54,24 @@ interface __declspec(uuid("82FA58E4-10B7-4C25-95E6-1098496995CA")) ILAVOpenJocLe
     STDMETHOD(GetDialnormPolicy)(LAVOpenJocDialnormPolicy * policy) = 0;
     STDMETHOD(SetDialnormPolicy)(LAVOpenJocDialnormPolicy policy) = 0;
 };
+
+inline constexpr std::uint32_t LAV_OPENJOC_OUTPUT_GAIN_SCHEMA_VERSION = 1;
+inline constexpr std::int32_t LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB = -200;
+inline constexpr std::int32_t LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB = 200;
+inline constexpr std::int32_t LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB = 0;
+
+inline constexpr bool IsLAVOpenJocOutputGainTenthsDb(const std::int32_t gain_tenths_db) noexcept
+{
+    return gain_tenths_db >= LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB &&
+           gain_tenths_db <= LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB;
+}
+
+// {D75C0F93-0EF6-4F70-8B57-0BBE3C544690}
+DEFINE_GUID(IID_ILAVOpenJocOutputGainSettings, 0xd75c0f93, 0x0ef6, 0x4f70, 0x8b, 0x57, 0x0b, 0xbe, 0x3c,
+            0x54, 0x46, 0x90);
+
+interface __declspec(uuid("D75C0F93-0EF6-4F70-8B57-0BBE3C544690")) ILAVOpenJocOutputGainSettings : public IUnknown
+{
+    STDMETHOD(GetOutputGain)(std::int32_t * gain_tenths_db) = 0;
+    STDMETHOD(SetOutputGain)(std::int32_t gain_tenths_db) = 0;
+};

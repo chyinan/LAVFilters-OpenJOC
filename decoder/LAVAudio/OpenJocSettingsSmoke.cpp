@@ -33,6 +33,8 @@ constexpr wchar_t kPolicyVersionValue[] = L"OpenJocOutputPolicyVersion";
 constexpr wchar_t kPolicyValue[] = L"OpenJocOutputPolicy";
 constexpr wchar_t kDialnormVersionValue[] = L"OpenJocDialnormPolicyVersion";
 constexpr wchar_t kDialnormValue[] = L"OpenJocDialnormPolicy";
+constexpr wchar_t kOutputGainVersionValue[] = L"OpenJocOutputGainVersion";
+constexpr wchar_t kOutputGainValue[] = L"OpenJocOutputGainTenthsDb";
 constexpr wchar_t kBinauralVersionValue[] = L"OpenJocBinauralSettingsVersion";
 constexpr wchar_t kBinauralHrtfSourceValue[] = L"OpenJocBinauralHrtfSource";
 constexpr wchar_t kBinauralVirtualLayoutValue[] = L"OpenJocBinauralVirtualLayout";
@@ -44,6 +46,8 @@ constexpr GUID kOpenJocSettingsIidOracle = {
     0x6b97fd1c, 0xb463, 0x4b5e, {0x93, 0x49, 0xcd, 0x8b, 0x96, 0x4d, 0x6b, 0x46}};
 constexpr GUID kOpenJocLevelSettingsIidOracle = {
     0x82fa58e4, 0x10b7, 0x4c25, {0x95, 0xe6, 0x10, 0x98, 0x49, 0x69, 0x95, 0xca}};
+constexpr GUID kOpenJocOutputGainSettingsIidOracle = {
+    0xd75c0f93, 0x0ef6, 0x4f70, {0x8b, 0x57, 0x0b, 0xbe, 0x3c, 0x54, 0x46, 0x90}};
 constexpr GUID kAudioSettings = {
     0x4158a22b, 0x6553, 0x45d0, {0x80, 0x69, 0x24, 0x71, 0x6f, 0x8f, 0xf1, 0x71}};
 
@@ -215,6 +219,34 @@ class FilterModule final
         return hr;
     }
 
+    HRESULT CreateGain(ILAVOpenJocOutputGainSettings **settings, ITestRuntimeSettings **runtime = nullptr) const
+    {
+        if (!settings)
+            return E_POINTER;
+        *settings = nullptr;
+        if (runtime)
+            *runtime = nullptr;
+        if (FAILED(status_) || !factory_)
+            return FAILED(status_) ? status_ : E_FAIL;
+
+        IBaseFilter *filter = nullptr;
+        HRESULT hr = factory_->CreateInstance(nullptr, IID_IBaseFilter,
+                                              reinterpret_cast<void **>(&filter));
+        if (SUCCEEDED(hr))
+            hr = filter->QueryInterface(__uuidof(ILAVOpenJocOutputGainSettings),
+                                        reinterpret_cast<void **>(settings));
+        if (SUCCEEDED(hr) && runtime)
+            hr = filter->QueryInterface(kAudioSettings, reinterpret_cast<void **>(runtime));
+        Release(filter);
+        if (FAILED(hr))
+        {
+            Release(*settings);
+            if (runtime)
+                Release(*runtime);
+        }
+        return hr;
+    }
+
     HRESULT CreateBinaural(ILAVOpenJocBinauralSettings **settings) const
     {
         if (!settings)
@@ -343,6 +375,19 @@ bool ValueIsExactDword(const wchar_t *subkey, const wchar_t *name, const DWORD e
     if (key)
         RegCloseKey(key);
     return status == ERROR_SUCCESS && type == REG_DWORD && size == sizeof(DWORD) && value == expected;
+}
+
+bool ResetOutputGainKey()
+{
+    HKEY key = nullptr;
+    const LONG open_status = RegOpenKeyExW(HKEY_CURRENT_USER, kPolicyKey, 0, KEY_SET_VALUE, &key);
+    if (open_status != ERROR_SUCCESS)
+        return false;
+    const LONG version_status = RegDeleteValueW(key, kOutputGainVersionValue);
+    const LONG gain_status = RegDeleteValueW(key, kOutputGainValue);
+    RegCloseKey(key);
+    return (version_status == ERROR_SUCCESS || version_status == ERROR_FILE_NOT_FOUND) &&
+           (gain_status == ERROR_SUCCESS || gain_status == ERROR_FILE_NOT_FOUND);
 }
 
 bool ValueIsExactString(const wchar_t *subkey, const wchar_t *name, const std::wstring &expected)
@@ -563,6 +608,93 @@ bool TestDialnormGetterReadbackSourceContract()
            getter.find("CAutoTryLock") == std::string::npos &&
            getter.find("m_settings.OpenJocDialnormPolicy") != std::string::npos &&
            getter.find("return S_OK") != std::string::npos;
+}
+
+bool ExpectLoadedOutputGain(const FilterModule &module, const std::int32_t expected)
+{
+    ILAVOpenJocOutputGainSettings *settings = nullptr;
+    HRESULT hr = module.CreateGain(&settings);
+    std::int32_t actual = 1;
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputGain(&actual);
+    Release(settings);
+    return SUCCEEDED(hr) && actual == expected;
+}
+
+bool TestOutputGainDefaultSettersAndPersistence(const FilterModule &module)
+{
+    if (!ResetOutputGainKey())
+        return false;
+
+    ILAVOpenJocOutputGainSettings *settings = nullptr;
+    HRESULT hr = module.CreateGain(&settings);
+    std::int32_t actual = 1;
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputGain(&actual);
+    if (FAILED(hr) || actual != LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB ||
+        settings->GetOutputGain(nullptr) != E_POINTER)
+    {
+        Release(settings);
+        return false;
+    }
+
+    for (const std::int32_t gain : {60, -200, 200})
+    {
+        if (settings->SetOutputGain(gain) != S_OK || settings->GetOutputGain(&actual) != S_OK || actual != gain)
+        {
+            Release(settings);
+            return false;
+        }
+    }
+    if (settings->SetOutputGain(LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB - 1) != E_INVALIDARG ||
+        settings->SetOutputGain(LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB + 1) != E_INVALIDARG ||
+        settings->GetOutputGain(&actual) != S_OK || actual != 200)
+    {
+        Release(settings);
+        return false;
+    }
+    Release(settings);
+
+    if (!ValueIsExactDword(kPolicyKey, kOutputGainVersionValue,
+                           LAV_OPENJOC_OUTPUT_GAIN_SCHEMA_VERSION) ||
+        !ValueIsExactDword(kPolicyKey, kOutputGainValue, 200) ||
+        !ExpectLoadedOutputGain(module, 200))
+        return false;
+
+    if (!ResetOutputGainKey() || !WriteDword(kOutputGainVersionValue, 1) ||
+        !WriteDword(kOutputGainValue, 201) || !ExpectLoadedOutputGain(module, 0))
+        return false;
+
+    const DWORD negative_200 = static_cast<DWORD>(static_cast<std::uint32_t>(-200));
+    if (!ResetOutputGainKey() || !WriteDword(kOutputGainVersionValue, 1) ||
+        !WriteDword(kOutputGainValue, negative_200) || !ExpectLoadedOutputGain(module, -200))
+        return false;
+
+    if (!ResetOutputGainKey() || !WriteDword(kOutputGainVersionValue, 1) ||
+        !WriteDword(kOutputGainValue, 0x80000000u) || !ExpectLoadedOutputGain(module, 0))
+        return false;
+
+    if (!ResetOutputGainKey())
+        return false;
+    ITestRuntimeSettings *runtime = nullptr;
+    settings = nullptr;
+    hr = module.CreateGain(&settings, &runtime);
+    if (SUCCEEDED(hr))
+        hr = runtime->SetRuntimeConfig(TRUE);
+    if (SUCCEEDED(hr))
+        hr = settings->SetOutputGain(60);
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputGain(&actual);
+    if (SUCCEEDED(hr) && actual != 60)
+        hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr))
+        hr = runtime->SetRuntimeConfig(FALSE);
+    if (SUCCEEDED(hr))
+        hr = settings->GetOutputGain(&actual);
+    Release(runtime);
+    Release(settings);
+    return SUCCEEDED(hr) && actual == 0 && ValueIsAbsent(kParentAudioKey, kOutputGainVersionValue) &&
+           ValueIsAbsent(kParentAudioKey, kOutputGainValue);
 }
 
 bool TestDialnormReadbackDuringConcurrentUpdates(const FilterModule &module)
@@ -1058,12 +1190,17 @@ int wmain(int argc, wchar_t **argv)
     }
     if (argc != 2 && argc != 3)
     {
-        std::fwprintf(stderr, L"usage: OpenJocSettingsSmoke.exe <OpenJOC LAVAudio.ax> [valid SOFA path]\n");
+        std::fwprintf(stderr, L"usage: OpenJocSettingsSmoke.exe <OpenJOC LAVAudio.ax> [valid SOFA path|--output-gain-only]\n");
         return 2;
     }
     if (!TestPolicyReloadClearsIncompatibleQueues())
     {
         std::fwprintf(stderr, L"policy reload queue-reset source contract failed\n");
+        return 1;
+    }
+    if (!IsEqualGUID(__uuidof(ILAVOpenJocOutputGainSettings), kOpenJocOutputGainSettingsIidOracle))
+    {
+        std::fwprintf(stderr, L"ILAVOpenJocOutputGainSettings IID oracle mismatch\n");
         return 1;
     }
     if (!TestDialnormGetterReadbackSourceContract())
@@ -1082,6 +1219,19 @@ int wmain(int argc, wchar_t **argv)
     int test_result = 0;
     {
         FilterModule module(argv[1]);
+        if (argc == 3 && std::wcscmp(argv[2], L"--output-gain-only") == 0)
+        {
+            test_result = TestOutputGainDefaultSettersAndPersistence(module) ? 0 : 1;
+            if (registry_override.Restore() != ERROR_SUCCESS)
+                return 1;
+            if (test_result != 0)
+            {
+                std::fwprintf(stderr, L"output-gain default/setter/persistence contract failed\n");
+                return 1;
+            }
+            std::wprintf(L"OpenJOC output-gain settings smoke passed\n");
+            return 0;
+        }
         if (!TestBinauralDefaultsAndInvalidCustom(module, argc == 3 ? argv[2] : nullptr))
         {
             std::fwprintf(stderr, L"binaural settings contract failed\n");
@@ -1140,6 +1290,11 @@ int wmain(int argc, wchar_t **argv)
         else if (!TestDialnormReadbackDuringConcurrentUpdates(module))
         {
             std::fwprintf(stderr, L"dialnorm readback during concurrent updates failed\n");
+            test_result = 1;
+        }
+        else if (!TestOutputGainDefaultSettersAndPersistence(module))
+        {
+            std::fwprintf(stderr, L"output-gain default/setter/persistence contract failed\n");
             test_result = 1;
         }
     }

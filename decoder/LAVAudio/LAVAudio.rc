@@ -126,7 +126,7 @@ BEGIN
 END
 
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-IDD_PROPPAGE_OPENJOC DIALOGEX 0, 0, 369, 246
+IDD_PROPPAGE_OPENJOC DIALOGEX 0, 0, 369, 284
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD
 FONT 8, "MS Shell Dlg", 400, 0, 0x0
 BEGIN
@@ -143,11 +143,16 @@ BEGIN
     LTEXT           "SOFA file:",IDC_LBL_OPENJOC_SOFA_FILE,17,133,66,8
     EDITTEXT        IDC_OPENJOC_SOFA_FILE,91,130,215,13,ES_AUTOHSCROLL | WS_TABSTOP
     PUSHBUTTON      "Browse...",IDC_OPENJOC_SOFA_BROWSE,311,130,40,13
-    GROUPBOX        "Program Level",IDC_STATIC,7,164,355,74
+    GROUPBOX        "Program Level",IDC_STATIC,7,164,355,112
     LTEXT           "Dialnorm:",IDC_LBL_OPENJOC_DIALNORM_POLICY,17,182,66,8
     COMBOBOX        IDC_OPENJOC_DIALNORM_POLICY,91,179,144,36,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Calibrated respects the programme dialnorm carried by E-AC-3.",IDC_OPENJOC_DIALNORM_HELP_CALIBRATED,17,202,335,10
-    LTEXT           "Unity disables dialnorm gain for compatibility and may sound louder.",IDC_OPENJOC_DIALNORM_HELP_UNITY,17,218,335,10
+    LTEXT           "Output gain:",IDC_LBL_OPENJOC_OUTPUT_GAIN,17,204,66,8
+    CONTROL         "",IDC_OPENJOC_OUTPUT_GAIN,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,91,201,160,15
+    LTEXT           "0.0 dB",IDC_OPENJOC_OUTPUT_GAIN_TEXT,255,204,45,8
+    PUSHBUTTON      "Reset",IDC_OPENJOC_OUTPUT_GAIN_RESET,306,201,45,13
+    LTEXT           "Calibrated respects the programme dialnorm carried by E-AC-3.",IDC_OPENJOC_DIALNORM_HELP_CALIBRATED,17,222,335,8
+    LTEXT           "Unity disables dialnorm gain for compatibility and may sound louder.",IDC_OPENJOC_DIALNORM_HELP_UNITY,17,234,335,8
+    LTEXT           "0 dB leaves the output level unchanged. Positive gain may cause clipping.",IDC_OPENJOC_OUTPUT_GAIN_HELP,17,247,335,16
 END
 #endif
 

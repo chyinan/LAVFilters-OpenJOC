@@ -53,3 +53,8 @@ FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy policy) noexcept;
     std::uint32_t sample_rate, std::uint32_t channel_count, std::size_t sample_count,
     std::size_t sample_element_count, AVChannelLayout *output_layout, std::uint32_t *output_sample_count,
     std::uint32_t *output_byte_count) noexcept;
+
+[[nodiscard]] float LAVOpenJocOutputGainLinear(std::int32_t gain_tenths_db) noexcept;
+
+[[nodiscard]] bool ApplyLAVOpenJocOutputGain(std::int32_t gain_tenths_db, float *samples,
+                                             std::size_t sample_count) noexcept;

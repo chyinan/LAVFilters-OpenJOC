@@ -30,6 +30,8 @@
 #include "LAVAudio.h"
 #include "Media.h"
 
+#include <limits>
+
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE) && defined(LAV_OPENJOC_TESTING)
 #include <array>
 #include <cmath>
@@ -646,6 +648,20 @@ HRESULT CLAVAudio::PostProcess(BufferDetails *buffer)
                                             buffer->dwSamplesPerSec, buffer->bPlanar != FALSE, buffer->layout,
                                             buffer->nSamples, buffer->bBuffer->GetCount()))
             return E_INVALIDARG;
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+        const std::int32_t output_gain_tenths_db =
+            m_openJocOutputGainSnapshot.load(std::memory_order_acquire);
+        if (static_cast<std::size_t>(buffer->nSamples) >
+            (std::numeric_limits<std::size_t>::max)() /
+                static_cast<std::size_t>(buffer->layout.nb_channels))
+            return E_INVALIDARG;
+        if (!ApplyLAVOpenJocOutputGain(
+                output_gain_tenths_db, reinterpret_cast<float *>(buffer->bBuffer->Ptr()),
+                static_cast<std::size_t>(buffer->nSamples) *
+                    static_cast<std::size_t>(buffer->layout.nb_channels)))
+            return E_INVALIDARG;
+#endif
 
         if (m_bVolumeStats)
             UpdateVolumeStats(*buffer);

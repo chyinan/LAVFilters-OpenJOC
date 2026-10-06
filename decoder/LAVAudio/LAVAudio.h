@@ -115,6 +115,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     , public ILAVOpenJocSettings
     , public ILAVOpenJocLevelSettings
+    , public ILAVOpenJocOutputGainSettings
     , public ILAVOpenJocBinauralSettings
     , public ILAVOpenJocDiagnostics
     , public ILAVOpenJocDiagnostics2
@@ -206,6 +207,10 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
                                            LPCWSTR sofa_path);
     STDMETHODIMP GetBinauralConfigurationError(LPWSTR detail, DWORD capacity);
 
+    // ILAVOpenJocOutputGainSettings
+    STDMETHODIMP GetOutputGain(std::int32_t *gain_tenths_db);
+    STDMETHODIMP SetOutputGain(std::int32_t gain_tenths_db);
+
     // ILAVOpenJocLevelSettings
     STDMETHODIMP GetDialnormPolicy(LAVOpenJocDialnormPolicy *policy);
     STDMETHODIMP SetDialnormPolicy(LAVOpenJocDialnormPolicy policy);
@@ -280,6 +285,8 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
     HRESULT LoadOpenJocDialnormPolicySettings();
     HRESULT SaveOpenJocDialnormPolicySettings(LAVOpenJocDialnormPolicy policy);
     HRESULT ConfigureOpenJocDialnormPolicy(LAVOpenJocDialnormPolicy policy, bool clear_queues);
+    HRESULT LoadOpenJocOutputGainSettings();
+    HRESULT SaveOpenJocOutputGainSettings(std::int32_t gain_tenths_db);
 #endif
 
     STDMETHODIMP CreateTrayIcon();
@@ -300,6 +307,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
 
     HRESULT QueueOutput(BufferDetails &buffer);
     HRESULT FlushOutput(BOOL bDeliver = TRUE);
+    HRESULT FlushOutputLocked(BOOL bDeliver);
     HRESULT FlushDecoder();
 
     HRESULT PerformFlush();
@@ -418,6 +426,7 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
         LAVOpenJocOutputPolicy OpenJocOutputPolicy;
         LAVOpenJocDialnormPolicy OpenJocDialnormPolicy;
+        std::int32_t OpenJocOutputGainTenthsDb;
         LAVOpenJocHrtfSource OpenJocHrtfSource;
         LAVOpenJocBinauralVirtualLayout OpenJocBinauralVirtualLayout;
         std::wstring OpenJocCustomSofaPath;
@@ -433,6 +442,8 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
         LAVOpenJocAdmissionUndecided};
     std::atomic<LAVOpenJocOutputPolicy> m_openJocOutputPolicySnapshot{
         LAVOpenJocOutputPolicy::Stereo};
+    std::atomic<std::int32_t> m_openJocOutputGainSnapshot{
+        LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB};
     std::atomic<LAVAudioSampleFormat> m_outputStatusFormat{SampleFormat_None};
     std::atomic<int> m_outputStatusChannels{0};
     std::atomic<int> m_outputStatusSampleRate{0};

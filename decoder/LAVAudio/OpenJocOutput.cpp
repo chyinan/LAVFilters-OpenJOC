@@ -8,6 +8,7 @@
 #include "OpenJocOutput.h"
 
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <limits>
 
@@ -299,5 +300,28 @@ bool PrepareLAVOpenJocFrameHandoff(
 
     *output_sample_count = static_cast<std::uint32_t>(sample_count);
     *output_byte_count = static_cast<std::uint32_t>(element_count * sizeof(float));
+    return true;
+}
+
+float LAVOpenJocOutputGainLinear(const std::int32_t gain_tenths_db) noexcept
+{
+    if (!IsLAVOpenJocOutputGainTenthsDb(gain_tenths_db))
+        return 1.0f;
+    if (gain_tenths_db == LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB)
+        return 1.0f;
+    return static_cast<float>(std::pow(10.0, static_cast<double>(gain_tenths_db) / 200.0));
+}
+
+bool ApplyLAVOpenJocOutputGain(const std::int32_t gain_tenths_db, float *samples,
+                               const std::size_t sample_count) noexcept
+{
+    if (!IsLAVOpenJocOutputGainTenthsDb(gain_tenths_db) || (sample_count != 0 && !samples))
+        return false;
+    if (gain_tenths_db == LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB || sample_count == 0)
+        return true;
+
+    const float linear_gain = LAVOpenJocOutputGainLinear(gain_tenths_db);
+    for (std::size_t index = 0; index < sample_count; ++index)
+        samples[index] *= linear_gain;
     return true;
 }

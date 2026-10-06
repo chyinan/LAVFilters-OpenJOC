@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -27,6 +28,13 @@
 namespace
 {
 constexpr std::size_t kMaximumChannels = 12;
+
+std::string ReadSourceFile(const std::filesystem::path &path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    assert(stream.good());
+    return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+}
 
 template <typename Type, typename = void>
 struct HasAutoPolicy : std::false_type
@@ -560,6 +568,78 @@ void test_decode_openjoc_source_cannot_restore_count_default_or_eight_channel_ca
     assert(body.find("channel_count>8") == std::string::npos);
     assert(body.find("av_channel_layout_default") == std::string::npos);
 }
+
+void test_output_gain_has_a_bit_exact_zero_bypass_and_uniform_channel_scale()
+{
+    static_assert(LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB == -200);
+    static_assert(LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB == 200);
+    static_assert(LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB == 0);
+
+    assert(IsLAVOpenJocOutputGainTenthsDb(LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB));
+    assert(IsLAVOpenJocOutputGainTenthsDb(LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB));
+    assert(!IsLAVOpenJocOutputGainTenthsDb(LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB - 1));
+    assert(!IsLAVOpenJocOutputGainTenthsDb(LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB + 1));
+    assert(std::abs(LAVOpenJocOutputGainLinear(60) - 1.9952623f) < 0.000001f);
+    assert(std::abs(LAVOpenJocOutputGainLinear(-60) - 0.5011872f) < 0.000001f);
+    assert(std::abs(LAVOpenJocOutputGainLinear(200) - 10.0f) < 0.000001f);
+    assert(std::abs(LAVOpenJocOutputGainLinear(-200) - 0.1f) < 0.000001f);
+
+    const float original[] = {0.125f, -0.25f, 0.5f, -0.75f, 1.0f, -1.0f};
+    float samples[std::size(original)] = {};
+    std::memcpy(samples, original, sizeof(original));
+    assert(ApplyLAVOpenJocOutputGain(LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB, samples,
+                                      std::size(samples)));
+    assert(std::memcmp(samples, original, sizeof(original)) == 0);
+
+    assert(ApplyLAVOpenJocOutputGain(60, samples, std::size(samples)));
+    const float positive_gain = LAVOpenJocOutputGainLinear(60);
+    for (std::size_t index = 0; index < std::size(samples); ++index)
+        assert(std::abs(samples[index] - original[index] * positive_gain) < 0.000001f);
+
+    float multichannel[] = {0.1f, -0.2f, 0.3f, -0.4f, 0.5f, -0.6f, 0.7f, -0.8f};
+    const float before_multichannel[] = {0.1f, -0.2f, 0.3f, -0.4f, 0.5f, -0.6f, 0.7f, -0.8f};
+    assert(ApplyLAVOpenJocOutputGain(-60, multichannel, std::size(multichannel)));
+    const float negative_gain = LAVOpenJocOutputGainLinear(-60);
+    for (std::size_t index = 0; index < std::size(multichannel); ++index)
+        assert(std::abs(multichannel[index] - before_multichannel[index] * negative_gain) < 0.000001f);
+
+    std::memcpy(samples, original, sizeof(original));
+    assert(!ApplyLAVOpenJocOutputGain(LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB + 1, samples,
+                                       std::size(samples)));
+    assert(std::memcmp(samples, original, sizeof(original)) == 0);
+    assert(!ApplyLAVOpenJocOutputGain(60, nullptr, std::size(samples)));
+}
+
+void test_output_gain_is_in_the_openjoc_postprocess_boundary_only()
+{
+    const std::filesystem::path source_path = std::filesystem::path(__FILE__).parent_path() / "PostProcessor.cpp";
+    std::ifstream source_file(source_path, std::ios::binary);
+    assert(source_file);
+    const std::string source{std::istreambuf_iterator<char>(source_file), std::istreambuf_iterator<char>()};
+    const std::size_t openjoc_branch = source.find("if (buffer->openjoc_contract)");
+    const std::size_t stock_branch = source.find("// Validate channel mask");
+    assert(openjoc_branch != std::string::npos && stock_branch != std::string::npos);
+    assert(openjoc_branch < stock_branch);
+    const std::size_t gain_call = source.find("ApplyLAVOpenJocOutputGain", openjoc_branch);
+    assert(gain_call != std::string::npos && gain_call < stock_branch);
+
+    const std::string lav_audio = ReadSourceFile(std::filesystem::path(__FILE__).parent_path() / "LAVAudio.cpp");
+    const std::size_t setter_begin = lav_audio.find("HRESULT CLAVAudio::SetOutputGain(");
+    const std::size_t setter_end = lav_audio.find("#endif", setter_begin);
+    assert(setter_begin != std::string::npos && setter_end != std::string::npos && setter_begin < setter_end);
+    const std::string setter = lav_audio.substr(setter_begin, setter_end - setter_begin);
+    const std::size_t flush = setter.find("FlushOutputLocked(TRUE)");
+    const std::size_t snapshot = setter.find("m_openJocOutputGainSnapshot.store");
+    assert(flush != std::string::npos && snapshot != std::string::npos && flush < snapshot);
+
+    const std::size_t save_begin = lav_audio.find("HRESULT CLAVAudio::SaveOpenJocOutputGainSettings(");
+    const std::size_t save_end = lav_audio.find("HRESULT CLAVAudio::ConfigureOpenJocDialnormPolicy(", save_begin);
+    assert(save_begin != std::string::npos && save_end != std::string::npos && save_begin < save_end);
+    const std::string save = lav_audio.substr(save_begin, save_end - save_begin);
+    assert(save.find("KEY_WOW64_64KEY") != std::string::npos);
+    assert(save.find("CRegistry registry(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY, hr, FALSE, TRUE)") !=
+           std::string::npos);
+}
 } // namespace
 
 int wmain()
@@ -576,5 +656,7 @@ int wmain()
     test_frame_metadata_validation_is_exact_and_checked();
     test_lav_handoff_preparation_preserves_exact_layouts_and_checked_bytes();
     test_decode_openjoc_source_cannot_restore_count_default_or_eight_channel_cap();
+    test_output_gain_has_a_bit_exact_zero_bypass_and_uniform_channel_scale();
+    test_output_gain_is_in_the_openjoc_postprocess_boundary_only();
     return 0;
 }

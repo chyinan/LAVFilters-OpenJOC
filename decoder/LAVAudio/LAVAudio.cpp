@@ -89,6 +89,8 @@ constexpr wchar_t kOpenJocOutputPolicyVersionValue[] = L"OpenJocOutputPolicyVers
 constexpr wchar_t kOpenJocOutputPolicyValue[] = L"OpenJocOutputPolicy";
 constexpr wchar_t kOpenJocDialnormPolicyVersionValue[] = L"OpenJocDialnormPolicyVersion";
 constexpr wchar_t kOpenJocDialnormPolicyValue[] = L"OpenJocDialnormPolicy";
+constexpr wchar_t kOpenJocOutputGainVersionValue[] = L"OpenJocOutputGainVersion";
+constexpr wchar_t kOpenJocOutputGainValue[] = L"OpenJocOutputGainTenthsDb";
 constexpr wchar_t kOpenJocBinauralSettingsVersionValue[] = L"OpenJocBinauralSettingsVersion";
 constexpr wchar_t kOpenJocBinauralHrtfSourceValue[] = L"OpenJocBinauralHrtfSource";
 constexpr wchar_t kOpenJocBinauralVirtualLayoutValue[] = L"OpenJocBinauralVirtualLayout";
@@ -384,6 +386,9 @@ HRESULT CLAVAudio::LoadDefaults()
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
     m_settings.OpenJocOutputPolicy = LAVOpenJocOutputPolicy::Stereo;
     m_settings.OpenJocDialnormPolicy = LAVOpenJocDialnormPolicy::Calibrated;
+    m_settings.OpenJocOutputGainTenthsDb = LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB;
+    m_openJocOutputGainSnapshot.store(LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB,
+                                      std::memory_order_release);
     m_settings.OpenJocHrtfSource = LAVOpenJocHrtfSource::BuiltinSadieIiD1;
     m_settings.OpenJocBinauralVirtualLayout = LAVOpenJocBinauralVirtualLayout::Layout714;
     m_settings.OpenJocCustomSofaPath.clear();
@@ -418,6 +423,7 @@ HRESULT CLAVAudio::LoadSettings()
     LoadOpenJocBinauralSettings();
     LoadOpenJocOutputPolicySettings();
     LoadOpenJocDialnormPolicySettings();
+    LoadOpenJocOutputGainSettings();
     const HRESULT dialnorm_hr = ConfigureOpenJocDialnormPolicy(m_settings.OpenJocDialnormPolicy, true);
     if (FAILED(dialnorm_hr))
     {
@@ -686,6 +692,60 @@ HRESULT CLAVAudio::SaveOpenJocDialnormPolicySettings(const LAVOpenJocDialnormPol
     if (FAILED(hr))
         return hr;
     return registry.WriteDWORD(kOpenJocDialnormPolicyValue, static_cast<DWORD>(policy));
+}
+
+HRESULT CLAVAudio::LoadOpenJocOutputGainSettings()
+{
+    m_settings.OpenJocOutputGainTenthsDb = LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB;
+    m_openJocOutputGainSnapshot.store(LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB,
+                                      std::memory_order_release);
+
+    DWORD version = 0;
+    DWORD raw_gain = 0;
+    if (!ReadExactRegistryDword(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY,
+                                kOpenJocOutputGainVersionValue, &version) ||
+        version != LAV_OPENJOC_OUTPUT_GAIN_SCHEMA_VERSION ||
+        !ReadExactRegistryDword(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY,
+                                kOpenJocOutputGainValue, &raw_gain))
+        return S_FALSE;
+
+    const std::int64_t signed_gain = raw_gain <= 0x7fffffffu
+                                         ? static_cast<std::int64_t>(raw_gain)
+                                         : static_cast<std::int64_t>(raw_gain) - 0x100000000LL;
+    if (signed_gain < LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB ||
+        signed_gain > LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB)
+        return S_FALSE;
+
+    m_settings.OpenJocOutputGainTenthsDb = static_cast<std::int32_t>(signed_gain);
+    m_openJocOutputGainSnapshot.store(m_settings.OpenJocOutputGainTenthsDb,
+                                      std::memory_order_release);
+    return S_OK;
+}
+
+HRESULT CLAVAudio::SaveOpenJocOutputGainSettings(const std::int32_t gain_tenths_db)
+{
+    if (m_bRuntimeConfig)
+        return S_FALSE;
+    if (!IsLAVOpenJocOutputGainTenthsDb(gain_tenths_db))
+        return E_INVALIDARG;
+    HKEY key = nullptr;
+    const LONG create_status = RegCreateKeyExW(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY, 0, nullptr,
+                                               REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_WOW64_64KEY,
+                                               nullptr, &key, nullptr);
+    if (create_status != ERROR_SUCCESS)
+        return HRESULT_FROM_WIN32(create_status);
+    RegCloseKey(key);
+
+    HRESULT hr = S_OK;
+    CRegistry registry(HKEY_CURRENT_USER, LAVC_AUDIO_REGISTRY_KEY, hr, FALSE, TRUE);
+    if (FAILED(hr))
+        return hr;
+    hr = registry.WriteDWORD(kOpenJocOutputGainVersionValue,
+                             LAV_OPENJOC_OUTPUT_GAIN_SCHEMA_VERSION);
+    if (FAILED(hr))
+        return hr;
+    const DWORD encoded_gain = static_cast<DWORD>(static_cast<std::uint32_t>(gain_tenths_db));
+    return registry.WriteDWORD(kOpenJocOutputGainValue, encoded_gain);
 }
 
 HRESULT CLAVAudio::ConfigureOpenJocDialnormPolicy(const LAVOpenJocDialnormPolicy policy,
@@ -974,7 +1034,8 @@ STDMETHODIMP CLAVAudio::NonDelegatingQueryInterface(REFIID riid, void **ppv)
     return QI(ISpecifyPropertyPages) QI(ISpecifyPropertyPages2) QI2(ILAVAudioSettings)
         QI2(ILAVAudioStatus) QI2(ILAVOpenJocStatus)
 #if defined(LAV_OPENJOC_SIDE_BY_SIDE)
-            QI2(ILAVOpenJocSettings) QI2(ILAVOpenJocLevelSettings) QI2(ILAVOpenJocDiagnostics)
+        QI2(ILAVOpenJocSettings) QI2(ILAVOpenJocLevelSettings) QI2(ILAVOpenJocOutputGainSettings)
+            QI2(ILAVOpenJocDiagnostics)
                 QI2(ILAVOpenJocBinauralSettings) QI2(ILAVOpenJocDiagnostics2) QI2(ILAVOpenJocInspection)
 #endif
                 __super::NonDelegatingQueryInterface(riid, ppv);
@@ -1190,6 +1251,35 @@ HRESULT CLAVAudio::SetDialnormPolicy(const LAVOpenJocDialnormPolicy policy)
     if (FAILED(hr))
         return hr;
     const HRESULT save_hr = SaveOpenJocDialnormPolicySettings(policy);
+    return save_hr == S_FALSE ? S_OK : save_hr;
+}
+
+HRESULT CLAVAudio::GetOutputGain(std::int32_t *gain_tenths_db)
+{
+    CheckPointer(gain_tenths_db, E_POINTER);
+    CAutoLock receive_lock(&m_csReceive);
+    *gain_tenths_db = m_settings.OpenJocOutputGainTenthsDb;
+    return S_OK;
+}
+
+HRESULT CLAVAudio::SetOutputGain(const std::int32_t gain_tenths_db)
+{
+    if (!IsLAVOpenJocOutputGainTenthsDb(gain_tenths_db))
+        return E_INVALIDARG;
+    HRESULT flush_hr = S_OK;
+    {
+        CAutoLock receive_lock(&m_csReceive);
+        const std::int32_t current_gain = m_settings.OpenJocOutputGainTenthsDb;
+        if (current_gain == gain_tenths_db)
+            return S_OK;
+        if (m_OutputQueue.openjoc_contract)
+            flush_hr = FlushOutputLocked(TRUE);
+        if (FAILED(flush_hr))
+            return flush_hr;
+        m_settings.OpenJocOutputGainTenthsDb = gain_tenths_db;
+        m_openJocOutputGainSnapshot.store(gain_tenths_db, std::memory_order_release);
+    }
+    const HRESULT save_hr = SaveOpenJocOutputGainSettings(gain_tenths_db);
     return save_hr == S_FALSE ? S_OK : save_hr;
 }
 #endif
@@ -3631,6 +3721,12 @@ HRESULT CLAVAudio::QueueOutput(BufferDetails &buffer)
 HRESULT CLAVAudio::FlushOutput(BOOL bDeliver)
 {
     CAutoLock cAutoLock(&m_csReceive);
+
+    return FlushOutputLocked(bDeliver);
+}
+
+HRESULT CLAVAudio::FlushOutputLocked(BOOL bDeliver)
+{
 
     HRESULT hr = S_OK;
     if (bDeliver && m_OutputQueue.nSamples > 0)

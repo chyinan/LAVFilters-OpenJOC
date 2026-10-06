@@ -73,6 +73,21 @@ std::wstring SnapshotDouble(const double value)
     _snwprintf_s(text, _TRUNCATE, L"%.3f s", value);
     return text;
 }
+
+std::wstring FormatOutputGain(const std::int32_t gain_tenths_db)
+{
+    const std::int32_t magnitude = gain_tenths_db < 0 ? -gain_tenths_db : gain_tenths_db;
+    std::wstring text;
+    if (gain_tenths_db > 0)
+        text = L"+";
+    else if (gain_tenths_db < 0)
+        text = L"-";
+    text += std::to_wstring(magnitude / 10);
+    text += L".";
+    text.push_back(static_cast<wchar_t>(L'0' + (magnitude % 10)));
+    text += L" dB";
+    return text;
+}
 }
 #endif
 
@@ -491,16 +506,20 @@ HRESULT CLAVAudioOpenJocProp::OnConnect(IUnknown *pUnk)
 {
     if (!pUnk)
         return E_POINTER;
-    ASSERT(!m_pOpenJocSettings && !m_pOpenJocLevelSettings && !m_pOpenJocBinauralSettings);
+    ASSERT(!m_pOpenJocSettings && !m_pOpenJocLevelSettings && !m_pOpenJocOutputGainSettings &&
+           !m_pOpenJocBinauralSettings);
     HRESULT hr = pUnk->QueryInterface(&m_pOpenJocSettings);
     if (SUCCEEDED(hr))
         hr = pUnk->QueryInterface(&m_pOpenJocLevelSettings);
+    if (SUCCEEDED(hr))
+        hr = pUnk->QueryInterface(&m_pOpenJocOutputGainSettings);
     if (SUCCEEDED(hr))
         hr = pUnk->QueryInterface(&m_pOpenJocBinauralSettings);
     if (FAILED(hr))
     {
         SafeRelease(&m_pOpenJocSettings);
         SafeRelease(&m_pOpenJocLevelSettings);
+        SafeRelease(&m_pOpenJocOutputGainSettings);
         SafeRelease(&m_pOpenJocBinauralSettings);
     }
     return hr;
@@ -510,6 +529,7 @@ HRESULT CLAVAudioOpenJocProp::OnDisconnect()
 {
     SafeRelease(&m_pOpenJocSettings);
     SafeRelease(&m_pOpenJocLevelSettings);
+    SafeRelease(&m_pOpenJocOutputGainSettings);
     SafeRelease(&m_pOpenJocBinauralSettings);
     return S_OK;
 }
@@ -519,6 +539,8 @@ HRESULT CLAVAudioOpenJocProp::LoadData()
     HRESULT hr = m_pOpenJocSettings->GetOutputPolicy(&m_outputPolicy);
     if (SUCCEEDED(hr))
         hr = m_pOpenJocLevelSettings->GetDialnormPolicy(&m_dialnormPolicy);
+    if (SUCCEEDED(hr))
+        hr = m_pOpenJocOutputGainSettings->GetOutputGain(&m_outputGainTenthsDb);
     if (SUCCEEDED(hr))
         hr = m_pOpenJocBinauralSettings->GetBinauralHrtfSource(&m_hrtfSource);
     if (SUCCEEDED(hr))
@@ -541,6 +563,18 @@ void CLAVAudioOpenJocProp::UpdateBinauralControlState()
     EnableWindow(GetDlgItem(m_Dlg, IDC_OPENJOC_HRTF_SOURCE), binaural);
     EnableWindow(GetDlgItem(m_Dlg, IDC_OPENJOC_SOFA_FILE), custom);
     EnableWindow(GetDlgItem(m_Dlg, IDC_OPENJOC_SOFA_BROWSE), custom);
+}
+
+void CLAVAudioOpenJocProp::UpdateOutputGainControl()
+{
+    const std::int32_t gain_tenths_db =
+        (std::max)(LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB,
+                   (std::min)(LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB, m_outputGainTenthsDb));
+    m_outputGainTenthsDb = gain_tenths_db;
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_GAIN, TBM_SETPOS, TRUE,
+                       static_cast<LPARAM>(gain_tenths_db - LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB));
+    const std::wstring text = FormatOutputGain(gain_tenths_db);
+    SetDlgItemTextW(m_Dlg, IDC_OPENJOC_OUTPUT_GAIN_TEXT, text.c_str());
 }
 
 HRESULT CLAVAudioOpenJocProp::OnActivate()
@@ -598,6 +632,12 @@ HRESULT CLAVAudioOpenJocProp::OnActivate()
     if (selected_dialnorm == CB_ERR)
         return E_UNEXPECTED;
     SendDlgItemMessage(m_Dlg, IDC_OPENJOC_DIALNORM_POLICY, CB_SETCURSEL, selected_dialnorm, 0);
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_GAIN, TBM_SETRANGE, TRUE,
+                       MAKELONG(0, LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB -
+                                       LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB));
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_GAIN, TBM_SETLINESIZE, 0, 1);
+    SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_GAIN, TBM_SETPAGESIZE, 0, 10);
+    UpdateOutputGainControl();
     SendDlgItemMessage(m_Dlg, IDC_OPENJOC_VIRTUAL_LAYOUT, CB_RESETCONTENT, 0, 0);
     constexpr struct
     {
@@ -664,6 +704,13 @@ HRESULT CLAVAudioOpenJocProp::OnApplyChanges()
     if (output_index == CB_ERR || dialnorm_index == CB_ERR || layout_index == CB_ERR || source_index == CB_ERR)
         return E_UNEXPECTED;
 
+    const LRESULT output_gain_position =
+        SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_GAIN, TBM_GETPOS, 0, 0);
+    const std::int32_t output_gain_tenths_db =
+        static_cast<std::int32_t>(output_gain_position) + LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB;
+    if (output_gain_position < 0 || !IsLAVOpenJocOutputGainTenthsDb(output_gain_tenths_db))
+        return E_UNEXPECTED;
+
     const LRESULT output_data =
         SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_POLICY, CB_GETITEMDATA, output_index, 0);
     const LRESULT dialnorm_data =
@@ -690,10 +737,38 @@ HRESULT CLAVAudioOpenJocProp::OnApplyChanges()
     wchar_t sofa_path[LAV_OPENJOC_BINAURAL_SETTINGS_TEXT_CAPACITY] = {};
     GetDlgItemTextW(m_Dlg, IDC_OPENJOC_SOFA_FILE, sofa_path, static_cast<int>(std::size(sofa_path)));
     const LPCWSTR selected_sofa = hrtf_source == LAVOpenJocHrtfSource::CustomSofa ? sofa_path : nullptr;
-    HRESULT hr = m_pOpenJocBinauralSettings->SetBinauralConfiguration(
-        output_policy, hrtf_source, virtual_layout, selected_sofa);
+    const std::wstring selected_sofa_path = selected_sofa ? selected_sofa : L"";
+
+    LAVOpenJocOutputPolicy committed_output_policy = LAVOpenJocOutputPolicy::Stereo;
+    LAVOpenJocDialnormPolicy committed_dialnorm_policy = LAVOpenJocDialnormPolicy::Calibrated;
+    LAVOpenJocHrtfSource committed_hrtf_source = LAVOpenJocHrtfSource::BuiltinSadieIiD1;
+    LAVOpenJocBinauralVirtualLayout committed_virtual_layout = LAVOpenJocBinauralVirtualLayout::Layout714;
+    std::int32_t committed_output_gain_tenths_db = LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB;
+    wchar_t committed_sofa_path_buffer[LAV_OPENJOC_BINAURAL_SETTINGS_TEXT_CAPACITY] = {};
+    HRESULT hr = m_pOpenJocSettings->GetOutputPolicy(&committed_output_policy);
     if (SUCCEEDED(hr))
+        hr = m_pOpenJocLevelSettings->GetDialnormPolicy(&committed_dialnorm_policy);
+    if (SUCCEEDED(hr))
+        hr = m_pOpenJocOutputGainSettings->GetOutputGain(&committed_output_gain_tenths_db);
+    if (SUCCEEDED(hr))
+        hr = m_pOpenJocBinauralSettings->GetBinauralHrtfSource(&committed_hrtf_source);
+    if (SUCCEEDED(hr))
+        hr = m_pOpenJocBinauralSettings->GetBinauralVirtualLayout(&committed_virtual_layout);
+    if (SUCCEEDED(hr))
+        hr = m_pOpenJocBinauralSettings->GetCustomSofaPath(
+            committed_sofa_path_buffer, static_cast<DWORD>(std::size(committed_sofa_path_buffer)));
+
+    const bool binaural_configuration_changed =
+        committed_output_policy != output_policy || committed_hrtf_source != hrtf_source ||
+        committed_virtual_layout != virtual_layout ||
+        std::wstring(committed_sofa_path_buffer) != selected_sofa_path;
+    if (SUCCEEDED(hr) && binaural_configuration_changed)
+        hr = m_pOpenJocBinauralSettings->SetBinauralConfiguration(
+            output_policy, hrtf_source, virtual_layout, selected_sofa);
+    if (SUCCEEDED(hr) && committed_dialnorm_policy != dialnorm_policy)
         hr = m_pOpenJocLevelSettings->SetDialnormPolicy(dialnorm_policy);
+    if (SUCCEEDED(hr) && committed_output_gain_tenths_db != output_gain_tenths_db)
+        hr = m_pOpenJocOutputGainSettings->SetOutputGain(output_gain_tenths_db);
     if (SUCCEEDED(hr))
         hr = LoadData();
     else
@@ -729,6 +804,21 @@ INT_PTR CLAVAudioOpenJocProp::OnReceiveMessage(HWND hwnd, UINT uMsg, WPARAM wPar
                     SendDlgItemMessage(m_Dlg, IDC_OPENJOC_HRTF_SOURCE, CB_GETITEMDATA, index, 0)));
         }
         UpdateBinauralControlState();
+        SetDirty();
+    }
+    else if (uMsg == WM_HSCROLL && reinterpret_cast<HWND>(lParam) ==
+                                      GetDlgItem(m_Dlg, IDC_OPENJOC_OUTPUT_GAIN))
+    {
+        const LRESULT position = SendDlgItemMessage(m_Dlg, IDC_OPENJOC_OUTPUT_GAIN, TBM_GETPOS, 0, 0);
+        m_outputGainTenthsDb = static_cast<std::int32_t>(position) + LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB;
+        UpdateOutputGainControl();
+        SetDirty();
+    }
+    else if (uMsg == WM_COMMAND && HIWORD(wParam) == BN_CLICKED &&
+             LOWORD(wParam) == IDC_OPENJOC_OUTPUT_GAIN_RESET)
+    {
+        m_outputGainTenthsDb = LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB;
+        UpdateOutputGainControl();
         SetDirty();
     }
     else if (uMsg == WM_COMMAND && HIWORD(wParam) == BN_CLICKED &&

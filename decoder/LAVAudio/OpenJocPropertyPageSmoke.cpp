@@ -45,6 +45,10 @@ constexpr int kOpenJocOutputPolicyControl = 1136;
 constexpr int kOpenJocOutputGuidanceControl = 1144;
 constexpr int kOpenJocOutputCompatControl = 1145;
 constexpr int kOpenJocDialnormPolicyControl = 1140;
+constexpr int kOpenJocOutputGainControl = 1187;
+constexpr int kOpenJocOutputGainTextControl = 1188;
+constexpr int kOpenJocOutputGainResetControl = 1189;
+constexpr int kOpenJocOutputGainHelpControl = 1190;
 constexpr int kOpenJocVirtualLayoutControl = 1149;
 constexpr int kOpenJocHrtfSourceControl = 1151;
 constexpr int kOpenJocSofaFileControl = 1153;
@@ -432,7 +436,8 @@ bool TestSettingsPageHasNoOpenJocControls(IBaseFilter *filter, ISpecifyPropertyP
     return SUCCEEDED(hr);
 }
 
-bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND parent)
+bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND parent,
+                     const bool output_gain_only = false)
 {
     constexpr struct
     {
@@ -459,6 +464,7 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
 
     ILAVOpenJocSettings *settings = nullptr;
     ILAVOpenJocLevelSettings *level_settings = nullptr;
+    ILAVOpenJocOutputGainSettings *gain_settings = nullptr;
     ILAVOpenJocBinauralSettings *binaural_settings = nullptr;
     ITestRuntimeSettings *runtime = nullptr;
     HRESULT hr = filter->QueryInterface(__uuidof(ILAVOpenJocSettings), reinterpret_cast<void **>(&settings));
@@ -466,16 +472,21 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
         hr = filter->QueryInterface(__uuidof(ILAVOpenJocLevelSettings),
                                     reinterpret_cast<void **>(&level_settings));
     if (SUCCEEDED(hr))
+        hr = filter->QueryInterface(__uuidof(ILAVOpenJocOutputGainSettings),
+                                    reinterpret_cast<void **>(&gain_settings));
+    if (SUCCEEDED(hr))
         hr = filter->QueryInterface(__uuidof(ILAVOpenJocBinauralSettings),
                                     reinterpret_cast<void **>(&binaural_settings));
     if (SUCCEEDED(hr))
         hr = filter->QueryInterface(kAudioSettings, reinterpret_cast<void **>(&runtime));
-    if (SUCCEEDED(hr))
+    if (SUCCEEDED(hr) && !output_gain_only)
         hr = runtime->SetRuntimeConfig(TRUE);
-    if (SUCCEEDED(hr))
+    if (SUCCEEDED(hr) && !output_gain_only)
         hr = settings->SetOutputPolicy(LAVOpenJocOutputPolicy::Layout714);
-    if (SUCCEEDED(hr))
+    if (SUCCEEDED(hr) && !output_gain_only)
         hr = level_settings->SetDialnormPolicy(LAVOpenJocDialnormPolicy::Calibrated);
+    if (SUCCEEDED(hr))
+        hr = gain_settings->SetOutputGain(LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB);
 
     IPropertyPage *page = nullptr;
     if (SUCCEEDED(hr))
@@ -490,6 +501,10 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     HWND output_guidance = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputGuidanceControl) : nullptr;
     HWND output_compat = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputCompatControl) : nullptr;
     HWND dialnorm = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocDialnormPolicyControl) : nullptr;
+    HWND output_gain = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputGainControl) : nullptr;
+    HWND output_gain_text = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputGainTextControl) : nullptr;
+    HWND output_gain_reset = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputGainResetControl) : nullptr;
+    HWND output_gain_help = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocOutputGainHelpControl) : nullptr;
     HWND virtual_layout = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocVirtualLayoutControl) : nullptr;
     HWND hrtf_source = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocHrtfSourceControl) : nullptr;
     HWND sofa_file = SUCCEEDED(hr) ? FindControl(page_window, kOpenJocSofaFileControl) : nullptr;
@@ -504,23 +519,80 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
         {LAVOpenJocHrtfSource::CustomSofa, L"Custom SOFA..."},
     };
     constexpr LRESULT custom_sofa_index = static_cast<LRESULT>(std::size(expected_hrtf_sources) - 1);
-    if (!combo || !output_guidance || !output_compat || !dialnorm || !virtual_layout || !hrtf_source ||
+    if (output_gain_only &&
+        (!output_gain || !output_gain_text || !output_gain_reset || !output_gain_help ||
+         SendMessageW(output_gain, TBM_GETRANGEMIN, 0, 0) != 0 ||
+         SendMessageW(output_gain, TBM_GETRANGEMAX, 0, 0) !=
+             LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB - LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB ||
+         SendMessageW(output_gain, TBM_GETPOS, 0, 0) != -LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB ||
+         WindowText(output_gain_text) != L"0.0 dB" ||
+         WindowText(output_gain_help) !=
+             L"0 dB leaves the output level unchanged. Positive gain may cause clipping."))
+        hr = E_UNEXPECTED;
+    if (!output_gain_only &&
+        (!combo || !output_guidance || !output_compat || !dialnorm || !output_gain || !output_gain_text ||
+        !output_gain_reset || !output_gain_help || !virtual_layout || !hrtf_source ||
         !sofa_file || !sofa_browse ||
         WindowText(output_guidance) !=
             L"Speakers: choose the layout matching your playback system. Headphones: choose Binaural for HRTF spatial rendering." ||
         WindowText(output_compat) !=
             L"Stereo (Speakers) and Binaural (Headphones) both output 2-channel PCM with different rendering semantics." ||
         SendMessageW(combo, CB_GETCOUNT, 0, 0) != std::size(expected_policies) ||
-        SendMessageW(combo, CB_GETCURSEL, 0, 0) != 7 ||
+        SendMessageW(combo, CB_GETCURSEL, 0, 0) != (output_gain_only ? 0 : 7) ||
         SendMessageW(dialnorm, CB_GETCOUNT, 0, 0) != std::size(expected_dialnorm) ||
         SendMessageW(dialnorm, CB_GETCURSEL, 0, 0) != 0 ||
+        SendMessageW(output_gain, TBM_GETRANGEMIN, 0, 0) != 0 ||
+        SendMessageW(output_gain, TBM_GETRANGEMAX, 0, 0) !=
+            LAV_OPENJOC_OUTPUT_GAIN_MAX_TENTHS_DB - LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB ||
+        SendMessageW(output_gain, TBM_GETPOS, 0, 0) !=
+            -LAV_OPENJOC_OUTPUT_GAIN_MIN_TENTHS_DB ||
+        WindowText(output_gain_text) != L"0.0 dB" ||
+        WindowText(output_gain_help) !=
+            L"0 dB leaves the output level unchanged. Positive gain may cause clipping." ||
         SendMessageW(virtual_layout, CB_GETCOUNT, 0, 0) != 2 ||
         SendMessageW(virtual_layout, CB_GETCURSEL, 0, 0) != 0 ||
         SendMessageW(hrtf_source, CB_GETCOUNT, 0, 0) != std::size(expected_hrtf_sources) ||
         SendMessageW(hrtf_source, CB_GETCURSEL, 0, 0) != 0 ||
         WindowText(sofa_file) != L"" || IsWindowEnabled(virtual_layout) || IsWindowEnabled(hrtf_source) ||
-        IsWindowEnabled(sofa_file) || IsWindowEnabled(sofa_browse))
+        IsWindowEnabled(sofa_file) || IsWindowEnabled(sofa_browse)))
         hr = E_UNEXPECTED;
+    if (SUCCEEDED(hr))
+    {
+        const int dirty_before = site.dirty_notifications();
+        SendMessageW(output_gain, TBM_SETPOS, TRUE, 260);
+        SendMessageW(page_window, WM_HSCROLL, MAKELONG(TB_THUMBPOSITION, 0),
+                     reinterpret_cast<LPARAM>(output_gain));
+        if (SendMessageW(output_gain, TBM_GETPOS, 0, 0) != 260 || WindowText(output_gain_text) != L"+6.0 dB" ||
+            site.dirty_notifications() <= dirty_before || page->Apply() != S_OK)
+            hr = E_UNEXPECTED;
+    }
+    if (SUCCEEDED(hr))
+    {
+        std::int32_t gain = LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB;
+        if (gain_settings->GetOutputGain(&gain) != S_OK || gain != 60)
+            hr = E_UNEXPECTED;
+    }
+    if (SUCCEEDED(hr))
+    {
+        SendMessageW(page_window, WM_COMMAND, MAKEWPARAM(kOpenJocOutputGainResetControl, BN_CLICKED),
+                     reinterpret_cast<LPARAM>(output_gain_reset));
+        std::int32_t gain = LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB;
+        if (SendMessageW(output_gain, TBM_GETPOS, 0, 0) != 200 || WindowText(output_gain_text) != L"0.0 dB" ||
+            page->Apply() != S_OK || gain_settings->GetOutputGain(&gain) != S_OK || gain != 0)
+            hr = E_UNEXPECTED;
+    }
+    if (output_gain_only)
+    {
+        const bool passed = SUCCEEDED(hr);
+        DisconnectPage(page, active);
+        Release(page);
+        Release(runtime);
+        Release(binaural_settings);
+        Release(gain_settings);
+        Release(level_settings);
+        Release(settings);
+        return passed;
+    }
     for (std::size_t index = 0; SUCCEEDED(hr) && index < std::size(expected_policies); ++index)
     {
         wchar_t combo_label[32] = {};
@@ -777,6 +849,7 @@ bool TestOpenJocPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND pa
     Release(page);
     Release(runtime);
     Release(binaural_settings);
+    Release(gain_settings);
     Release(level_settings);
     Release(settings);
     return passed;
@@ -927,9 +1000,9 @@ bool TestJocStreamPage(IBaseFilter *filter, ISpecifyPropertyPages2 *pages, HWND 
 
 int wmain(int argc, wchar_t **argv)
 {
-    if (argc != 2)
+    if (argc != 2 && argc != 3)
     {
-        std::fwprintf(stderr, L"usage: OpenJocPropertyPageSmoke.exe <OpenJOC LAVAudio.ax>\n");
+        std::fwprintf(stderr, L"usage: OpenJocPropertyPageSmoke.exe <OpenJOC LAVAudio.ax> [--output-gain-only]\n");
         return 2;
     }
 
@@ -953,11 +1026,17 @@ int wmain(int argc, wchar_t **argv)
         HRESULT hr = module.CreateFilter(&filter);
         if (SUCCEEDED(hr))
             hr = filter->QueryInterface(__uuidof(ISpecifyPropertyPages2), reinterpret_cast<void **>(&pages));
-        const bool settings_page = SUCCEEDED(hr) && TestSettingsPageHasNoOpenJocControls(filter, pages, parent);
-        const bool openjoc_page = settings_page && TestOpenJocPage(filter, pages, parent);
-        const bool joc_stream_page = openjoc_page && TestJocStreamPage(filter, pages, parent);
-        const bool status_page = joc_stream_page && TestStatusPage(pages, parent);
-        passed = settings_page && openjoc_page && joc_stream_page && status_page;
+        const bool output_gain_only = argc == 3 && std::wcscmp(argv[2], L"--output-gain-only") == 0;
+        if (output_gain_only)
+            passed = SUCCEEDED(hr) && TestOpenJocPage(filter, pages, parent, true);
+        else
+        {
+            const bool settings_page = SUCCEEDED(hr) && TestSettingsPageHasNoOpenJocControls(filter, pages, parent);
+            const bool openjoc_page = settings_page && TestOpenJocPage(filter, pages, parent);
+            const bool joc_stream_page = openjoc_page && TestJocStreamPage(filter, pages, parent);
+            const bool status_page = joc_stream_page && TestStatusPage(pages, parent);
+            passed = settings_page && openjoc_page && joc_stream_page && status_page;
+        }
         Release(pages);
         Release(filter);
     }

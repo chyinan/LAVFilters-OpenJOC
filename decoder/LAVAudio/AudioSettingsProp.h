@@ -123,6 +123,7 @@ class CLAVAudioOpenJocProp : public CBaseDSPropPage
   private:
     HRESULT LoadData();
     void UpdateBinauralControlState();
+    void UpdateOutputGainControl();
 
     void SetDirty()
     {
@@ -133,9 +134,11 @@ class CLAVAudioOpenJocProp : public CBaseDSPropPage
 
     ILAVOpenJocSettings *m_pOpenJocSettings = nullptr;
     ILAVOpenJocLevelSettings *m_pOpenJocLevelSettings = nullptr;
+    ILAVOpenJocOutputGainSettings *m_pOpenJocOutputGainSettings = nullptr;
     ILAVOpenJocBinauralSettings *m_pOpenJocBinauralSettings = nullptr;
     LAVOpenJocOutputPolicy m_outputPolicy = LAVOpenJocOutputPolicy::Stereo;
     LAVOpenJocDialnormPolicy m_dialnormPolicy = LAVOpenJocDialnormPolicy::Calibrated;
+    std::int32_t m_outputGainTenthsDb = LAV_OPENJOC_OUTPUT_GAIN_DEFAULT_TENTHS_DB;
     LAVOpenJocHrtfSource m_hrtfSource = LAVOpenJocHrtfSource::BuiltinSadieIiD1;
     LAVOpenJocBinauralVirtualLayout m_virtualLayout = LAVOpenJocBinauralVirtualLayout::Layout714;
     std::wstring m_customSofaPath;
