@@ -21,6 +21,8 @@ struct LAVOpenJocStrictAcquiredSample
 
 struct LAVOpenJocStrictDeliveryOperations
 {
+    // Called once before negotiation. S_FALSE consumes preroll without delivering or changing the type.
+    std::function<HRESULT()> prepare_delivery;
     std::function<HRESULT(const AM_MEDIA_TYPE &)> query_accept;
     std::function<HRESULT(long, const AM_MEDIA_TYPE &)> reconnect;
     std::function<HRESULT(LAVOpenJocStrictAcquiredSample *)> acquire_sample;

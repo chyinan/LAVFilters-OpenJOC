@@ -1857,6 +1857,14 @@ class StrictCaptureSink final : public CBaseFilter
         sample_evidence.discontinuity = discontinuity_status == S_OK;
         sample_evidence.sync_point = sync_status == S_OK;
         sample_evidence.preroll = preroll_status == S_OK;
+        // A dynamic type is committed by the receiver only when its carrying
+        // sample actually arrives, never merely because QueryAccept succeeded.
+        if (allow_type_transitions_ && attached_status == S_OK && attached)
+        {
+            CAutoLock lock(&filter_lock_);
+            if (Check(*attached) == S_OK)
+                expected_.Set(*attached);
+        }
         const auto *wave = expected_.formattype == FORMAT_WaveFormatEx && expected_.pbFormat &&
                                    expected_.cbFormat >= sizeof(WAVEFORMATEX)
                                ? reinterpret_cast<const WAVEFORMATEX *>(expected_.pbFormat)
@@ -4638,6 +4646,194 @@ bool TestInjectedRegistryFailureRestoration(const PrivateComModule &audio)
            (absent == ERROR_FILE_NOT_FOUND || absent == ERROR_PATH_NOT_FOUND);
 }
 
+// Drive the real decoder synchronously while its connected splitter stays stopped.
+// Only this capture sink runs: no renderer is enumerated or connected. The integer
+// connection models the retained PCM format at a track switch, independently of
+// any particular FLAC file or player's splitter/seek behavior.
+HRESULT CapturePrerollFormatCase(const PrivateComModule &audio,
+                                  const PrivateComModule &splitter,
+                                  const FixtureIdentity &fixture,
+                                  const std::vector<BYTE> &input,
+                                  const REFERENCE_TIME start,
+                                  std::vector<CapturedSampleEvidence> *captured)
+{
+    const auto *contract = FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Layout714);
+    if (!contract || !captured || input.empty() || input.size() > (std::numeric_limits<long>::max)())
+        return E_INVALIDARG;
+    const CMediaType target = BuildStrictTarget(*contract);
+    const CMediaType previous = BuildPcmType(2, SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT, false);
+
+    ComOwner<IGraphBuilder> graph;
+    ComOwner<IBaseFilter> source_filter, audio_filter;
+    ComOwner<IPin> source_output, audio_input, audio_output;
+    CMediaType exact_eac3;
+    HRESULT status = CreateGraphForFixture(
+        audio, splitter, fixture.final_path, LAVOpenJocOutputPolicy::Layout714, true,
+        graph.put(), source_filter.put(), audio_filter.put(), source_output.put(),
+        audio_input.put(), audio_output.put(), &exact_eac3);
+    if (FAILED(status))
+        return status;
+    ComOwner<ILAVAudioSettings> settings;
+    status = audio_filter->QueryInterface(__uuidof(ILAVAudioSettings),
+                                          reinterpret_cast<void **>(settings.put()));
+    if (FAILED(status) || FAILED(status = settings->SetAutoAVSync(FALSE)) ||
+        FAILED(status = settings->SetAudioDelay(FALSE, 0)))
+        return status;
+    HRESULT sink_status = S_OK;
+    auto *sink = new (std::nothrow) StrictCaptureSink(previous, false, {target}, &sink_status,
+                                                    false, true);
+    if (!sink || FAILED(sink_status))
+    {
+        delete sink;
+        return FAILED(sink_status) ? sink_status : E_OUTOFMEMORY;
+    }
+    sink->AddRef();
+    ComOwner<IBaseFilter> sink_owner;
+    sink_owner.attach(static_cast<IBaseFilter *>(sink));
+    status = AttachCaptureSink(graph.get(), audio_output.get(), sink, previous);
+    if (FAILED(status) || !ExactConnectionTypes(audio_output.get(), sink->input(), previous) ||
+        !GraphContainsExactly(graph.get(), 3))
+        return FAILED(status) ? status : E_UNEXPECTED;
+
+    ComOwner<IMemInputPin> receiver;
+    ComOwner<IMemAllocator> allocator;
+    ComOwner<IMediaSample> sample;
+    ALLOCATOR_PROPERTIES requested = {1, static_cast<long>(input.size()), 1, 0}, actual = {};
+    status = audio_input->QueryInterface(IID_IMemInputPin,
+                                         reinterpret_cast<void **>(receiver.put()));
+    if (SUCCEEDED(status))
+        status = CoCreateInstance(CLSID_MemoryAllocator, nullptr, CLSCTX_INPROC_SERVER,
+                                   IID_IMemAllocator, reinterpret_cast<void **>(allocator.put()));
+    if (SUCCEEDED(status))
+        status = allocator->SetProperties(&requested, &actual);
+    if (SUCCEEDED(status) && actual.cbBuffer < requested.cbBuffer)
+        status = VFW_E_BUFFER_UNDERFLOW;
+    if (SUCCEEDED(status))
+        status = allocator->Commit();
+    if (SUCCEEDED(status))
+        status = allocator->GetBuffer(sample.put(), nullptr, nullptr, 0);
+    BYTE *data = nullptr;
+    if (SUCCEEDED(status))
+        status = sample->GetPointer(&data);
+    REFERENCE_TIME sample_start = start, sample_stop = start + 10000000;
+    if (SUCCEEDED(status))
+    {
+        std::memcpy(data, input.data(), input.size());
+        status = sample->SetActualDataLength(static_cast<long>(input.size()));
+    }
+    if (SUCCEEDED(status)) status = sample->SetTime(&sample_start, &sample_stop);
+    if (SUCCEEDED(status)) status = sample->SetSyncPoint(TRUE);
+    if (SUCCEEDED(status)) status = sample->SetDiscontinuity(TRUE);
+    if (SUCCEEDED(status)) status = sample->SetPreroll(start < 0);
+    // Deliberately do not call graph->Run(): that would start the splitter thread.
+    if (SUCCEEDED(status)) status = sink_owner->Run(0);
+    if (SUCCEEDED(status)) status = audio_filter->Run(0);
+    if (SUCCEEDED(status)) status = audio_input->NewSegment(0, MAXLONGLONG, 1.0);
+    if (SUCCEEDED(status))
+    {
+        status = receiver->Receive(sample.get());
+        if (status != S_OK && SUCCEEDED(status)) status = E_UNEXPECTED;
+    }
+    if (SUCCEEDED(status))
+    {
+        status = audio_input->EndOfStream();
+        if (status != S_OK && SUCCEEDED(status)) status = E_UNEXPECTED;
+    }
+    if (SUCCEEDED(status))
+    {
+        *captured = sink->samples();
+        FILTER_STATE source_state = State_Running;
+        const HRESULT state_status = source_filter->GetState(0, &source_state);
+        if (start < 0 && state_status == S_OK && source_state == State_Stopped &&
+            !captured->empty() && sink->end_of_stream() && sink->sample_contracts_valid() &&
+            captured->front().start >= 0 && !captured->front().has_attached_type &&
+            openjoc_harness_core::ExactMediaTypeEqual(sink->expected_type(), previous))
+            std::fwprintf(stderr, L"PREROLL_FORMAT_LOST_NOTIFICATION start=%lld "
+                                  L"first_start=%lld samples=%zu receiver_still_integer=1\n",
+                          static_cast<long long>(start),
+                          static_cast<long long>(captured->front().start), captured->size());
+        if (state_status != S_OK || source_state != State_Stopped || captured->empty() ||
+            !sink->end_of_stream() || !sink->sample_contracts_valid() ||
+            !captured->front().has_attached_type || captured->front().start < 0 ||
+            !openjoc_harness_core::ExactMediaTypeEqual(captured->front().attached_type, target) ||
+            !openjoc_harness_core::ExactMediaTypeEqual(sink->expected_type(), target))
+            status = E_UNEXPECTED;
+        for (const auto &output : *captured)
+            if (output.start < 0 || output.preroll ||
+                output.length % (contract->channel_count * sizeof(float)) != 0)
+                status = E_UNEXPECTED;
+    }
+    std::wprintf(L"PREROLL_FORMAT_CAPTURE start=%lld hr=0x%08lx samples=%llu "
+                 L"first_attached=%d first_start=%lld\n",
+                 static_cast<long long>(start), static_cast<unsigned long>(status),
+                 static_cast<unsigned long long>(sink->sample_count()),
+                 !captured->empty() && captured->front().has_attached_type ? 1 : 0,
+                 captured->empty() ? -1LL : static_cast<long long>(captured->front().start));
+    // Release outstanding buffers before decommitting their allocator.
+    sample.attach(nullptr);
+    audio_filter->Stop();
+    sink_owner->Stop();
+    if (allocator.get()) allocator->Decommit();
+    return status;
+}
+
+HRESULT RunPrerollFormatRegression(const std::filesystem::path &runtime_dir,
+                                    const std::filesystem::path &manifest_path,
+                                    const std::filesystem::path &fixture_path)
+{
+    std::vector<StagedRecord> records;
+    FixtureIdentity fixture;
+    std::vector<BYTE> input;
+    if (!ReadStagedManifest(runtime_dir, manifest_path, &records) ||
+        !BuildFixtureIdentity(fixture_path, &fixture) || !ReadFixtureBytes(fixture_path, &input))
+        return E_INVALIDARG;
+    const auto *audio_record = FindRecord(records, StagedKind::Module, L"LAVAudio.ax");
+    const auto *splitter_record = FindRecord(records, StagedKind::Module, L"LAVSplitter.ax");
+    if (!audio_record || !splitter_record)
+        return E_INVALIDARG;
+    LoadedDependenciesOwner dependencies;
+    ScopedActivationContext activation(audio_record->final_path, FinalPathForFile(runtime_dir));
+    if (!activation.active())
+        return HRESULT_FROM_WIN32(GetLastError());
+    PrivateComModule audio(audio_record->final_path, kTargetLavAudio);
+    PrivateComModule splitter(splitter_record->final_path, kLavSplitterSource);
+    if (FAILED(audio.status()) || FAILED(splitter.status()) ||
+        !LoadStagedDependencies(records, dependencies.put()))
+        return E_UNEXPECTED;
+    std::vector<CapturedSampleEvidence> baseline;
+    HRESULT status = CapturePrerollFormatCase(audio, splitter, fixture, input, 0, &baseline);
+    if (FAILED(status) || baseline.size() < 4 || baseline.front().start != 0)
+    {
+        std::fwprintf(stderr, L"PREROLL_FORMAT baseline failed hr=0x%08lx samples=%zu "
+                              L"(fixture must produce at least four outputs)\n",
+                      static_cast<unsigned long>(status), baseline.size());
+        return FAILED(status) ? status : E_UNEXPECTED;
+    }
+    std::wprintf(L"PREROLL_FORMAT case=positive samples=%zu first_float_type=1\n", baseline.size());
+    // Exact observed production boundaries avoid assuming an output queue size.
+    // Rebuilding the graph for each case also checks fresh allocator/type state.
+    for (const std::size_t dropped : {std::size_t(1), std::size_t(2), std::size_t(1)})
+    {
+        std::vector<CapturedSampleEvidence> observed;
+        const REFERENCE_TIME offset = baseline[dropped].start;
+        status = CapturePrerollFormatCase(audio, splitter, fixture, input, -offset, &observed);
+        if (FAILED(status) || observed.size() != baseline.size() - dropped)
+            return FAILED(status) ? status : E_UNEXPECTED;
+        for (std::size_t index = 0; index < observed.size(); ++index)
+        {
+            const auto &expected = baseline[index + dropped];
+            if (observed[index].bytes != expected.bytes ||
+                observed[index].start != expected.start - offset ||
+                observed[index].stop != expected.stop - offset)
+                return E_UNEXPECTED;
+        }
+        std::wprintf(L"PREROLL_FORMAT case=negative offset=%lld dropped=%zu samples=%zu "
+                     L"first_float_type=1 payload=exact_baseline_suffix\n",
+                     static_cast<long long>(offset), dropped, observed.size());
+    }
+    return RuntimeIdentityMatches(records) && FixtureIdentityMatches(fixture) ? S_OK : E_UNEXPECTED;
+}
+
 HRESULT RunOpenJocLifecycleMatrix(const std::filesystem::path &runtime_dir,
                                   const std::filesystem::path &manifest_path,
                                   const std::filesystem::path &fixture_dir)
@@ -5565,6 +5761,7 @@ bool TestTask4AllocatorBoundaries()
 
     auto operations_for = [&](Task4TestSample &test_sample, Task4BoundaryCounters &counters) {
         LAVOpenJocStrictDeliveryOperations operations;
+        operations.prepare_delivery = [] { return S_OK; };
         operations.query_accept = [&](const AM_MEDIA_TYPE &) {
             ++counters.query_count;
             return S_OK;
@@ -8080,13 +8277,14 @@ int wmain(int argc, wchar_t **argv)
                      stock_worker ? L"stock" : L"passthrough");
         return 0;
     }
+    const bool preroll_format = argc == 5 && wcscmp(argv[1], L"--preroll-format") == 0;
     const bool controlled_sink = argc == 5 && wcscmp(argv[1], L"--controlled-sink") == 0;
     const bool lifecycle = argc == 5 && wcscmp(argv[1], L"--openjoc-lifecycle") == 0;
     const bool allocator_performance =
         argc == 5 && wcscmp(argv[1], L"--allocator-performance") == 0;
     const bool ac3_bitstream = argc == 5 && wcscmp(argv[1], L"--ac3-bitstream") == 0;
     const bool legacy_core = argc == 6 && wcscmp(argv[1], L"--legacy-core") == 0;
-    if (!controlled_sink && !lifecycle && !allocator_performance && !ac3_bitstream && !legacy_core &&
+    if (!preroll_format && !controlled_sink && !lifecycle && !allocator_performance && !ac3_bitstream && !legacy_core &&
         (argc != 5 || wcscmp(argv[1], L"--self-test") != 0 ||
         (wcscmp(argv[4], L"target") != 0 && wcscmp(argv[4], L"pristine") != 0))
        )
@@ -8096,6 +8294,8 @@ int wmain(int argc, wchar_t **argv)
                       L"<runtime-dir> <runtime-dir\\OpenJocRuntimeIdentity.tsv>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --self-test <runtime-dir> "
                       L"<runtime-dir\\OpenJocRuntimeIdentity.tsv> <target|pristine>\n"
+                      L"   or: OpenJocDirectShowNegotiationSmoke.exe --preroll-format "
+                      L"<runtime-dir> <manifest> <joc.lifecycle.ec3>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --controlled-sink "
                       L"<runtime-dir> <runtime-dir\\OpenJocRuntimeIdentity.tsv> <fixture-dir>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe "
@@ -8126,7 +8326,7 @@ int wmain(int argc, wchar_t **argv)
                       static_cast<unsigned long>(com_status));
         return 1;
     }
-    const GUID &audio_class_id = !controlled_sink && !lifecycle && !allocator_performance &&
+    const GUID &audio_class_id = !preroll_format && !controlled_sink && !lifecycle && !allocator_performance &&
                                          !ac3_bitstream && !legacy_core &&
                                          wcscmp(argv[4], L"pristine") == 0
                                      ? kPristineLavAudio
@@ -8138,6 +8338,8 @@ int wmain(int argc, wchar_t **argv)
                                       legacy_policy_value < LAV_OPENJOC_OUTPUT_CONTRACT_COUNT);
     const HRESULT status = !legacy_policy_valid
                                ? E_INVALIDARG
+                           : preroll_format
+                               ? openjoc_harness_shell::RunPrerollFormatRegression(argv[2], argv[3], argv[4])
                            : ac3_bitstream
                                ? openjoc_harness_shell::RunAc3BitstreamGraphCase(
                                      argv[2], argv[3], argv[4])
@@ -8159,7 +8361,10 @@ int wmain(int argc, wchar_t **argv)
     CoUninitialize();
     if (FAILED(status))
     {
-        if (controlled_sink)
+        if (preroll_format)
+            std::fwprintf(stderr, L"PREROLL_FORMAT_UNVERIFIED: 0x%08lx\n",
+                          static_cast<unsigned long>(status));
+        else if (controlled_sink)
             std::fwprintf(stderr, L"UNVERIFIED: controlled-sink matrix failed: 0x%08lx\n",
                           static_cast<unsigned long>(status));
         else if (lifecycle)
@@ -8178,6 +8383,11 @@ int wmain(int argc, wchar_t **argv)
             std::fwprintf(stderr, L"self-test failed: 0x%08lx\n",
                           static_cast<unsigned long>(status));
         return 1;
+    }
+    if (preroll_format)
+    {
+        std::wprintf(L"PREROLL_FORMAT_COMPLETE: real decoder/capture sink passed; no audio renderer\n");
+        return 0;
     }
     if (controlled_sink)
     {
