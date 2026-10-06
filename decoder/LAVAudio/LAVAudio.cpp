@@ -3697,7 +3697,11 @@ HRESULT CLAVAudio::Deliver(BufferDetails &buffer)
 
         const bool strict_type_changed = !IsExactLAVOpenJocStrictMediaType(
             *buffer.openjoc_contract, m_pOutput->CurrentMediaType());
+        REFERENCE_TIME rtStart = 0, rtStop = 0;
         LAVOpenJocStrictDeliveryOperations operations;
+        operations.prepare_delivery = [this, &buffer, &rtStart, &rtStop]() {
+            return PrepareOpenJocDelivery(buffer, rtStart, rtStop);
+        };
         operations.query_accept = [this](const AM_MEDIA_TYPE &candidate) {
             return m_pOutput->GetConnected()->QueryAccept(&candidate);
         };
@@ -3726,8 +3730,8 @@ HRESULT CLAVAudio::Deliver(BufferDetails &buffer)
             CMediaType media_type(candidate);
             return m_pOutput->SetMediaType(&media_type);
         };
-        operations.deliver = [this, &buffer](void *sample, BYTE *data, const long bytes) {
-            return CompleteOpenJocDelivery(buffer, static_cast<IMediaSample *>(sample), data, bytes);
+        operations.deliver = [this, &buffer, &rtStart, &rtStop](void *sample, BYTE *data, const long bytes) {
+            return CompleteOpenJocDelivery(buffer, static_cast<IMediaSample *>(sample), data, bytes, rtStart, rtStop);
         };
         const HRESULT delivery_hr = DeliverLAVOpenJocStrictMediaType(
             buffer.openjoc_contract, strict_media_type, strict_type_changed, strict_buffer_bytes, operations);
@@ -3944,12 +3948,8 @@ done:
     return hr;
 }
 
-HRESULT CLAVAudio::CompleteOpenJocDelivery(BufferDetails &buffer, IMediaSample *sample, BYTE *data,
-                                           const long requiredBytes)
+HRESULT CLAVAudio::PrepareOpenJocDelivery(BufferDetails &buffer, REFERENCE_TIME &rtStart, REFERENCE_TIME &rtStop)
 {
-    HRESULT hr = S_OK;
-    IMediaSample *pOut = sample;
-
     if (m_bResyncTimestamp && buffer.rtStart != AV_NOPTS_VALUE)
     {
         m_rtStart = buffer.rtStart;
@@ -3958,7 +3958,8 @@ HRESULT CLAVAudio::CompleteOpenJocDelivery(BufferDetails &buffer, IMediaSample *
 
     double dDuration = (double)buffer.nSamples / buffer.dwSamplesPerSec * DBL_SECOND_MULT / m_dRate;
     m_dStartOffset += fmod(dDuration, 1.0);
-    REFERENCE_TIME rtStart = m_rtStart, rtStop = m_rtStart + (REFERENCE_TIME)(dDuration + 0.5);
+    rtStart = m_rtStart;
+    rtStop = m_rtStart + (REFERENCE_TIME)(dDuration + 0.5);
     m_rtStart += (REFERENCE_TIME)dDuration;
     if (m_dStartOffset > 0.5)
     {
@@ -3982,7 +3983,7 @@ HRESULT CLAVAudio::CompleteOpenJocDelivery(BufferDetails &buffer, IMediaSample *
     }
 
     if (rtStart < 0)
-        goto done;
+        return S_FALSE;
 
     if (m_settings.AudioDelayEnabled)
     {
@@ -3991,6 +3992,14 @@ HRESULT CLAVAudio::CompleteOpenJocDelivery(BufferDetails &buffer, IMediaSample *
         rtStop += rtDelay;
     }
 
+    return S_OK;
+}
+
+HRESULT CLAVAudio::CompleteOpenJocDelivery(BufferDetails &buffer, IMediaSample *sample, BYTE *data,
+                                           const long requiredBytes, REFERENCE_TIME rtStart, REFERENCE_TIME rtStop)
+{
+    HRESULT hr = S_OK;
+    IMediaSample *pOut = sample;
     pOut->SetTime(&rtStart, &rtStop);
     pOut->SetMediaTime(nullptr, nullptr);
     pOut->SetPreroll(FALSE);

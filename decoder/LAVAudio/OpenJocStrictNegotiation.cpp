@@ -18,16 +18,20 @@ HRESULT DeliverLAVOpenJocStrictMediaType(const LAVOpenJocOutputContract *contrac
         return S_FALSE;
     if (required_bytes < 0 || !IsExactLAVOpenJocStrictMediaType(*contract, candidate) || !operations.reconnect ||
         !operations.acquire_sample || !operations.release_attached_type || !operations.release_sample ||
-        !operations.deliver)
+        !operations.prepare_delivery || !operations.deliver ||
+        (media_type_changed &&
+         (!operations.query_accept || !operations.set_sample_media_type || !operations.set_output_media_type)))
     {
         return E_INVALIDARG;
     }
 
+    const HRESULT preparation_hr = operations.prepare_delivery();
+    if (preparation_hr != S_OK)
+        return preparation_hr == S_FALSE ? S_OK : preparation_hr;
+
     HRESULT hr = S_OK;
     if (media_type_changed)
     {
-        if (!operations.query_accept || !operations.set_sample_media_type || !operations.set_output_media_type)
-            return E_INVALIDARG;
         hr = NormalizeLAVOpenJocQueryAcceptResult(operations.query_accept(candidate));
         if (FAILED(hr))
             return hr;
@@ -60,8 +64,7 @@ HRESULT DeliverLAVOpenJocStrictMediaType(const LAVOpenJocOutputContract *contrac
 
     if (media_type_changed)
     {
-        if (FAILED(hr = operations.set_sample_media_type(sample.handle, candidate)) ||
-            FAILED(hr = operations.set_output_media_type(candidate)))
+        if (FAILED(hr = operations.set_sample_media_type(sample.handle, candidate)))
         {
             operations.release_sample(sample.handle);
             return hr;
@@ -69,6 +72,10 @@ HRESULT DeliverLAVOpenJocStrictMediaType(const LAVOpenJocOutputContract *contrac
     }
 
     hr = operations.deliver(sample.handle, sample.data, required_bytes);
+    // S_FALSE means the receiver did not accept this sample (for example during flush).
+    // Keep the transition pending on every outcome other than actual successful delivery.
+    if (hr == S_OK && media_type_changed)
+        hr = operations.set_output_media_type(candidate);
     operations.release_sample(sample.handle);
     return hr;
 }

@@ -304,7 +304,9 @@ class __declspec(uuid("E8E73B6B-4CB3-44A4-BE99-4F7BCB96E491")) CLAVAudio
 
     HRESULT PerformFlush();
     HRESULT Deliver(BufferDetails &buffer);
-    HRESULT CompleteOpenJocDelivery(BufferDetails &buffer, IMediaSample *sample, BYTE *data, long requiredBytes);
+    HRESULT PrepareOpenJocDelivery(BufferDetails &buffer, REFERENCE_TIME &rtStart, REFERENCE_TIME &rtStop);
+    HRESULT CompleteOpenJocDelivery(BufferDetails &buffer, IMediaSample *sample, BYTE *data, long requiredBytes,
+                                   REFERENCE_TIME rtStart, REFERENCE_TIME rtStop);
 
     void CreateBDLPCMHeader(BYTE *pBuf, const WAVEFORMATEX_HDMV_LPCM *wfex_lpcm) const;
     void CreateDVDLPCMHeader(BYTE *pBuf, const WAVEFORMATEX *wfex) const;

@@ -168,6 +168,8 @@ void TestStrictQueryAndSampleValidation()
 
 struct FakeStrictDownstream
 {
+    int prepare_count = 0;
+    HRESULT prepare_result = S_OK;
     int query_count = 0;
     int reconnect_count = 0;
     int acquire_count = 0;
@@ -186,6 +188,10 @@ struct FakeStrictDownstream
 LAVOpenJocStrictDeliveryOperations MakeStrictOperations(FakeStrictDownstream &fake)
 {
     LAVOpenJocStrictDeliveryOperations operations;
+    operations.prepare_delivery = [&]() {
+        ++fake.prepare_count;
+        return fake.prepare_result;
+    };
     operations.query_accept = [&](const AM_MEDIA_TYPE &) {
         ++fake.query_count;
         return fake.query_result;
@@ -260,6 +266,19 @@ void TestStrictDeliveryOrchestration()
     assert(acquire_failed_with_attached.attached_release_count == 1);
     assert(acquire_failed_with_attached.sample_release_count == 1);
 
+    FakeStrictDownstream sample_type_failed;
+    operations = MakeStrictOperations(sample_type_failed);
+    operations.set_sample_media_type = [](void *, const AM_MEDIA_TYPE &) { return E_ACCESSDENIED; };
+    assert(DeliverLAVOpenJocStrictMediaType(contract, candidate, true, 2048, operations) == E_ACCESSDENIED);
+    assert(sample_type_failed.output_type_count == 0 && sample_type_failed.deliver_count == 0);
+    assert(sample_type_failed.sample_release_count == 1);
+
+    FakeStrictDownstream invalid_operations;
+    operations = MakeStrictOperations(invalid_operations);
+    operations.set_output_media_type = {};
+    assert(DeliverLAVOpenJocStrictMediaType(contract, candidate, true, 2048, operations) == E_INVALIDARG);
+    assert(invalid_operations.prepare_count == 0 && invalid_operations.acquire_count == 0);
+
     FakeStrictDownstream accepted;
     accepted.attached = &candidate;
     operations = MakeStrictOperations(accepted);
@@ -274,6 +293,105 @@ void TestStrictDeliveryOrchestration()
     assert(DeliverLAVOpenJocStrictMediaType(nullptr, candidate, true, 2048, operations) == S_FALSE);
     assert(stock.query_count == 0 && stock.reconnect_count == 0 && stock.acquire_count == 0 &&
            stock.deliver_count == 0);
+}
+
+// Exercise the production orchestrator across successive samples, with independent
+// sender/receiver type state. No decoder, renderer, device or private media is used.
+void TestPrerollPreservesPendingFormat()
+{
+    const auto *contract = FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Layout51);
+    LAVOpenJocStrictMediaType strict{};
+    assert(contract && BuildLAVOpenJocStrictMediaType(*contract, &strict));
+    const AM_MEDIA_TYPE candidate = AsMediaType(strict);
+    for (int negative_count : {0, 1, 3})
+    {
+        FakeStrictDownstream fake;
+        auto operations = MakeStrictOperations(fake);
+        bool local_float = false, receiver_float = false, sample_has_type = false;
+        HRESULT receive_result = S_OK;
+        operations.acquire_sample = [&](LAVOpenJocStrictAcquiredSample *sample) {
+            ++fake.acquire_count;
+            sample_has_type = false;
+            sample->handle = &fake;
+            sample->data = fake.storage;
+            sample->capacity = fake.capacity;
+            return fake.acquire_result;
+        };
+        operations.set_sample_media_type = [&](void *, const AM_MEDIA_TYPE &type) {
+            assert(IsExactLAVOpenJocStrictMediaType(*contract, type));
+            sample_has_type = true;
+            ++fake.sample_type_count;
+            return S_OK;
+        };
+        operations.set_output_media_type = [&](const AM_MEDIA_TYPE &) {
+            assert(receiver_float); // The receiving side must see the type first.
+            local_float = true;
+            ++fake.output_type_count;
+            return S_OK;
+        };
+        operations.deliver = [&](void *, BYTE *, long) {
+            if (receive_result != S_OK)
+                return receive_result;
+            if (sample_has_type)
+                receiver_float = true;
+            assert(receiver_float);
+            ++fake.deliver_count;
+            return S_OK;
+        };
+        const auto deliver = [&]() {
+            return DeliverLAVOpenJocStrictMediaType(contract, candidate, !local_float, 2048, operations);
+        };
+        // Repeated switches/reopens begin with the last negotiated integer type.
+        for (int epoch = 0; epoch < 3; ++epoch)
+        {
+            local_float = receiver_float = false;
+            const int acquire_before = fake.acquire_count;
+            const int query_before = fake.query_count;
+            const int prepare_before = fake.prepare_count;
+            fake.prepare_result = S_FALSE;
+            for (int i = 0; i < negative_count; ++i)
+                assert(deliver() == S_OK);
+            assert(fake.prepare_count == prepare_before + negative_count);
+            assert(fake.acquire_count == acquire_before && fake.query_count == query_before);
+            assert(!local_float && !receiver_float);
+            fake.prepare_result = S_OK;
+            // Acquisition, allocator and receiving-side failures must not consume the type.
+            fake.acquire_result = E_ACCESSDENIED;
+            assert(deliver() == E_ACCESSDENIED);
+            assert(!local_float && !receiver_float);
+            fake.acquire_result = S_OK;
+            fake.capacity = 1024;
+            assert(deliver() == VFW_E_BUFFER_UNDERFLOW);
+            assert(!local_float && !receiver_float);
+            fake.capacity = 4096;
+            for (HRESULT failure : {E_ACCESSDENIED, S_FALSE})
+            {
+                receive_result = failure;
+                assert(deliver() == failure);
+                assert(!local_float && !receiver_float);
+            }
+            receive_result = S_OK;
+            const int types_before = fake.output_type_count;
+            assert(deliver() == S_OK);
+            assert(local_float && receiver_float && sample_has_type);
+            assert(fake.output_type_count == types_before + 1);
+            assert(deliver() == S_OK);
+            assert(!sample_has_type && fake.output_type_count == types_before + 1);
+            // A same-format seek/flush drops preroll without invalidating either side.
+            fake.prepare_result = S_FALSE;
+            assert(deliver() == S_OK);
+            fake.prepare_result = S_OK;
+            assert(deliver() == S_OK);
+            assert(!sample_has_type && fake.output_type_count == types_before + 1);
+        }
+        const int prepared = fake.prepare_count;
+        assert(DeliverLAVOpenJocStrictMediaType(nullptr, candidate, true, 2048, operations) == S_FALSE);
+        assert(fake.prepare_count == prepared); // No output contract means no timeline advance.
+        fake.prepare_result = E_ACCESSDENIED;
+        const int acquired = fake.acquire_count;
+        assert(deliver() == E_ACCESSDENIED);
+        assert(fake.acquire_count == acquired);
+    }
 }
 
 void TestQueueTransactionOrchestration()
@@ -483,6 +601,21 @@ void TestStrictDeliveryPrecedesSampleAndStockFallbacks()
     assert(deliver != std::string::npos && strict_marker != std::string::npos && strict_branch != std::string::npos);
     assert(orchestration != std::string::npos && stock_fallback != std::string::npos && orchestration < stock_fallback);
 
+    const auto prepare_callback = source.find("operations.prepare_delivery =", strict_branch);
+    assert(prepare_callback < orchestration);
+    const auto prepare = source.find("HRESULT CLAVAudio::PrepareOpenJocDelivery(");
+    const auto complete = source.find("HRESULT CLAVAudio::CompleteOpenJocDelivery(");
+    const auto jitter = source.find("m_faJitter.Sample(rtJitter)", prepare);
+    const auto preroll = source.find("if (rtStart < 0)", prepare);
+    const auto delay = source.find("if (m_settings.AudioDelayEnabled)", prepare);
+    assert(prepare < jitter && jitter < preroll && preroll < delay && delay < complete);
+    const auto end_complete = source.find("HRESULT CLAVAudio::BreakConnect(", complete);
+    const auto delivery_body = source.substr(complete, end_complete - complete);
+    assert(delivery_body.find("m_rtStart") == std::string::npos);
+    assert(delivery_body.find("m_faJitter") == std::string::npos);
+    assert(delivery_body.find("AudioDelay") == std::string::npos);
+    assert(delivery_body.find("if (rtStart < 0)") == std::string::npos);
+
     const auto eos = source.find("HRESULT CLAVAudio::EndOfStream()");
     const auto receive = source.find("HRESULT CLAVAudio::Receive(IMediaSample *pIn)");
     assert(source.find("strict_eos", eos) < receive);
@@ -529,6 +662,7 @@ int main(int argc, char **argv)
     TestCompleteDirectShowMediaTypeComparison();
     TestStrictQueryAndSampleValidation();
     TestStrictDeliveryOrchestration();
+    TestPrerollPreservesPendingFormat();
     TestQueueTransactionOrchestration();
     TestCheckedArithmetic();
     TestGrowableArrayFailuresPreserveState();
