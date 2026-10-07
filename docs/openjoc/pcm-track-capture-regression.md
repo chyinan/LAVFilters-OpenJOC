@@ -56,7 +56,13 @@ splitter-produced media types and packets. The harness checks input subtype,
 format tag/subformat, channel count/mask, rate, valid bits, container bits,
 block alignment, byte rate and format length where applicable. The first six
 cases retain their original 48 kHz coverage. Cases 7 and 8 each exercise
-96 kHz PCM → 48 kHz JOC → 96 kHz PCM → 48 kHz JOC → 96 kHz PCM. No raw-SPDIF
+96 kHz PCM → 48 kHz JOC → 96 kHz PCM → 48 kHz JOC → 96 kHz PCM.
+The stock output oracle uses `WAVEFORMATEXTENSIBLE` above 48 kHz, including
+stereo FP32, matching LAV's existing `CreateMediaType` rule. The first high-rate
+FP32 run exposed an incorrect basic-header expectation in the harness; the
+strict sink rejected the real extensible FP32 type and LAV attempted its stock
+PCM16 fallback. Correcting that expected representation keeps the exact FP32
+payload, peer-type, sample-type, timing and gain assertions intact. No raw-SPDIF
 input is allowed. Every PCM/FLAC output byte must match its fixture oracle.
 
 The first JOC pass uses 0 dB and the second +6 dB, checked sample-by-sample

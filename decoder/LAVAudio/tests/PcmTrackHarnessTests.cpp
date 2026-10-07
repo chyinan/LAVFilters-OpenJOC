@@ -207,6 +207,28 @@ int main() {
     assert(reinterpret_cast<WAVEFORMATEX *>(packed.pbFormat)->nBlockAlign == 18);
     auto f64_output = BuildTrackPcmType(2, 32, 3, true);
     assert(f64_output.cbFormat == 18 && f64_output.sample_size == 8);
+    // LAV's existing CreateMediaType uses extensible above 48 kHz, including
+    // stereo FP32. Reject a basic-header expectation instead of accepting a
+    // decoder fallback or normalizing away the exact representation.
+    for (bool floating : {false, true})
+    {
+        const WORD bits = floating ? 32 : 16;
+        auto high_rate = BuildTrackPcmType(2, bits, 3, floating, 0, 96000);
+        assert(high_rate.cbFormat == sizeof(WAVEFORMATEXTENSIBLE));
+        const auto &wave = *reinterpret_cast<const WAVEFORMATEXTENSIBLE *>(high_rate.pbFormat);
+        assert(wave.Format.wFormatTag == WAVE_FORMAT_EXTENSIBLE && wave.Format.cbSize == 22);
+        assert(wave.Format.nChannels == 2 && wave.Format.nSamplesPerSec == 96000);
+        assert(wave.Format.wBitsPerSample == bits && wave.Samples.wValidBitsPerSample == bits);
+        assert(wave.Format.nBlockAlign == 2 * bits / 8);
+        assert(wave.Format.nAvgBytesPerSec == 96000 * wave.Format.nBlockAlign);
+        assert(wave.dwChannelMask == 3);
+        assert(wave.SubFormat == (floating ? MEDIASUBTYPE_IEEE_FLOAT : MEDIASUBTYPE_PCM));
+        assert(high_rate.subtype == wave.SubFormat && high_rate.sample_size == wave.Format.nBlockAlign);
+        auto normal_rate = BuildTrackPcmType(2, bits, 3, floating);
+        assert(normal_rate.cbFormat == sizeof(WAVEFORMATEX));
+        assert(reinterpret_cast<const WAVEFORMATEX *>(normal_rate.pbFormat)->wFormatTag ==
+               (floating ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM));
+    }
     auto malformed = BuildTrackPcmType(2, 16, 3, false);
     reinterpret_cast<WAVEFORMATEX *>(malformed.pbFormat)->nAvgBytesPerSec++;
     assert(!TrackInputMetadataMatches(malformed, cases[0]));

@@ -4879,7 +4879,8 @@ CMediaType BuildTrackPcmType(const WORD channels, const WORD bits, const DWORD m
     CMediaType type;
     WAVEFORMATEXTENSIBLE wave{};
     const GUID subtype = floating ? MEDIASUBTYPE_IEEE_FLOAT : MEDIASUBTYPE_PCM;
-    const bool extensible = channels > 2 || (!floating && bits > 16) || valid_bits != 0;
+    // Match the stock LAV output representation, including high-rate stereo FP32.
+    const bool extensible = channels > 2 || (!floating && bits > 16) || valid_bits != 0 || sample_rate > 48000;
     wave.Format.wFormatTag = extensible ? WAVE_FORMAT_EXTENSIBLE
                                        : (floating ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM);
     wave.Format.nChannels = channels;
