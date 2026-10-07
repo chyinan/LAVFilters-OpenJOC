@@ -111,3 +111,26 @@ capture mode proves PotPlayer's actual track-selection graph, a user's saved
 filter configuration, a specific renderer, or physical audio output. Windows
 native compilation and capture execution must be recorded separately from the
 portable checks; no local Windows result is implied by adding this test.
+
+## Capture receiver media-type commit regression
+
+The first Windows run passed ordinary s16 capture and delivered 129 JOC samples,
+but correctly failed the exact peer-type assertion. Its capture sink recorded
+the delivered FP32 type separately while its actual DirectShow input pin still
+reported PCM16. `CBaseInputPin::Receive` validates attached media types but does
+not call `SetMediaType`; the derived receiver must commit an accepted change.
+
+`StrictCaptureInputPin::Receive` now commits a changed attached type only after
+both the base receive and sample capture return exactly `S_OK`. Base/capture
+failure or `S_FALSE` leaves the pin unchanged; an absent or identical attached
+type does not produce a redundant commit. Commit failures are propagated. The
+exact sender/receiver connection assertions remain in place. `PCM_TRACK_WITNESS`
+reports every gate independently, including the two pin types and diagnostics
+statuses, so an earlier failure no longer leaves misleading unread counters.
+
+The portable runner extracts that unmodified native receive method and tests
+successful changed-type commit, no-type/same-type no-op, base/capture failure
+and `S_FALSE`, commit failure propagation, and a return transition. `--source`
+can name the pre-fix harness for a negative control; it must fail the first
+successful-delivery receiver-type assertion. This validates the harness model,
+not Windows execution. The native PCM and preroll gates must still be rerun.

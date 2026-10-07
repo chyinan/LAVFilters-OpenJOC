@@ -14,9 +14,11 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--compiler', default='g++')
+parser.add_argument('--source', type=Path, default=HERE.parent / 'OpenJocDirectShowNegotiationSmoke.cpp',
+                    help='Harness source to extract, including a pre-fix negative control')
 parser.add_argument('--ffmpeg', help='Optional independent verification of lossless fixtures')
 args = parser.parse_args()
-source = (HERE.parent / 'OpenJocDirectShowNegotiationSmoke.cpp').read_text(encoding='utf-8')
+source = args.source.read_text(encoding='utf-8')
 
 def function(signature):
     start = source.index(signature)
@@ -44,6 +46,8 @@ spec.loader.exec_module(fixtures)
 with tempfile.TemporaryDirectory(prefix='lav-pcm-track-harness-') as temporary:
     work = Path(temporary)
     (work / 'PcmTrackHarnessMethods.inc').write_text(methods, encoding='utf-8')
+    (work / 'PcmTrackReceiveMethod.inc').write_text(
+        function('STDMETHODIMP StrictCaptureInputPin::Receive('), encoding='utf-8')
     binary = work / 'pcm-track-oracles.exe'
     if Path(args.compiler).stem.lower() == 'cl':
         command = [args.compiler, '/nologo', '/std:c++17', '/EHsc', '/W4', '/I' + str(work),

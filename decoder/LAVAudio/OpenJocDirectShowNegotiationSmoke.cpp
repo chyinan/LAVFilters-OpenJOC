@@ -2257,7 +2257,28 @@ STDMETHODIMP StrictCaptureInputPin::Receive(IMediaSample *sample)
     if (!owner_ || !owner_->WaitUntilRunning())
         return VFW_E_TIMEOUT;
     const HRESULT base_status = CBaseInputPin::Receive(sample);
-    return SUCCEEDED(base_status) && owner_ ? owner_->RecordSample(sample) : base_status;
+    if (base_status != S_OK)
+        return base_status;
+    const HRESULT capture_status = owner_->RecordSample(sample);
+    if (capture_status != S_OK)
+        return capture_status;
+
+    // CBaseInputPin::Receive validates a sample-attached type but does not
+    // commit m_mt. Keep the real receiver connection type in step with the
+    // successfully captured sample, not merely QueryAccept or a failed Receive.
+    AM_MEDIA_TYPE *attached = nullptr;
+    const HRESULT attached_status = sample->GetMediaType(&attached);
+    if (attached_status == S_OK && attached)
+    {
+        const CMediaType delivered_type(*attached);
+        DeleteMediaType(attached);
+        if (!openjoc_harness_core::ExactMediaTypeEqual(m_mt, delivered_type))
+            return SetMediaType(&delivered_type);
+        return S_OK;
+    }
+    if (attached)
+        DeleteMediaType(attached);
+    return attached_status == S_FALSE && !attached ? S_OK : E_UNEXPECTED;
 }
 
 STDMETHODIMP StrictCaptureInputPin::EndOfStream()
@@ -5152,15 +5173,49 @@ HRESULT RunPcmTrackSequence(const PrivateComModule &audio, const PrivateComModul
         std::int32_t actual_gain = 0;
         LAVOpenJocOutputPolicy actual_policy = LAVOpenJocOutputPolicy::Stereo;
         HRESULT graph_error = S_OK;
-        if (SUCCEEDED(status) && (DrainGraphErrors(events.get(), &graph_error) ||
-            samples.size() <= first || bytes.empty() || !sink->sample_contracts_valid() ||
-            !sink->allocator_contract_valid() || sink->end_of_stream_count() != eos_start + 1 ||
-            !sink->end_of_stream_running() || !ExactConnectionTypes(audio_output.get(), sink->input(), expected) ||
-            !openjoc_harness_core::ExactMediaTypeEqual(sink->expected_type(), expected) ||
-            diagnostics->GetOpenJocInputByteCounts(&classifier, &stream) != S_OK ||
-            gain->GetOutputGain(&actual_gain) != S_OK || actual_gain != requested_gain ||
-            policy->GetOutputPolicy(&actual_policy) != S_OK || actual_policy != LAVOpenJocOutputPolicy::Layout714 ||
-            settings->GetAllowRawSPDIFInput())) status = E_UNEXPECTED;
+        // Evaluate every observation independently. A failed earlier condition
+        // must not leave misleading zero-valued decoder counters in the log.
+        const bool graph_failed = DrainGraphErrors(events.get(), &graph_error);
+        const bool sample_contracts = sink->sample_contracts_valid();
+        const bool allocator_contract = sink->allocator_contract_valid();
+        const bool fresh_eos = sink->end_of_stream_count() == eos_start + 1;
+        const bool eos_running = sink->end_of_stream_running();
+        CMediaType observed_output, observed_receiver;
+        const HRESULT output_type_hr = audio_output->ConnectionMediaType(&observed_output);
+        const HRESULT receiver_type_hr = sink->input()->ConnectionMediaType(&observed_receiver);
+        const bool output_exact = output_type_hr == S_OK &&
+            openjoc_harness_core::ExactMediaTypeEqual(observed_output, expected);
+        const bool receiver_exact = receiver_type_hr == S_OK &&
+            openjoc_harness_core::ExactMediaTypeEqual(observed_receiver, expected);
+        const bool peers_exact = ExactConnectionTypes(audio_output.get(), sink->input(), expected);
+        const bool capture_type_exact = openjoc_harness_core::ExactMediaTypeEqual(sink->expected_type(), expected);
+        const HRESULT counters_hr = diagnostics->GetOpenJocInputByteCounts(&classifier, &stream);
+        const HRESULT gain_hr = gain->GetOutputGain(&actual_gain);
+        const HRESULT policy_hr = policy->GetOutputPolicy(&actual_policy);
+        const bool raw_spdif = settings->GetAllowRawSPDIFInput() != FALSE;
+        std::wprintf(L"PCM_TRACK_WITNESS case=%ls phase=%u prior_hr=0x%08lx graph_error=0x%08lx "
+                     L"sample_contracts=%d allocator=%d fresh_eos=%d eos_running=%d "
+                     L"output_hr=0x%08lx receiver_hr=0x%08lx output_exact=%d receiver_exact=%d "
+                     L"peers_exact=%d capture_type_exact=%d counters_hr=0x%08lx gain_hr=0x%08lx "
+                     L"gain=%ld expected_gain=%ld policy_hr=0x%08lx policy=%u raw_spdif=%d\n",
+                     test.name, phase, static_cast<unsigned long>(status), static_cast<unsigned long>(graph_error),
+                     sample_contracts, allocator_contract, fresh_eos, eos_running,
+                     static_cast<unsigned long>(output_type_hr), static_cast<unsigned long>(receiver_type_hr),
+                     output_exact, receiver_exact, peers_exact, capture_type_exact,
+                     static_cast<unsigned long>(counters_hr), static_cast<unsigned long>(gain_hr),
+                     static_cast<long>(actual_gain), static_cast<long>(requested_gain),
+                     static_cast<unsigned long>(policy_hr), static_cast<unsigned int>(actual_policy), raw_spdif);
+        if (SUCCEEDED(status) && (graph_failed || samples.size() <= first || bytes.empty() ||
+            !sample_contracts || !allocator_contract || !fresh_eos || !eos_running ||
+            !output_exact || !receiver_exact || !peers_exact || !capture_type_exact ||
+            counters_hr != S_OK || gain_hr != S_OK || actual_gain != requested_gain ||
+            policy_hr != S_OK || actual_policy != LAVOpenJocOutputPolicy::Layout714 || raw_spdif)) status = E_UNEXPECTED;
+        if (output_type_hr == S_OK && !output_exact)
+            std::wprintf(L"PCM_TRACK_TYPE_MISMATCH peer=audio-output actual=%hs expected=%hs\n",
+                         SerializeMediaType(observed_output).c_str(), SerializeMediaType(expected).c_str());
+        if (receiver_type_hr == S_OK && !receiver_exact)
+            std::wprintf(L"PCM_TRACK_TYPE_MISMATCH peer=capture-input actual=%hs expected=%hs\n",
+                         SerializeMediaType(observed_receiver).c_str(), SerializeMediaType(expected).c_str());
         if (SUCCEEDED(status) && !openjoc_harness_core::ExactMediaTypeEqual(previous, expected) &&
             (!samples[first].has_attached_type ||
              !openjoc_harness_core::ExactMediaTypeEqual(samples[first].attached_type, expected))) status = E_UNEXPECTED;
