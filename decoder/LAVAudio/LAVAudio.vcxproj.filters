@@ -133,6 +133,9 @@
     <ClInclude Include="OpenJocCandidate.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="OpenJocPcmInput.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="OpenJocDiagnostic.h">
       <Filter>Header Files</Filter>
     </ClInclude>

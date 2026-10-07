@@ -27,6 +27,7 @@
 #include "OpenJocStrictOutput.h"
 #include "LAVAudioSettings.h"
 #include "LAVOpenJocDiagnostics.h"
+#include "LAVOpenJocInspection.h"
 #include "LAVSplitterSettings.h"
 #include "ISpecifyPropertyPages2.h"
 #include "resource.h"
@@ -2256,7 +2257,28 @@ STDMETHODIMP StrictCaptureInputPin::Receive(IMediaSample *sample)
     if (!owner_ || !owner_->WaitUntilRunning())
         return VFW_E_TIMEOUT;
     const HRESULT base_status = CBaseInputPin::Receive(sample);
-    return SUCCEEDED(base_status) && owner_ ? owner_->RecordSample(sample) : base_status;
+    if (base_status != S_OK)
+        return base_status;
+    const HRESULT capture_status = owner_->RecordSample(sample);
+    if (capture_status != S_OK)
+        return capture_status;
+
+    // CBaseInputPin::Receive validates a sample-attached type but does not
+    // commit m_mt. Keep the real receiver connection type in step with the
+    // successfully captured sample, not merely QueryAccept or a failed Receive.
+    AM_MEDIA_TYPE *attached = nullptr;
+    const HRESULT attached_status = sample->GetMediaType(&attached);
+    if (attached_status == S_OK && attached)
+    {
+        const CMediaType delivered_type(*attached);
+        DeleteMediaType(attached);
+        if (!openjoc_harness_core::ExactMediaTypeEqual(m_mt, delivered_type))
+            return SetMediaType(&delivered_type);
+        return S_OK;
+    }
+    if (attached)
+        DeleteMediaType(attached);
+    return attached_status == S_FALSE && !attached ? S_OK : E_UNEXPECTED;
 }
 
 STDMETHODIMP StrictCaptureInputPin::EndOfStream()
@@ -4832,6 +4854,477 @@ HRESULT RunPrerollFormatRegression(const std::filesystem::path &runtime_dir,
                      static_cast<long long>(offset), dropped, observed.size());
     }
     return RuntimeIdentityMatches(records) && FixtureIdentityMatches(fixture) ? S_OK : E_UNEXPECTED;
+}
+
+// This lane owns exactly a private splitter, one Audio instance and a capture
+// sink. Source replacement preserves the downstream connection. It is not a
+// claim about a player's track selector or any physical renderer.
+struct PcmTrackCase
+{
+    const wchar_t *name;
+    const wchar_t *fixture;
+    const wchar_t *oracle;
+    WORD channels;
+    WORD bits;
+    DWORD mask;
+    bool floating;
+    bool flac;
+    bool inject_24_in_32;
+    DWORD sample_rate = 48000;
+};
+
+CMediaType BuildTrackPcmType(const WORD channels, const WORD bits, const DWORD mask,
+                            const bool floating, const WORD valid_bits = 0, const DWORD sample_rate = 48000)
+{
+    CMediaType type;
+    WAVEFORMATEXTENSIBLE wave{};
+    const GUID subtype = floating ? MEDIASUBTYPE_IEEE_FLOAT : MEDIASUBTYPE_PCM;
+    // Match the stock LAV output representation, including high-rate stereo FP32.
+    const bool extensible = channels > 2 || (!floating && bits > 16) || valid_bits != 0 || sample_rate > 48000;
+    wave.Format.wFormatTag = extensible ? WAVE_FORMAT_EXTENSIBLE
+                                       : (floating ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM);
+    wave.Format.nChannels = channels;
+    wave.Format.nSamplesPerSec = sample_rate;
+    wave.Format.wBitsPerSample = bits;
+    wave.Format.nBlockAlign = channels * (bits / 8);
+    wave.Format.nAvgBytesPerSec = wave.Format.nBlockAlign * sample_rate;
+    if (extensible)
+    {
+        wave.Format.cbSize = sizeof(wave) - sizeof(wave.Format);
+        wave.Samples.wValidBitsPerSample = valid_bits ? valid_bits : bits;
+        wave.dwChannelMask = mask;
+        wave.SubFormat = subtype;
+    }
+    type.SetType(&MEDIATYPE_Audio);
+    type.SetSubtype(&subtype);
+    type.SetFormatType(&FORMAT_WaveFormatEx);
+    type.SetSampleSize(wave.Format.nBlockAlign);
+    type.SetTemporalCompression(FALSE);
+    if (!type.SetFormat(reinterpret_cast<BYTE *>(&wave), sizeof(WAVEFORMATEX) + wave.Format.cbSize))
+        type.InitMediaType();
+    return type;
+}
+
+bool TrackInputMetadataMatches(const AM_MEDIA_TYPE &type, const PcmTrackCase &test)
+{
+    constexpr GUID flac = {0xf1ac, 0, 0x10, {0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71}};
+    constexpr GUID flac_framed = {0x1541c5c0, 0xcddf, 0x477d,
+                                  {0xbc, 0x0a, 0x86, 0xf8, 0xae, 0x7f, 0x83, 0x54}};
+    if (type.majortype != MEDIATYPE_Audio || type.formattype != FORMAT_WaveFormatEx ||
+        !type.pbFormat || type.cbFormat < sizeof(WAVEFORMATEX))
+        return false;
+    const auto &wave = *reinterpret_cast<const WAVEFORMATEX *>(type.pbFormat);
+    if (wave.nChannels != test.channels || wave.nSamplesPerSec != test.sample_rate ||
+        wave.wBitsPerSample != test.bits || sizeof(WAVEFORMATEX) + wave.cbSize > type.cbFormat)
+        return false;
+    if (test.flac)
+        return (type.subtype == flac || type.subtype == flac_framed) && wave.cbSize >= 34;
+    const GUID subtype = test.floating ? MEDIASUBTYPE_IEEE_FLOAT : MEDIASUBTYPE_PCM;
+    if (type.subtype != subtype || wave.nBlockAlign != test.channels * (test.bits / 8) ||
+        wave.nAvgBytesPerSec != wave.nBlockAlign * test.sample_rate)
+        return false;
+    if (wave.wFormatTag == WAVE_FORMAT_EXTENSIBLE)
+    {
+        if (type.cbFormat < sizeof(WAVEFORMATEXTENSIBLE) || wave.cbSize < 22)
+            return false;
+        const auto &extended = *reinterpret_cast<const WAVEFORMATEXTENSIBLE *>(type.pbFormat);
+        return extended.SubFormat == subtype && extended.dwChannelMask == test.mask &&
+               extended.Samples.wValidBitsPerSample == test.bits;
+    }
+    return wave.wFormatTag == (test.floating ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM) &&
+           test.channels <= 2;
+}
+
+// Check duration from the current phase's format so a stale 48/96 kHz clock
+// cannot pass merely by producing contiguous timestamps. Allow one 100 ns tick
+// for rounding fractional frame durations at sample boundaries.
+bool TrackSampleDurationMatches(const std::int64_t start, const std::int64_t stop,
+                                const long bytes, const WORD block_align, const DWORD sample_rate)
+{
+    if (start < 0 || stop <= start || bytes <= 0 || !block_align || !sample_rate || bytes % block_align)
+        return false;
+    const std::int64_t expected = (std::int64_t(bytes) / block_align) * 10000000 / sample_rate;
+    const std::int64_t duration = stop - start;
+    return duration >= expected - 1 && duration <= expected + 1;
+}
+
+HRESULT LoadTrackSource(const PrivateComModule &splitter, const FixtureIdentity &fixture,
+                         const PcmTrackCase *test, IBaseFilter **source, IPin **output,
+                         CMediaType *type)
+{
+    HRESULT status = splitter.CreateInstance(IID_IBaseFilter, reinterpret_cast<void **>(source));
+    ComOwner<ILAVFSettings> settings;
+    ComOwner<IFileSourceFilter> file;
+    if (SUCCEEDED(status))
+        status = (*source)->QueryInterface(__uuidof(ILAVFSettings),
+                                           reinterpret_cast<void **>(settings.put()));
+    if (SUCCEEDED(status)) status = settings->SetRuntimeConfig(TRUE);
+    if (SUCCEEDED(status))
+        status = (*source)->QueryInterface(IID_IFileSourceFilter, reinterpret_cast<void **>(file.put()));
+    if (SUCCEEDED(status)) status = file->Load(fixture.final_path.c_str(), nullptr);
+    if (SUCCEEDED(status) && !CurrentFileMatches(file.get(), fixture.final_path)) status = E_UNEXPECTED;
+    if (FAILED(status)) return status;
+    if (!test) return FindSingleDolbyCompressedSourcePin(*source, output, type);
+    status = FindSingleOwnedPin(*source, PINDIR_OUTPUT, output);
+    ComOwner<IEnumMediaTypes> types;
+    if (SUCCEEDED(status)) status = (*output)->EnumMediaTypes(types.put());
+    if (FAILED(status)) return status;
+    for (;;)
+    {
+        AM_MEDIA_TYPE *candidate = nullptr;
+        ULONG fetched = 0;
+        if (types->Next(1, &candidate, &fetched) != S_OK) return VFW_E_TYPE_NOT_ACCEPTED;
+        const bool matches = candidate && TrackInputMetadataMatches(*candidate, *test);
+        if (matches) type->Set(*candidate);
+        DeleteMediaType(candidate);
+        if (matches) return S_OK;
+    }
+}
+
+// A splitter may normalize 24-valid/32-container WAV metadata before the decoder
+// sees it. Inject that exact Windows media type on a sample, with its source kept
+// stopped, to isolate this input-contract boundary from container demuxing.
+HRESULT InjectTrackPcm(IBaseFilter *audio, IBaseFilter *sink, IPin *input,
+                        const CMediaType &type, const std::vector<BYTE> &bytes)
+{
+    if (bytes.empty() || bytes.size() > (std::numeric_limits<long>::max)()) return E_INVALIDARG;
+    ComOwner<IMemInputPin> receiver;
+    ComOwner<IMemAllocator> allocator;
+    ComOwner<IMediaSample> sample;
+    HRESULT status = input->QueryInterface(IID_IMemInputPin, reinterpret_cast<void **>(receiver.put()));
+    if (SUCCEEDED(status))
+        status = CoCreateInstance(CLSID_MemoryAllocator, nullptr, CLSCTX_INPROC_SERVER,
+                                   IID_IMemAllocator, reinterpret_cast<void **>(allocator.put()));
+    ALLOCATOR_PROPERTIES requested{1, static_cast<long>(bytes.size()), 1, 0}, actual{};
+    if (SUCCEEDED(status)) status = allocator->SetProperties(&requested, &actual);
+    if (SUCCEEDED(status) && actual.cbBuffer < requested.cbBuffer) status = E_UNEXPECTED;
+    if (SUCCEEDED(status)) status = allocator->Commit();
+    if (SUCCEEDED(status)) status = allocator->GetBuffer(sample.put(), nullptr, nullptr, 0);
+    BYTE *data = nullptr;
+    if (SUCCEEDED(status)) status = sample->GetPointer(&data);
+    if (SUCCEEDED(status))
+    {
+        std::memcpy(data, bytes.data(), bytes.size());
+        status = sample->SetActualDataLength(static_cast<long>(bytes.size()));
+    }
+    REFERENCE_TIME start = 0, stop = 8192LL * 10000000 / 48000;
+    if (SUCCEEDED(status)) status = sample->SetTime(&start, &stop);
+    if (SUCCEEDED(status)) status = sample->SetSyncPoint(TRUE);
+    if (SUCCEEDED(status)) status = sample->SetDiscontinuity(TRUE);
+    if (SUCCEEDED(status)) status = sample->SetPreroll(FALSE);
+    if (SUCCEEDED(status)) status = sample->SetMediaType(const_cast<CMediaType *>(&type));
+    if (SUCCEEDED(status)) status = sink->Run(0);
+    if (SUCCEEDED(status)) status = audio->Run(0);
+    if (SUCCEEDED(status)) status = input->NewSegment(0, MAXLONGLONG, 1.0);
+    if (SUCCEEDED(status) && receiver->Receive(sample.get()) != S_OK) status = E_FAIL;
+    if (SUCCEEDED(status) && input->EndOfStream() != S_OK) status = E_FAIL;
+    sample.attach(nullptr);
+    if (allocator) allocator->Decommit();
+    return status;
+}
+
+bool VerifyTrackGain(const std::vector<BYTE> &unity, const std::vector<BYTE> &boosted)
+{
+    if (unity.empty() || unity.size() != boosted.size() || unity.size() % sizeof(float)) return false;
+    const float scale = static_cast<float>(std::pow(10.0, 6.0 / 20.0));
+    bool nonzero = false;
+    for (std::size_t offset = 0; offset < unity.size(); offset += sizeof(float))
+    {
+        float before = 0, after = 0;
+        std::memcpy(&before, unity.data() + offset, sizeof(float));
+        std::memcpy(&after, boosted.data() + offset, sizeof(float));
+        if (!std::isfinite(before) || !std::isfinite(after)) return false;
+        nonzero = nonzero || before != 0;
+        const float expected = before * scale;
+        if (std::abs(after - expected) > (std::max)(1.0e-7f, std::abs(expected) * 2.0e-6f)) return false;
+    }
+    return nonzero;
+}
+
+HRESULT RunPcmTrackSequence(const PrivateComModule &audio, const PrivateComModule &splitter,
+                             const std::filesystem::path &fixture_dir, const FixtureIdentity &joc,
+                             const PcmTrackCase &test)
+{
+    FixtureIdentity stock, oracle_identity, injected_identity;
+    std::vector<BYTE> oracle, injected;
+    if (!BuildFixtureIdentity(fixture_dir / test.fixture, &stock) ||
+        !BuildFixtureIdentity(fixture_dir / test.oracle, &oracle_identity) ||
+        !ReadFixtureBytes(oracle_identity.final_path, &oracle)) return E_INVALIDARG;
+    if (test.inject_24_in_32 &&
+        (!BuildFixtureIdentity(fixture_dir / L"pcm.s24in32.input.pcm", &injected_identity) ||
+         !ReadFixtureBytes(injected_identity.final_path, &injected))) return E_INVALIDARG;
+    const auto *contract = FindLAVOpenJocOutputContract(LAVOpenJocOutputPolicy::Layout714);
+    if (!contract) return E_UNEXPECTED;
+    const CMediaType joc_output = BuildStrictTarget(*contract);
+    const WORD output_bits = test.floating ? 32 : test.bits;
+    const CMediaType stock_output = BuildTrackPcmType(test.channels, output_bits, test.mask, test.floating, 0, test.sample_rate);
+    const CMediaType padded_input = BuildTrackPcmType(6, 32, 0x3f, false, 24);
+    ComOwner<IGraphBuilder> graph;
+    ComOwner<IBaseFilter> filter;
+    ComOwner<IPin> audio_input, audio_output;
+    ComOwner<IMediaControl> control;
+    ComOwner<IMediaEvent> events;
+    ComOwner<ILAVAudioSettings> settings;
+    ComOwner<ILAVOpenJocOutputGainSettings> gain;
+    ComOwner<ILAVOpenJocSettings> policy;
+    ComOwner<ILAVOpenJocStatus> admission;
+    ComOwner<ILAVOpenJocDiagnostics> diagnostics;
+    ComOwner<ILAVOpenJocInspection> inspection;
+    HRESULT status = CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER,
+                                      IID_IGraphBuilder, reinterpret_cast<void **>(graph.put()));
+    if (SUCCEEDED(status)) status = audio.CreateInstance(IID_IBaseFilter, reinterpret_cast<void **>(filter.put()));
+    if (SUCCEEDED(status)) status = graph->AddFilter(filter.get(), L"One private OpenJOC Audio instance");
+    if (SUCCEEDED(status)) status = ConfigureTargetAudio(filter.get());
+    if (SUCCEEDED(status)) status = SetOpenJocPolicy(filter.get(), LAVOpenJocOutputPolicy::Layout714);
+    if (SUCCEEDED(status)) status = filter->QueryInterface(__uuidof(ILAVAudioSettings), reinterpret_cast<void **>(settings.put()));
+    if (SUCCEEDED(status)) status = settings->SetAllowRawSPDIFInput(FALSE);
+    if (SUCCEEDED(status)) status = settings->SetFormatConfiguration(Codec_PCM, TRUE);
+    if (SUCCEEDED(status)) status = settings->SetFormatConfiguration(Codec_FLAC, TRUE);
+    if (SUCCEEDED(status)) status = settings->SetSampleFormat(SampleFormat_16, TRUE);
+    if (SUCCEEDED(status)) status = settings->SetSampleFormat(SampleFormat_24, TRUE);
+    if (SUCCEEDED(status)) status = settings->SetSampleFormat(SampleFormat_32, TRUE);
+    if (SUCCEEDED(status)) status = settings->SetDRC(FALSE, 0);
+    if (SUCCEEDED(status)) status = settings->SetAutoAVSync(FALSE);
+    if (SUCCEEDED(status)) status = settings->SetAudioDelay(FALSE, 0);
+    if (SUCCEEDED(status)) status = filter->QueryInterface(__uuidof(ILAVOpenJocOutputGainSettings), reinterpret_cast<void **>(gain.put()));
+    if (SUCCEEDED(status)) status = filter->QueryInterface(__uuidof(ILAVOpenJocSettings), reinterpret_cast<void **>(policy.put()));
+    if (SUCCEEDED(status)) status = filter->QueryInterface(__uuidof(ILAVOpenJocStatus), reinterpret_cast<void **>(admission.put()));
+    if (SUCCEEDED(status)) status = filter->QueryInterface(__uuidof(ILAVOpenJocDiagnostics), reinterpret_cast<void **>(diagnostics.put()));
+    if (SUCCEEDED(status)) status = filter->QueryInterface(__uuidof(ILAVOpenJocInspection), reinterpret_cast<void **>(inspection.put()));
+    if (SUCCEEDED(status)) status = FindSingleOwnedPin(filter.get(), PINDIR_INPUT, audio_input.put());
+    if (SUCCEEDED(status)) status = FindSingleOwnedPin(filter.get(), PINDIR_OUTPUT, audio_output.put());
+    if (SUCCEEDED(status)) status = graph->QueryInterface(IID_IMediaControl, reinterpret_cast<void **>(control.put()));
+    if (SUCCEEDED(status)) status = graph->QueryInterface(IID_IMediaEvent, reinterpret_cast<void **>(events.put()));
+    if (FAILED(status)) return status;
+    if (settings->GetAllowRawSPDIFInput() || !SameControllingUnknown(filter.get(), gain.get()) ||
+        !SameControllingUnknown(filter.get(), diagnostics.get()) ||
+        !SameControllingUnknown(filter.get(), inspection.get())) return E_UNEXPECTED;
+    HRESULT sink_status = S_OK;
+    auto *sink = new (std::nothrow) StrictCaptureSink(stock_output, false,
+                                                    {stock_output, joc_output}, &sink_status, false, true);
+    if (!sink || FAILED(sink_status))
+    {
+        delete sink;
+        return FAILED(sink_status) ? sink_status : E_OUTOFMEMORY;
+    }
+    sink->AddRef();
+    ComOwner<IBaseFilter> sink_owner;
+    sink_owner.attach(static_cast<IBaseFilter *>(sink));
+    ComOwner<IBaseFilter> source;
+    ComOwner<IPin> source_output;
+    std::vector<BYTE> unity_joc;
+    // Keep gain nonzero while stock PCM/FLAC plays. The first JOC pass is a unity
+    // oracle; returning to stock and then JOC at +6 dB verifies both isolation and
+    // preservation of the requested gain through same-instance transitions.
+    for (unsigned phase = 0; phase < 5 && SUCCEEDED(status); ++phase)
+    {
+        const bool is_joc = phase % 2 != 0;
+        const bool inject = test.inject_24_in_32 && !is_joc;
+        const std::int32_t requested_gain = phase == 1 ? 0 : 60;
+        // Set once for the remaining stock/JOC/stock tail, so a hidden reset
+        // on disconnect, Stop, or reinitialization cannot be repaired by the test.
+        if (phase < 3) status = gain->SetOutputGain(requested_gain);
+        if (SUCCEEDED(status) && source)
+        {
+            status = DisconnectPinPair(graph.get(), source_output.get());
+            if (SUCCEEDED(status)) status = graph->RemoveFilter(source.get());
+            source_output.attach(nullptr);
+            source.attach(nullptr);
+        }
+        CMediaType source_type;
+        if (SUCCEEDED(status)) status = LoadTrackSource(splitter, is_joc ? joc : stock,
+                                                        is_joc ? nullptr : &test,
+                                                        source.put(), source_output.put(), &source_type);
+        if (SUCCEEDED(status)) status = graph->AddFilter(source.get(), L"Private track fixture source");
+        const CMediaType &accepted_input = inject ? padded_input : source_type;
+        if (SUCCEEDED(status))
+        {
+            const HRESULT accepted = audio_input->QueryAccept(&accepted_input);
+            status = accepted == S_OK ? S_OK : VFW_E_TYPE_NOT_ACCEPTED;
+            if (FAILED(status))
+                std::fwprintf(stderr, L"PCM_TRACK_INPUT_REJECTED case=%ls phase=%u raw_spdif=0 hr=0x%08lx\n",
+                              test.name, phase, static_cast<unsigned long>(accepted));
+        }
+        if (SUCCEEDED(status)) status = graph->ConnectDirect(source_output.get(), audio_input.get(), &source_type);
+        if (SUCCEEDED(status) && phase == 0 && test.floating && test.bits == 64)
+        {
+            // A forced ConnectDirect type would conceal a broken preferred
+            // type (for example FP32 container with 64 valid bits for F64 input).
+            ComOwner<IEnumMediaTypes> output_types;
+            AM_MEDIA_TYPE *preferred = nullptr;
+            ULONG fetched = 0;
+            status = audio_output->EnumMediaTypes(output_types.put());
+            if (SUCCEEDED(status) &&
+                (output_types->Next(1, &preferred, &fetched) != S_OK || !preferred ||
+                 !openjoc_harness_core::ExactMediaTypeEqual(*preferred, stock_output))) status = E_UNEXPECTED;
+            if (preferred) DeleteMediaType(preferred);
+            std::wprintf(L"PCM_TRACK_PREFERRED_OUTPUT case=f64 fp32_metadata_exact=%d\n", SUCCEEDED(status) ? 1 : 0);
+        }
+        if (SUCCEEDED(status) && phase == 0) status = AttachCaptureSink(graph.get(), audio_output.get(), sink, stock_output);
+        const CMediaType previous = sink->expected_type();
+        const CMediaType &expected = is_joc ? joc_output : stock_output;
+        const std::size_t first = sink->samples().size();
+        const std::size_t byte_start = sink->bytes().size();
+        const auto eos_start = sink->end_of_stream_count();
+        sink->ResetCompletionForNextSegment();
+        if (SUCCEEDED(status) && (!GraphContainsExactly(graph.get(), 3) ||
+            !ExactConnectionTypes(source_output.get(), audio_input.get(), source_type))) status = E_UNEXPECTED;
+        if (SUCCEEDED(status))
+        {
+            if (inject)
+                status = InjectTrackPcm(filter.get(), sink_owner.get(), audio_input.get(), padded_input, injected);
+            else
+            {
+                OAFilterState state = State_Stopped;
+                status = control->Run();
+                if (SUCCEEDED(status) && (control->GetState(10000, &state) != S_OK || state != State_Running)) status = E_FAIL;
+            }
+        }
+        if (SUCCEEDED(status) && WaitForSingleObject(sink->end_of_stream_event(), 30000) != WAIT_OBJECT_0) status = E_FAIL;
+        const auto samples = sink->samples();
+        const auto all_bytes = sink->bytes();
+        std::vector<BYTE> bytes(all_bytes.begin() + byte_start, all_bytes.end());
+        ULONGLONG classifier = 0, stream = 0;
+        std::int32_t actual_gain = 0;
+        LAVOpenJocOutputPolicy actual_policy = LAVOpenJocOutputPolicy::Stereo;
+        HRESULT graph_error = S_OK;
+        // Evaluate every observation independently. A failed earlier condition
+        // must not leave misleading zero-valued decoder counters in the log.
+        const bool graph_failed = DrainGraphErrors(events.get(), &graph_error);
+        const bool sample_contracts = sink->sample_contracts_valid();
+        const bool allocator_contract = sink->allocator_contract_valid();
+        const bool fresh_eos = sink->end_of_stream_count() == eos_start + 1;
+        const bool eos_running = sink->end_of_stream_running();
+        CMediaType observed_output, observed_receiver;
+        const HRESULT output_type_hr = audio_output->ConnectionMediaType(&observed_output);
+        const HRESULT receiver_type_hr = sink->input()->ConnectionMediaType(&observed_receiver);
+        const bool output_exact = output_type_hr == S_OK &&
+            openjoc_harness_core::ExactMediaTypeEqual(observed_output, expected);
+        const bool receiver_exact = receiver_type_hr == S_OK &&
+            openjoc_harness_core::ExactMediaTypeEqual(observed_receiver, expected);
+        const bool peers_exact = ExactConnectionTypes(audio_output.get(), sink->input(), expected);
+        const bool capture_type_exact = openjoc_harness_core::ExactMediaTypeEqual(sink->expected_type(), expected);
+        const HRESULT counters_hr = diagnostics->GetOpenJocInputByteCounts(&classifier, &stream);
+        const HRESULT gain_hr = gain->GetOutputGain(&actual_gain);
+        const HRESULT policy_hr = policy->GetOutputPolicy(&actual_policy);
+        const bool raw_spdif = settings->GetAllowRawSPDIFInput() != FALSE;
+        std::wprintf(L"PCM_TRACK_WITNESS case=%ls phase=%u prior_hr=0x%08lx graph_error=0x%08lx "
+                     L"sample_contracts=%d allocator=%d fresh_eos=%d eos_running=%d "
+                     L"output_hr=0x%08lx receiver_hr=0x%08lx output_exact=%d receiver_exact=%d "
+                     L"peers_exact=%d capture_type_exact=%d counters_hr=0x%08lx gain_hr=0x%08lx "
+                     L"gain=%ld expected_gain=%ld policy_hr=0x%08lx policy=%u raw_spdif=%d\n",
+                     test.name, phase, static_cast<unsigned long>(status), static_cast<unsigned long>(graph_error),
+                     sample_contracts, allocator_contract, fresh_eos, eos_running,
+                     static_cast<unsigned long>(output_type_hr), static_cast<unsigned long>(receiver_type_hr),
+                     output_exact, receiver_exact, peers_exact, capture_type_exact,
+                     static_cast<unsigned long>(counters_hr), static_cast<unsigned long>(gain_hr),
+                     static_cast<long>(actual_gain), static_cast<long>(requested_gain),
+                     static_cast<unsigned long>(policy_hr), static_cast<unsigned int>(actual_policy), raw_spdif);
+        if (SUCCEEDED(status) && (graph_failed || samples.size() <= first || bytes.empty() ||
+            !sample_contracts || !allocator_contract || !fresh_eos || !eos_running ||
+            !output_exact || !receiver_exact || !peers_exact || !capture_type_exact ||
+            counters_hr != S_OK || gain_hr != S_OK || actual_gain != requested_gain ||
+            policy_hr != S_OK || actual_policy != LAVOpenJocOutputPolicy::Layout714 || raw_spdif)) status = E_UNEXPECTED;
+        if (output_type_hr == S_OK && !output_exact)
+            std::wprintf(L"PCM_TRACK_TYPE_MISMATCH peer=audio-output actual=%hs expected=%hs\n",
+                         SerializeMediaType(observed_output).c_str(), SerializeMediaType(expected).c_str());
+        if (receiver_type_hr == S_OK && !receiver_exact)
+            std::wprintf(L"PCM_TRACK_TYPE_MISMATCH peer=capture-input actual=%hs expected=%hs\n",
+                         SerializeMediaType(observed_receiver).c_str(), SerializeMediaType(expected).c_str());
+        if (SUCCEEDED(status) && !openjoc_harness_core::ExactMediaTypeEqual(previous, expected) &&
+            (!samples[first].has_attached_type ||
+             !openjoc_harness_core::ExactMediaTypeEqual(samples[first].attached_type, expected))) status = E_UNEXPECTED;
+        if (SUCCEEDED(status))
+        {
+            const auto &expected_wave = *reinterpret_cast<const WAVEFORMATEX *>(expected.pbFormat);
+            for (std::size_t index = first; index < samples.size(); ++index)
+                if (samples[index].preroll || samples[index].start < 0 ||
+                    !TrackSampleDurationMatches(samples[index].start, samples[index].stop,
+                                                samples[index].length, expected_wave.nBlockAlign,
+                                                expected_wave.nSamplesPerSec) ||
+                    (samples[index].has_attached_type &&
+                     !openjoc_harness_core::ExactMediaTypeEqual(samples[index].attached_type, expected))) status = E_UNEXPECTED;
+            if (is_joc)
+            {
+                if (!classifier || !stream || admission->GetOpenJocAdmissionState() != LAVOpenJocAdmissionOpenJoc) status = E_UNEXPECTED;
+                if (phase == 1) unity_joc = bytes;
+                else if (!VerifyTrackGain(unity_joc, bytes)) status = E_UNEXPECTED;
+            }
+            else
+            {
+                std::size_t required = 0;
+                if (classifier || stream || admission->GetOpenJocAdmissionState() != LAVOpenJocAdmissionUndecided ||
+                    inspection->CopyOpenJocLiveInspectionJson(nullptr, 0, &required) != S_FALSE ||
+                    !TestDiagnosticsAbi(filter.get(), true) || bytes != oracle) status = E_UNEXPECTED;
+            }
+            if (inject)
+            {
+                CMediaType observed_input;
+                FILTER_STATE source_state = State_Running;
+                if (audio_input->ConnectionMediaType(&observed_input) != S_OK ||
+                    !openjoc_harness_core::ExactMediaTypeEqual(observed_input, padded_input) ||
+                    source->GetState(0, &source_state) != S_OK || source_state != State_Stopped) status = E_UNEXPECTED;
+            }
+            else if (!ExactConnectionTypes(source_output.get(), audio_input.get(), source_type)) status = E_UNEXPECTED;
+        }
+        std::wprintf(L"PCM_TRACK_PHASE case=%ls phase=%u kind=%ls hr=0x%08lx "
+                     L"samples=%zu bytes=%zu classifier=%llu stream=%llu gain=%ld stock_no_active_joc=%d input=%hs output=%hs\n",
+                     test.name, phase, is_joc ? L"JOC" : (test.flac ? L"FLAC" : L"PCM"),
+                     static_cast<unsigned long>(status), samples.size() - first, bytes.size(),
+                     static_cast<unsigned long long>(classifier), static_cast<unsigned long long>(stream),
+                     static_cast<long>(actual_gain), !is_joc && SUCCEEDED(status) ? 1 : 0,
+                     SerializeMediaType(accepted_input).c_str(),
+                     SerializeMediaType(sink->expected_type()).c_str());
+        const HRESULT stopped = control->Stop();
+        // Direct synchronous injection runs the two filters without changing
+        // the graph manager's state; explicitly stop them as well.
+        const HRESULT audio_stopped = filter->Stop();
+        const HRESULT sink_stopped = sink_owner->Stop();
+        if (SUCCEEDED(status) && (stopped != S_OK || audio_stopped != S_OK || sink_stopped != S_OK)) status = E_FAIL;
+        if (SUCCEEDED(status) && (gain->GetOutputGain(&actual_gain) != S_OK ||
+                                  actual_gain != requested_gain)) status = E_UNEXPECTED;
+        if (SUCCEEDED(status) && DrainGraphErrors(events.get(), &graph_error)) status = E_UNEXPECTED;
+    }
+    if (SUCCEEDED(status) && (!FixtureIdentityMatches(stock) || !FixtureIdentityMatches(oracle_identity) ||
+        !FixtureIdentityMatches(joc) || (test.inject_24_in_32 && !FixtureIdentityMatches(injected_identity)))) status = E_UNEXPECTED;
+    return status;
+}
+
+HRESULT RunPcmTrackAdmission(const std::filesystem::path &runtime_dir,
+                              const std::filesystem::path &manifest_path,
+                              const std::filesystem::path &fixture_dir)
+{
+    std::vector<StagedRecord> records;
+    FixtureIdentity joc;
+    if (!ReadStagedManifest(runtime_dir, manifest_path, &records) ||
+        !BuildFixtureIdentity(fixture_dir / L"joc.lifecycle.ec3", &joc)) return E_INVALIDARG;
+    const auto *audio_record = FindRecord(records, StagedKind::Module, L"LAVAudio.ax");
+    const auto *splitter_record = FindRecord(records, StagedKind::Module, L"LAVSplitter.ax");
+    if (!audio_record || !splitter_record) return E_INVALIDARG;
+    LoadedDependenciesOwner dependencies;
+    ScopedActivationContext activation(audio_record->final_path, FinalPathForFile(runtime_dir));
+    if (!activation.active()) return HRESULT_FROM_WIN32(GetLastError());
+    PrivateComModule audio(audio_record->final_path, kTargetLavAudio);
+    PrivateComModule splitter(splitter_record->final_path, kLavSplitterSource);
+    if (FAILED(audio.status()) || FAILED(splitter.status()) ||
+        !LoadStagedDependencies(records, dependencies.put())) return E_UNEXPECTED;
+    const PcmTrackCase cases[] = {
+        {L"s16", L"pcm.s16.wav", L"pcm.s16.expected.pcm", 2, 16, 3, false, false, false},
+        {L"f32", L"pcm.f32.wav", L"pcm.f32.expected.pcm", 2, 32, 3, true, false, false},
+        {L"f64", L"pcm.f64.wav", L"pcm.f64.expected.pcm", 2, 64, 3, true, false, false},
+        {L"s24", L"pcm.s24.wav", L"pcm.s24.expected.pcm", 6, 24, 0x3f, false, false, false},
+        {L"s24-in-32", L"pcm.s24.wav", L"pcm.s24in32.expected.pcm", 6, 24, 0x3f, false, false, true},
+        {L"flac-control", L"pcm.control.flac", L"pcm.control.expected.pcm", 2, 16, 3, false, true, false},
+        {L"s24-96k", L"pcm.s24.96k.wav", L"pcm.s24.96k.expected.pcm", 6, 24, 0x3f, false, false, false, 96000},
+        {L"f32-96k", L"pcm.f32.96k.wav", L"pcm.f32.96k.expected.pcm", 2, 32, 3, true, false, false, 96000},
+    };
+    for (const auto &test : cases)
+    {
+        const HRESULT status = RunPcmTrackSequence(audio, splitter, fixture_dir, joc, test);
+        if (FAILED(status)) return status;
+        std::wprintf(L"PCM_TRACK_CASE_COMPLETE case=%ls same_instance=1 stock_payload_exact=1 gain_preserved=1\n", test.name);
+    }
+    return RuntimeIdentityMatches(records) && FixtureIdentityMatches(joc) ? S_OK : E_UNEXPECTED;
 }
 
 HRESULT RunOpenJocLifecycleMatrix(const std::filesystem::path &runtime_dir,
@@ -8277,6 +8770,7 @@ int wmain(int argc, wchar_t **argv)
                      stock_worker ? L"stock" : L"passthrough");
         return 0;
     }
+    const bool pcm_track = argc == 5 && wcscmp(argv[1], L"--pcm-track-admission") == 0;
     const bool preroll_format = argc == 5 && wcscmp(argv[1], L"--preroll-format") == 0;
     const bool controlled_sink = argc == 5 && wcscmp(argv[1], L"--controlled-sink") == 0;
     const bool lifecycle = argc == 5 && wcscmp(argv[1], L"--openjoc-lifecycle") == 0;
@@ -8284,7 +8778,7 @@ int wmain(int argc, wchar_t **argv)
         argc == 5 && wcscmp(argv[1], L"--allocator-performance") == 0;
     const bool ac3_bitstream = argc == 5 && wcscmp(argv[1], L"--ac3-bitstream") == 0;
     const bool legacy_core = argc == 6 && wcscmp(argv[1], L"--legacy-core") == 0;
-    if (!preroll_format && !controlled_sink && !lifecycle && !allocator_performance && !ac3_bitstream && !legacy_core &&
+    if (!pcm_track && !preroll_format && !controlled_sink && !lifecycle && !allocator_performance && !ac3_bitstream && !legacy_core &&
         (argc != 5 || wcscmp(argv[1], L"--self-test") != 0 ||
         (wcscmp(argv[4], L"target") != 0 && wcscmp(argv[4], L"pristine") != 0))
        )
@@ -8294,6 +8788,8 @@ int wmain(int argc, wchar_t **argv)
                       L"<runtime-dir> <runtime-dir\\OpenJocRuntimeIdentity.tsv>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --self-test <runtime-dir> "
                       L"<runtime-dir\\OpenJocRuntimeIdentity.tsv> <target|pristine>\n"
+                      L"   or: OpenJocDirectShowNegotiationSmoke.exe --pcm-track-admission "
+                      L"<runtime-dir> <manifest> <fixture-dir>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --preroll-format "
                       L"<runtime-dir> <manifest> <joc.lifecycle.ec3>\n"
                       L"   or: OpenJocDirectShowNegotiationSmoke.exe --controlled-sink "
@@ -8326,7 +8822,7 @@ int wmain(int argc, wchar_t **argv)
                       static_cast<unsigned long>(com_status));
         return 1;
     }
-    const GUID &audio_class_id = !preroll_format && !controlled_sink && !lifecycle && !allocator_performance &&
+    const GUID &audio_class_id = !pcm_track && !preroll_format && !controlled_sink && !lifecycle && !allocator_performance &&
                                          !ac3_bitstream && !legacy_core &&
                                          wcscmp(argv[4], L"pristine") == 0
                                      ? kPristineLavAudio
@@ -8338,6 +8834,8 @@ int wmain(int argc, wchar_t **argv)
                                       legacy_policy_value < LAV_OPENJOC_OUTPUT_CONTRACT_COUNT);
     const HRESULT status = !legacy_policy_valid
                                ? E_INVALIDARG
+                           : pcm_track
+                               ? openjoc_harness_shell::RunPcmTrackAdmission(argv[2], argv[3], argv[4])
                            : preroll_format
                                ? openjoc_harness_shell::RunPrerollFormatRegression(argv[2], argv[3], argv[4])
                            : ac3_bitstream
@@ -8361,7 +8859,9 @@ int wmain(int argc, wchar_t **argv)
     CoUninitialize();
     if (FAILED(status))
     {
-        if (preroll_format)
+        if (pcm_track)
+            std::fwprintf(stderr, L"PCM_TRACK_UNVERIFIED: 0x%08lx\n", static_cast<unsigned long>(status));
+        else if (preroll_format)
             std::fwprintf(stderr, L"PREROLL_FORMAT_UNVERIFIED: 0x%08lx\n",
                           static_cast<unsigned long>(status));
         else if (controlled_sink)
@@ -8383,6 +8883,11 @@ int wmain(int argc, wchar_t **argv)
             std::fwprintf(stderr, L"self-test failed: 0x%08lx\n",
                           static_cast<unsigned long>(status));
         return 1;
+    }
+    if (pcm_track)
+    {
+        std::wprintf(L"PCM_TRACK_COMPLETE: private capture graph passed; renderer state remains UNVERIFIED\n");
+        return 0;
     }
     if (preroll_format)
     {

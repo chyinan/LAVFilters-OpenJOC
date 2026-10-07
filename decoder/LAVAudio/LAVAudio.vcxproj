@@ -156,6 +156,7 @@
     <ClInclude Include="OpenJocDecoder.h" />
     <ClInclude Include="OpenJocDialnorm.h" />
     <ClInclude Include="OpenJocOutput.h" />
+    <ClInclude Include="OpenJocPcmInput.h" />
     <ClInclude Include="OpenJocShippedLayouts.h" />
     <ClInclude Include="OpenJocStrictOutput.h" />
     <ClInclude Include="OpenJocStrictNegotiation.h" />
