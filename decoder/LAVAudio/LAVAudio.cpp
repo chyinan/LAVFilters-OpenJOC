@@ -45,6 +45,9 @@
 #include <vector>
 
 #include "moreuuids.h"
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+#include "OpenJocPcmInput.h"
+#endif
 #include "DShowUtil.h"
 #include "IMediaSideData.h"
 #include "IMediaSideDataFFmpeg.h"
@@ -1905,6 +1908,11 @@ STDMETHODIMP CLAVAudio::CopyOpenJocLiveInspectionJson(char *output, const std::s
 // CTransformFilter
 HRESULT CLAVAudio::CheckInputType(const CMediaType *mtIn)
 {
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    // Validate before the registration table or optional raw-SPDIF path.
+    if (IsOpenJocNormalPcmSubtype(mtIn))
+        return FindOpenJocNormalPcmCodec(mtIn) != AV_CODEC_ID_NONE ? S_OK : VFW_E_TYPE_NOT_ACCEPTED;
+#endif
     for (UINT i = 0; i < sudPinTypesInCount; i++)
     {
         if (*sudPinTypesIn[i].clsMajorType == mtIn->majortype && *sudPinTypesIn[i].clsMinorType == mtIn->subtype &&
@@ -2519,6 +2527,12 @@ HRESULT CLAVAudio::SetMediaType(PIN_DIRECTION dir, const CMediaType *pmt)
     DbgLog((LOG_TRACE, 5, L"SetMediaType -- %S", dir == PINDIR_INPUT ? "in" : "out"));
     if (dir == PINDIR_INPUT)
     {
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+        WORD normalPcmValidBits = 0;
+        if (IsOpenJocNormalPcmSubtype(pmt) &&
+            FindOpenJocNormalPcmCodec(pmt, &normalPcmValidBits) == AV_CODEC_ID_NONE)
+            return VFW_E_TYPE_NOT_ACCEPTED;
+#endif
         AVCodecID codec = AV_CODEC_ID_NONE;
         const void *format = pmt->Format();
         GUID format_type = pmt->formattype;
@@ -2571,6 +2585,15 @@ HRESULT CLAVAudio::SetMediaType(PIN_DIRECTION dir, const CMediaType *pmt)
         {
             return hr;
         }
+
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+        // ffmpeg_init opens the existing stock PCM decoder using container
+        // width. Preserve integer precision separately for output metadata.
+        // The existing stock double-to-float path emits FP32, so F64 input
+        // must not advertise 64 valid bits in that 32-bit output container.
+        if (normalPcmValidBits && m_pAVCtx)
+            m_pAVCtx->bits_per_raw_sample = codec == AV_CODEC_ID_PCM_F64LE ? 32 : normalPcmValidBits;
+#endif
 
         m_bDVDPlayback = (pmt->majortype == MEDIATYPE_DVD_ENCRYPTED_PACK || pmt->majortype == MEDIATYPE_MPEG2_PACK ||
                           pmt->majortype == MEDIATYPE_MPEG2_PES);

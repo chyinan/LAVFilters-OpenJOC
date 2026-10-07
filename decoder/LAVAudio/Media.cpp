@@ -32,6 +32,9 @@
 #include <MMReg.h>
 
 #include "moreuuids.h"
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+#include "OpenJocPcmInput.h"
+#endif
 
 extern "C"
 {
@@ -157,6 +160,11 @@ static const FFMPEG_SUBTYPE_MAP lavc_audio_codecs[] = {
 
 // Define Input Media Types
 const AMOVIESETUP_MEDIATYPE CLAVAudio::sudPinTypesIn[] = {
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+  // Keep this filter selected when an ordinary PCM track precedes JOC.
+  { &MEDIATYPE_Audio, &MEDIASUBTYPE_PCM },
+  { &MEDIATYPE_Audio, &MEDIASUBTYPE_IEEE_FLOAT },
+#endif
   // DVD Types
   { &MEDIATYPE_DVD_ENCRYPTED_PACK, &MEDIASUBTYPE_MPEG2_AUDIO },
   { &MEDIATYPE_MPEG2_PACK,         &MEDIASUBTYPE_MPEG2_AUDIO },
@@ -291,6 +299,10 @@ const UINT CLAVAudio::sudPinTypesOutCount = countof(CLAVAudio::sudPinTypesOut);
 // Crawl the lavc_audio_codecs array for the proper codec
 AVCodecID FindCodecId(const CMediaType *mt)
 {
+#if defined(LAV_OPENJOC_SIDE_BY_SIDE)
+    if (IsOpenJocNormalPcmSubtype(mt))
+        return FindOpenJocNormalPcmCodec(mt);
+#endif
     for (int i = 0; i < countof(lavc_audio_codecs); ++i)
     {
         if (mt->subtype == *lavc_audio_codecs[i].clsMinorType)
