@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 OpenJOC contributors
+SPDX-License-Identifier: GPL-2.0-or-later
+-->
+
 # Normal PCM admission in the side-by-side filter
 
 The OpenJOC side-by-side LAV Audio filter now advertises ordinary

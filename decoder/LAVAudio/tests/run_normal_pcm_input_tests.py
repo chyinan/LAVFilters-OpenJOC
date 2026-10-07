@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 OpenJOC contributors
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Compile the production PCM validator and unmodified admission/mapping/init methods.
 
 The adapters mock COM and ffmpeg_init; run the native capture-only regression

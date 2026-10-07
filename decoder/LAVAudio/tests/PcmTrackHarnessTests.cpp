@@ -1,0 +1,116 @@
+/*
+ * SPDX-FileCopyrightText: 2026 OpenJOC contributors
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+// Portable checks of the native harness's unmodified type and gain oracles.
+// The adapter is not COM, an allocator, a splitter, or a decoder.
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <iostream>
+#include <vector>
+using BYTE = std::uint8_t;
+using WORD = std::uint16_t;
+using DWORD = std::uint32_t;
+struct GUID {
+    std::uint32_t Data1;
+    std::uint16_t Data2, Data3;
+    std::uint8_t Data4[8];
+    bool operator==(const GUID &r) const { return std::memcmp(this, &r, sizeof(*this)) == 0; }
+    bool operator!=(const GUID &r) const { return !(*this == r); }
+};
+constexpr GUID MEDIATYPE_Audio{1, 0, 0, {}}, MEDIASUBTYPE_PCM{2, 0, 0, {}},
+    MEDIASUBTYPE_IEEE_FLOAT{3, 0, 0, {}}, FORMAT_WaveFormatEx{4, 0, 0, {}};
+constexpr WORD WAVE_FORMAT_PCM = 1, WAVE_FORMAT_IEEE_FLOAT = 3, WAVE_FORMAT_EXTENSIBLE = 0xfffe;
+constexpr bool FALSE = false;
+#pragma pack(push, 1)
+struct WAVEFORMATEX {
+    WORD wFormatTag, nChannels;
+    DWORD nSamplesPerSec, nAvgBytesPerSec;
+    WORD nBlockAlign, wBitsPerSample, cbSize;
+};
+struct WAVEFORMATEXTENSIBLE {
+    WAVEFORMATEX Format;
+    union { WORD wValidBitsPerSample; } Samples;
+    DWORD dwChannelMask;
+    GUID SubFormat;
+};
+#pragma pack(pop)
+static_assert(sizeof(WAVEFORMATEX) == 18 && sizeof(WAVEFORMATEXTENSIBLE) == 40, "Windows wave ABI");
+struct AM_MEDIA_TYPE {
+    GUID majortype{}, subtype{}, formattype{};
+    DWORD cbFormat = 0;
+    BYTE *pbFormat = nullptr;
+};
+struct CMediaType : AM_MEDIA_TYPE {
+    std::vector<BYTE> storage;
+    DWORD sample_size = 0;
+    CMediaType() = default;
+    CMediaType(const CMediaType &r) : AM_MEDIA_TYPE(r), storage(r.storage), sample_size(r.sample_size)
+    { pbFormat = storage.data(); }
+    void SetType(const GUID *v) { majortype = *v; }
+    void SetSubtype(const GUID *v) { subtype = *v; }
+    void SetFormatType(const GUID *v) { formattype = *v; }
+    void SetSampleSize(DWORD v) { sample_size = v; }
+    void SetTemporalCompression(bool) {}
+    bool SetFormat(BYTE *p, DWORD n) { storage.assign(p, p + n); pbFormat = storage.data(); cbFormat = n; return true; }
+    void InitMediaType() { cbFormat = 0; pbFormat = nullptr; }
+};
+#include "PcmTrackHarnessMethods.inc"
+std::vector<BYTE> bytes(const std::vector<float> &samples) {
+    std::vector<BYTE> result(samples.size() * sizeof(float));
+    std::memcpy(result.data(), samples.data(), result.size());
+    return result;
+}
+int main() {
+    const PcmTrackCase cases[] = {
+        {L"s16", L"", L"", 2, 16, 3, false, false, false},
+        {L"f32", L"", L"", 2, 32, 3, true, false, false},
+        {L"f64", L"", L"", 2, 64, 3, true, false, false},
+        {L"s24", L"", L"", 6, 24, 0x3f, false, false, false},
+    };
+    for (const auto &test : cases) {
+        auto type = BuildTrackPcmType(test.channels, test.bits, test.mask, test.floating);
+        assert(TrackInputMetadataMatches(type, test));
+        assert(type.sample_size == test.channels * test.bits / 8);
+        const WORD saved_bits = reinterpret_cast<WAVEFORMATEX *>(type.pbFormat)->wBitsPerSample;
+        reinterpret_cast<WAVEFORMATEX *>(type.pbFormat)->wBitsPerSample = 8;
+        assert(!TrackInputMetadataMatches(type, test));
+        reinterpret_cast<WAVEFORMATEX *>(type.pbFormat)->wBitsPerSample = saved_bits;
+        type.cbFormat = 17;
+        assert(!TrackInputMetadataMatches(type, test));
+    }
+    auto padded = BuildTrackPcmType(6, 32, 0x3f, false, 24);
+    const auto &ext = *reinterpret_cast<WAVEFORMATEXTENSIBLE *>(padded.pbFormat);
+    assert(ext.Format.wBitsPerSample == 32 && ext.Samples.wValidBitsPerSample == 24);
+    assert(ext.Format.nBlockAlign == 24 && ext.Format.nAvgBytesPerSec == 1152000);
+    auto packed = BuildTrackPcmType(6, 24, 0x3f, false);
+    assert(reinterpret_cast<WAVEFORMATEX *>(packed.pbFormat)->nBlockAlign == 18);
+    auto f64_output = BuildTrackPcmType(2, 32, 3, true);
+    assert(f64_output.cbFormat == 18 && f64_output.sample_size == 8);
+    auto malformed = BuildTrackPcmType(2, 16, 3, false);
+    reinterpret_cast<WAVEFORMATEX *>(malformed.pbFormat)->nAvgBytesPerSec++;
+    assert(!TrackInputMetadataMatches(malformed, cases[0]));
+    auto flac = BuildTrackPcmType(2, 16, 3, false);
+    flac.subtype = {0xf1ac, 0, 0x10, {0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71}};
+    flac.storage.resize(52); flac.pbFormat = flac.storage.data(); flac.cbFormat = 52;
+    reinterpret_cast<WAVEFORMATEX *>(flac.pbFormat)->cbSize = 34;
+    const PcmTrackCase control{L"flac", L"", L"", 2, 16, 3, false, true, false};
+    assert(TrackInputMetadataMatches(flac, control));
+    --flac.cbFormat;
+    assert(!TrackInputMetadataMatches(flac, control));
+    const std::vector<float> unity{-0.5f, 0, 0.125f, -0.25f, 0.75f, 0.33f};
+    auto boosted = unity;
+    for (auto &sample : boosted) sample *= static_cast<float>(std::pow(10.0, 6.0 / 20.0));
+    assert(VerifyTrackGain(bytes(unity), bytes(boosted)));
+    assert(!VerifyTrackGain(bytes(unity), bytes(unity)));
+    std::swap(boosted[0], boosted[1]);
+    assert(!VerifyTrackGain(bytes(unity), bytes(boosted)));
+    assert(!VerifyTrackGain(bytes({0, 0}), bytes({0, 0})));
+    assert(!VerifyTrackGain({}, {}));
+    assert(!VerifyTrackGain(bytes(unity), bytes({1})));
+    assert(!VerifyTrackGain(bytes({NAN}), bytes({NAN})));
+    std::cout << "PCM_TRACK_HARNESS_ORACLES_PASS (portable adapters only)\n";
+}
