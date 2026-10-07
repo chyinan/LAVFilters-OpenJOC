@@ -163,6 +163,36 @@ int main()
             assert(filter.SetMediaType(PINDIR_INPUT, &f.type) == VFW_E_TYPE_NOT_ACCEPTED);
 #endif
         }
+    // WAVE_FORMAT_PCM cbSize is implicitly zero, even when the stored WORD
+    // is arbitrary. Use an actual 18-byte allocation to catch accidental reads.
+    for (WORD extra : {WORD(0), WORD(1), WORD(22), WORD(0xffff)})
+    {
+        Fixture f(16, false, false);
+        f.wave.Format.cbSize = extra;
+        std::vector<BYTE> header(sizeof(WAVEFORMATEX));
+        std::memcpy(header.data(), &f.wave.Format, header.size());
+        f.type.pbFormat = header.data();
+        WORD valid = 0;
+        assert(FindOpenJocNormalPcmCodec(&f.type, &valid) == AV_CODEC_ID_PCM_S16LE && valid == 16);
+#ifdef LAV_OPENJOC_SIDE_BY_SIDE
+        for (bool allowRaw : {false, true})
+        {
+            CLAVAudio filter;
+            filter.m_settings.AllowRawSPDIF = allowRaw;
+            assert(filter.CheckInputType(&f.type) == S_OK);
+            assert(FindCodecId(&f.type) == AV_CODEC_ID_PCM_S16LE);
+            assert(filter.SetMediaType(PINDIR_INPUT, &f.type) == S_OK);
+            assert(filter.lastCodec == AV_CODEC_ID_PCM_S16LE && filter.context.bits_per_raw_sample == 16);
+            assert(filter.initializations == 1 && filter.commits == 1);
+        }
+#endif
+        for (DWORD length = 0; length < sizeof(WAVEFORMATEX); ++length)
+        { f.type.cbFormat = length; Rejected(f); }
+    }
+    // The exception is not applicable to basic IEEE float or extensible PCM.
+    for (WORD extra : {WORD(1), WORD(22), WORD(0xffff)})
+    { Fixture f(32, true, false); f.wave.Format.cbSize = extra; Rejected(f); }
+    { Fixture f; f.wave.Format.cbSize = 0xffff; Rejected(f); }
     for (WORD precision : {WORD(16), WORD(20), WORD(24), WORD(32)})
     {
         Fixture f(32, false, true, precision);

@@ -179,11 +179,19 @@ int main() {
         {L"f32", L"", L"", 2, 32, 3, true, false, false},
         {L"f64", L"", L"", 2, 64, 3, true, false, false},
         {L"s24", L"", L"", 6, 24, 0x3f, false, false, false},
+        {L"s24-96k", L"", L"", 6, 24, 0x3f, false, false, false, 96000},
+        {L"f32-96k", L"", L"", 2, 32, 3, true, false, false, 96000},
     };
     for (const auto &test : cases) {
-        auto type = BuildTrackPcmType(test.channels, test.bits, test.mask, test.floating);
+        auto type = BuildTrackPcmType(test.channels, test.bits, test.mask, test.floating, 0, test.sample_rate);
         assert(TrackInputMetadataMatches(type, test));
         assert(type.sample_size == test.channels * test.bits / 8);
+        auto *wave = reinterpret_cast<WAVEFORMATEX *>(type.pbFormat);
+        assert(wave->nSamplesPerSec == test.sample_rate);
+        assert(wave->nAvgBytesPerSec == wave->nBlockAlign * test.sample_rate);
+        wave->nSamplesPerSec = test.sample_rate == 96000 ? 48000 : 96000;
+        assert(!TrackInputMetadataMatches(type, test));
+        wave->nSamplesPerSec = test.sample_rate;
         const WORD saved_bits = reinterpret_cast<WAVEFORMATEX *>(type.pbFormat)->wBitsPerSample;
         reinterpret_cast<WAVEFORMATEX *>(type.pbFormat)->wBitsPerSample = 8;
         assert(!TrackInputMetadataMatches(type, test));
@@ -210,6 +218,13 @@ int main() {
     assert(TrackInputMetadataMatches(flac, control));
     --flac.cbFormat;
     assert(!TrackInputMetadataMatches(flac, control));
+    assert(TrackSampleDurationMatches(0, 853333, 8192 * 18, 18, 96000));
+    assert(TrackSampleDurationMatches(0, 853334, 8192 * 18, 18, 96000));
+    assert(!TrackSampleDurationMatches(0, 1706666, 8192 * 18, 18, 96000));
+    assert(TrackSampleDurationMatches(0, 1706666, 8192 * 18, 18, 48000));
+    assert(!TrackSampleDurationMatches(0, 853333, 8192 * 18, 18, 48000));
+    assert(!TrackSampleDurationMatches(-1, 853333, 8192 * 18, 18, 96000));
+    assert(!TrackSampleDurationMatches(0, 853333, 8192 * 18 - 1, 18, 96000));
     const std::vector<float> unity{-0.5f, 0, 0.125f, -0.25f, 0.75f, 0.33f};
     auto boosted = unity;
     for (auto &sample : boosted) sample *= static_cast<float>(std::pow(10.0, 6.0 / 20.0));

@@ -40,12 +40,12 @@ def floats(bits):
                     for frame in range(FRAMES) for channel in range(2))
 
 
-def wave_file(payload, channels, bits, floating=False, valid=None, mask=None):
+def wave_file(payload, channels, bits, floating=False, valid=None, mask=None, rate=RATE):
     extensible = valid is not None or mask is not None
     tag = 3 if floating else 1
     block = channels * bits // 8
-    fmt = struct.pack("<HHIIHH", 0xfffe if extensible else tag, channels, RATE,
-                      RATE * block, block, bits)
+    fmt = struct.pack("<HHIIHH", 0xfffe if extensible else tag, channels, rate,
+                      rate * block, block, bits)
     if extensible:
         fmt += struct.pack("<HHI", 22, valid or bits, mask or 0)
         fmt += struct.pack("<IHH8s", tag, 0, 0x10, bytes.fromhex("800000aa00389b71"))
@@ -95,6 +95,8 @@ def prepare(output, joc_fixture=None, ffmpeg=None):
         "pcm.f64": (wave_file(floats(64), 2, 64, floating=True), floats(32)),
         "pcm.s24": (wave_file(s24, 6, 24, valid=24, mask=0x3f), s24),
         "pcm.s24in32": (wave_file(integers(6, 24, 32), 6, 32, valid=24, mask=0x3f), s24),
+        "pcm.s24.96k": (wave_file(s24, 6, 24, valid=24, mask=0x3f, rate=96000), s24),
+        "pcm.f32.96k": (wave_file(floats(32), 2, 32, floating=True, rate=96000), floats(32)),
     }
     for name, (wave, expected) in cases.items():
         (output / (name + ".wav")).write_bytes(wave)
@@ -108,7 +110,8 @@ def prepare(output, joc_fixture=None, ffmpeg=None):
             shutil.copyfile(joc_fixture, target)
     if ffmpeg:
         for filename, codec in [("pcm.control.flac", "pcm_s16le"), ("pcm.s24.wav", "pcm_s24le"),
-                                ("pcm.f64.wav", "pcm_f32le")]:
+                                ("pcm.f64.wav", "pcm_f32le"), ("pcm.s24.96k.wav", "pcm_s24le"),
+                                ("pcm.f32.96k.wav", "pcm_f32le")]:
             decoded = subprocess.run([ffmpeg, "-v", "error", "-i", str(output / filename),
                                       "-f", {"pcm_s16le": "s16le", "pcm_s24le": "s24le", "pcm_f32le": "f32le"}[codec],
                                       "-acodec", codec, "-"], check=True, stdout=subprocess.PIPE).stdout

@@ -4870,10 +4870,11 @@ struct PcmTrackCase
     bool floating;
     bool flac;
     bool inject_24_in_32;
+    DWORD sample_rate = 48000;
 };
 
 CMediaType BuildTrackPcmType(const WORD channels, const WORD bits, const DWORD mask,
-                            const bool floating, const WORD valid_bits = 0)
+                            const bool floating, const WORD valid_bits = 0, const DWORD sample_rate = 48000)
 {
     CMediaType type;
     WAVEFORMATEXTENSIBLE wave{};
@@ -4882,10 +4883,10 @@ CMediaType BuildTrackPcmType(const WORD channels, const WORD bits, const DWORD m
     wave.Format.wFormatTag = extensible ? WAVE_FORMAT_EXTENSIBLE
                                        : (floating ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM);
     wave.Format.nChannels = channels;
-    wave.Format.nSamplesPerSec = 48000;
+    wave.Format.nSamplesPerSec = sample_rate;
     wave.Format.wBitsPerSample = bits;
     wave.Format.nBlockAlign = channels * (bits / 8);
-    wave.Format.nAvgBytesPerSec = wave.Format.nBlockAlign * 48000;
+    wave.Format.nAvgBytesPerSec = wave.Format.nBlockAlign * sample_rate;
     if (extensible)
     {
         wave.Format.cbSize = sizeof(wave) - sizeof(wave.Format);
@@ -4912,14 +4913,14 @@ bool TrackInputMetadataMatches(const AM_MEDIA_TYPE &type, const PcmTrackCase &te
         !type.pbFormat || type.cbFormat < sizeof(WAVEFORMATEX))
         return false;
     const auto &wave = *reinterpret_cast<const WAVEFORMATEX *>(type.pbFormat);
-    if (wave.nChannels != test.channels || wave.nSamplesPerSec != 48000 ||
+    if (wave.nChannels != test.channels || wave.nSamplesPerSec != test.sample_rate ||
         wave.wBitsPerSample != test.bits || sizeof(WAVEFORMATEX) + wave.cbSize > type.cbFormat)
         return false;
     if (test.flac)
         return (type.subtype == flac || type.subtype == flac_framed) && wave.cbSize >= 34;
     const GUID subtype = test.floating ? MEDIASUBTYPE_IEEE_FLOAT : MEDIASUBTYPE_PCM;
     if (type.subtype != subtype || wave.nBlockAlign != test.channels * (test.bits / 8) ||
-        wave.nAvgBytesPerSec != wave.nBlockAlign * 48000)
+        wave.nAvgBytesPerSec != wave.nBlockAlign * test.sample_rate)
         return false;
     if (wave.wFormatTag == WAVE_FORMAT_EXTENSIBLE)
     {
@@ -4931,6 +4932,19 @@ bool TrackInputMetadataMatches(const AM_MEDIA_TYPE &type, const PcmTrackCase &te
     }
     return wave.wFormatTag == (test.floating ? WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM) &&
            test.channels <= 2;
+}
+
+// Check duration from the current phase's format so a stale 48/96 kHz clock
+// cannot pass merely by producing contiguous timestamps. Allow one 100 ns tick
+// for rounding fractional frame durations at sample boundaries.
+bool TrackSampleDurationMatches(const std::int64_t start, const std::int64_t stop,
+                                const long bytes, const WORD block_align, const DWORD sample_rate)
+{
+    if (start < 0 || stop <= start || bytes <= 0 || !block_align || !sample_rate || bytes % block_align)
+        return false;
+    const std::int64_t expected = (std::int64_t(bytes) / block_align) * 10000000 / sample_rate;
+    const std::int64_t duration = stop - start;
+    return duration >= expected - 1 && duration <= expected + 1;
 }
 
 HRESULT LoadTrackSource(const PrivateComModule &splitter, const FixtureIdentity &fixture,
@@ -5042,7 +5056,7 @@ HRESULT RunPcmTrackSequence(const PrivateComModule &audio, const PrivateComModul
     if (!contract) return E_UNEXPECTED;
     const CMediaType joc_output = BuildStrictTarget(*contract);
     const WORD output_bits = test.floating ? 32 : test.bits;
-    const CMediaType stock_output = BuildTrackPcmType(test.channels, output_bits, test.mask, test.floating);
+    const CMediaType stock_output = BuildTrackPcmType(test.channels, output_bits, test.mask, test.floating, 0, test.sample_rate);
     const CMediaType padded_input = BuildTrackPcmType(6, 32, 0x3f, false, 24);
     ComOwner<IGraphBuilder> graph;
     ComOwner<IBaseFilter> filter;
@@ -5221,8 +5235,12 @@ HRESULT RunPcmTrackSequence(const PrivateComModule &audio, const PrivateComModul
              !openjoc_harness_core::ExactMediaTypeEqual(samples[first].attached_type, expected))) status = E_UNEXPECTED;
         if (SUCCEEDED(status))
         {
+            const auto &expected_wave = *reinterpret_cast<const WAVEFORMATEX *>(expected.pbFormat);
             for (std::size_t index = first; index < samples.size(); ++index)
                 if (samples[index].preroll || samples[index].start < 0 ||
+                    !TrackSampleDurationMatches(samples[index].start, samples[index].stop,
+                                                samples[index].length, expected_wave.nBlockAlign,
+                                                expected_wave.nSamplesPerSec) ||
                     (samples[index].has_attached_type &&
                      !openjoc_harness_core::ExactMediaTypeEqual(samples[index].attached_type, expected))) status = E_UNEXPECTED;
             if (is_joc)
@@ -5296,6 +5314,8 @@ HRESULT RunPcmTrackAdmission(const std::filesystem::path &runtime_dir,
         {L"s24", L"pcm.s24.wav", L"pcm.s24.expected.pcm", 6, 24, 0x3f, false, false, false},
         {L"s24-in-32", L"pcm.s24.wav", L"pcm.s24in32.expected.pcm", 6, 24, 0x3f, false, false, true},
         {L"flac-control", L"pcm.control.flac", L"pcm.control.expected.pcm", 2, 16, 3, false, true, false},
+        {L"s24-96k", L"pcm.s24.96k.wav", L"pcm.s24.96k.expected.pcm", 6, 24, 0x3f, false, false, false, 96000},
+        {L"f32-96k", L"pcm.f32.96k.wav", L"pcm.f32.96k.expected.pcm", 2, 32, 3, true, false, false, 96000},
     };
     for (const auto &test : cases)
     {

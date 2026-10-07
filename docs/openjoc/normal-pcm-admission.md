@@ -18,6 +18,12 @@ different decoder before the user selected the JOC track. The source defect is
 verified; whether a particular player's saved graph chooses this filter still
 requires inspection in that player.
 
+The user's original private `MEDIASUBTYPE_FFMPEG_AUDIO` route was already
+resolved by placing OpenJOC first in the player's filter priority. The user
+confirmed PCM ↔ JOC switching on that route. This ordinary-PCM feature is
+independent of that resolved configuration issue. The capture harness directly
+loads the private filter; it does not prove host filter enumeration or selection.
+
 ## Format and decoding contract
 
 - Integer PCM containers: unsigned 8-bit, signed little-endian 16/24/32-bit
@@ -31,6 +37,10 @@ requires inspection in that player.
 - Channel count, sample rate, block alignment, byte rate and declared format
   length are checked before decoding; truncated and contradictory formats fail
   closed, even if Raw SPDIF input is enabled
+- Basic `WAVE_FORMAT_PCM` ignores the stored `cbSize`, as specified by
+  [Microsoft's WAVEFORMATEX contract](https://learn.microsoft.com/en-us/windows/win32/api/mmreg/ns-mmreg-waveformatex).
+  The actual buffer must still hold a complete `WAVEFORMATEX`; float and
+  extensible formats retain their declared-extension and full-header checks
 
 The codec is selected from **container width**, not valid precision. Packed
 24-bit uses `PCM_S24LE`; 24 valid bits left-aligned in a 32-bit container uses
@@ -59,7 +69,9 @@ runner compiles the production validator and unmodified production admission,
 codec lookup and media-type initialization methods against deterministic
 adapters. It tests side-by-side and stock compile modes, packed and container
 precision, malformed/truncated input, format-disable behavior, the separate
-Raw SPDIF gate, and ordinary FLAC/E-AC-3 mapping. `--sanitize` enables address
+Raw SPDIF gate, ordinary FLAC/E-AC-3 mapping, and arbitrary basic-PCM `cbSize`
+(including `0xffff`) in an actual 18-byte allocation. The cbSize regression
+fails against the prior production header and passes with this narrow fix. `--sanitize` enables address
 and undefined-behavior sanitizers with compatible GCC/Clang hosts.
 
 For a portable negative control, `--source-dir` may name baseline production

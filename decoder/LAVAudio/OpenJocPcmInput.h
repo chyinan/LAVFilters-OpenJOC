@@ -30,7 +30,10 @@ inline AVCodecID FindOpenJocNormalPcmCodec(const CMediaType *type, WORD *valid_b
 
     WAVEFORMATEX wave = {};
     std::memcpy(&wave, type->pbFormat, sizeof(wave));
-    if (wave.cbSize > type->cbFormat - sizeof(WAVEFORMATEX) || wave.nChannels == 0 || wave.nChannels > 64 ||
+    // WAVE_FORMAT_PCM defines cbSize as implicitly zero; ignore its stored value.
+    // Other tags still require every declared extension byte to be present.
+    if ((wave.wFormatTag != WAVE_FORMAT_PCM && wave.cbSize > type->cbFormat - sizeof(WAVEFORMATEX)) ||
+        wave.nChannels == 0 || wave.nChannels > 64 ||
         wave.nSamplesPerSec == 0 || wave.nSamplesPerSec > (std::numeric_limits<std::int32_t>::max)())
         return AV_CODEC_ID_NONE;
 

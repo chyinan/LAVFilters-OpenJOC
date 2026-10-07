@@ -27,7 +27,8 @@ def function(signature):
 start = source.index('struct PcmTrackCase\n')
 case = source[start:source.index('\n};', start) + 3]
 methods = case + '\n' + '\n'.join(function(signature) for signature in (
-    'CMediaType BuildTrackPcmType(', 'bool TrackInputMetadataMatches(', 'bool VerifyTrackGain('))
+    'CMediaType BuildTrackPcmType(', 'bool TrackInputMetadataMatches(',
+    'bool TrackSampleDurationMatches(', 'bool VerifyTrackGain('))
 # Guard this mode's route rather than the entire multipurpose executable.
 lane = source[source.index('HRESULT RunPcmTrackSequence('):source.index('HRESULT RunOpenJocLifecycleMatrix(')]
 for forbidden in ('VolatileCurrentUserOverride', 'RegSetValue', 'RegCreateKey', 'RenderFile(',
@@ -37,7 +38,7 @@ for required in ('SetAllowRawSPDIFInput(FALSE)', 'Codec_PCM, TRUE', 'Codec_FLAC,
                  'samples[first].has_attached_type', 'bytes != oracle', 'VerifyTrackGain(unity_joc, bytes)',
                  'CopyOpenJocLiveInspectionJson(nullptr, 0, &required) != S_FALSE',
                  'GraphContainsExactly(graph.get(), 3)', 'test.inject_24_in_32',
-                 'L"f64"', 'L"flac-control"', 'audio_output->EnumMediaTypes(output_types.put())',
+                 'L"f64"', 'L"flac-control"', 'L"s24-96k"', 'L"f32-96k"', 'audio_output->EnumMediaTypes(output_types.put())',
                  'ExactMediaTypeEqual(*preferred, stock_output)', 'if (phase < 3)'):
     assert required in lane, required
 spec = importlib.util.spec_from_file_location('fixtures', HERE / 'prepare_pcm_track_fixtures.py')
@@ -72,4 +73,12 @@ with tempfile.TemporaryDirectory(prefix='lav-pcm-track-harness-') as temporary:
     assert struct.unpack_from('<H', wav, 34)[0] == 32
     assert struct.unpack_from('<H', wav, 38)[0] == 24
     assert struct.unpack_from('<I', wav, 40)[0] == 0x3f
+    for name, channels, bits in [('s24', 6, 24), ('f32', 2, 32)]:
+        wav96 = (work / ('first/pcm.' + name + '.96k.wav')).read_bytes()
+        wav48 = (work / ('first/pcm.' + name + '.wav')).read_bytes()
+        assert struct.unpack_from('<I', wav96, 24)[0] == 96000
+        assert struct.unpack_from('<I', wav96, 28)[0] == 96000 * channels * bits // 8
+        assert wav96[:24] + wav96[32:] == wav48[:24] + wav48[32:]
+        assert (work / ('first/pcm.' + name + '.96k.expected.pcm')).read_bytes() == \
+               (work / ('first/pcm.' + name + '.expected.pcm')).read_bytes()
     print('PCM_TRACK_FIXTURE_ORACLES_PASS files=' + str(len(first)))
