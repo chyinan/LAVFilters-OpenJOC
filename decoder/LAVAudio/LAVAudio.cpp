@@ -4065,6 +4065,18 @@ HRESULT CLAVAudio::Deliver(BufferDetails &buffer)
     memcpy(pDataOut, buffer.bBuffer->Ptr(), buffer.bBuffer->GetCount());
 
     hr = m_pOutput->Deliver(pOut);
+    if (hr == S_OK)
+    {
+        // Ordinary negotiation may have converted the queued PCM or changed its layout.
+        // Publish the delivered format before a final flush clears the queue.
+        m_outputStatusFormat.store(buffer.sfFormat, std::memory_order_release);
+        m_outputStatusChannels.store(buffer.layout.nb_channels, std::memory_order_release);
+        m_outputStatusSampleRate.store(buffer.dwSamplesPerSec, std::memory_order_release);
+        m_outputStatusChannelMask.store(
+            buffer.layout.order == AV_CHANNEL_ORDER_NATIVE ? static_cast<DWORD>(buffer.layout.u.mask) : 0,
+            std::memory_order_release);
+        m_volumeStatsChannels.store(buffer.layout.nb_channels, std::memory_order_release);
+    }
     if (FAILED(hr))
     {
         DbgLog((LOG_ERROR, 10, L"::Deliver failed with code: %0#.8x", hr));
