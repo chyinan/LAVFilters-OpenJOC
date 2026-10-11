@@ -119,3 +119,95 @@ The same runner can use OpenJOC's pinned `d13b7cac86c5750b5d4181569d98f44ae9a160
 files if needed. Pre-fix runs keep the same byte-payload checks but fail stale
 format/mask/channel assertions after successful fallback. Native Windows
 DirectShow/filter and renderer checks remain required for runtime confirmation.
+
+# Output-policy persistence ordering regression
+
+```
+python decoder/LAVAudio/tests/run_policy_persistence_tests.py
+python decoder/LAVAudio/tests/run_policy_persistence_tests.py --cxxflag=-O2
+ASAN_OPTIONS=detect_leaks=0 python decoder/LAVAudio/tests/run_policy_persistence_tests.py --sanitize
+```
+
+Python 3 and C++17 are required; `--compiler cl` supports a Visual Studio
+Developer shell. The portable runner extracts seven unchanged production
+methods: output-policy getter, setter, configure, saver and loader, plus
+`SetBinauralConfiguration` and `SetRuntimeConfig`. The policy enum/schema are
+extracted from the production settings header. SHA-256 hashes of the method
+bodies are printed. Build outputs use a temporary directory.
+
+The existing recursive receive lock now covers the entire policy apply/save
+transaction, ordering it against other policy changes and runtime-mode
+transitions. There is no new lock or lock order. A settings registry write can
+briefly block receive, matching the existing gain and property-page settings
+transactions. PCM/DSP processing and sample data are unchanged.
+
+A deterministic instrumented recursive mutex pauses the first policy write
+while a competing operation attempts the lock. It lets the older write resume
+only after detecting that the competitor blocked, or after an unlocked
+competitor completed. Five-second watchdogs detect broken schedules; no sleep
+or probabilistic race timing determines correctness. Four cases cover two
+direct setters, a direct setter versus the property-page API, enabling runtime
+mode, and reloading persistent settings. Serial and unchanged policy calls,
+runtime-only updates, persistent reload, and getter readback during flush are
+also checked. All policy requests are valid 5.1 or 7.1.4 selections.
+
+To verify the old failure without changing the test:
+
+```
+git show 010cf396e84d78eb0b8dc3f25c8283259354902f:decoder/LAVAudio/LAVAudio.cpp > before.cpp
+python decoder/LAVAudio/tests/run_policy_persistence_tests.py --source before.cpp
+```
+
+That source fails all four serialization assertions; the direct and
+property-page cases leave live policy 7.1.4 with saved/reloaded policy 5.1.
+The runtime-enable case checks exclusion itself because the already-started
+registry write also completes after runtime mode is enabled in the old code.
+
+Registry, contract lookup, decoder, flush, and unrelated setting operations are
+in-memory adapters. The property-page configuration adapter selects valid
+speaker output and invokes the actual policy configuration method; it does not
+exercise binaural HRTF loading or SOFA. Runtime `LoadSettings` resets the policy
+snapshot and invokes the real policy loader. This is a portable ordering
+regression, not native Windows COM, registry, DirectShow, playback, decoder,
+ABI, or audio-quality validation. Native Windows build and simultaneous COM
+settings calls remain required. Sanitizer runs with leak detection disabled
+do not provide leak-detection coverage.
+
+# Probe retention byte-transport regression
+
+```
+python decoder/LAVAudio/tests/run_probe_retention_tests.py --fixture /path/to/OpenJOC/crates/openjoc-wasm/testdata/joc.lifecycle.ec3
+ASAN_OPTIONS=detect_leaks=0 python decoder/LAVAudio/tests/run_probe_retention_tests.py --sanitize --fixture /path/to/OpenJOC/crates/openjoc-wasm/testdata/joc.lifecycle.ec3
+```
+
+This GCC/Clang C++17 runner compiles the actual `OpenJocAdmission.cpp` and
+extracts the complete, unmodified `LAVOpenJocDecoder::Process` body. The fixture
+is the existing 524288-byte public OpenJOC lifecycle stream, unchanged (SHA-256
+`b860509a1613134931e1e39b9d2b6d4d31687b1a6586d8e2bcf5fe99e7da14f8`).
+It is not copied into this repository. `--source before.cpp` selects an older
+`OpenJocDecoder.cpp` for identical red-before controls.
+
+The classifier adapter confirms JOC on a selected call; the decoder adapter
+records input bytes and anchors. No compressed-data classifier or decoder is
+executed. The test compares the captured payload byte-for-byte, checks the
+initial timestamp and unanchored continuation, preserves the classifier's
+128-KiB budget, and checks that later chunks still pass through. Cases cover
+ordinary 4096-byte input and the full fixture in a first call, accumulated
+probe input, distinct incremental input, and end-of-stream promotion. The old
+code passes the small control but forwards only 131072 of 524288 bytes in all
+four large-input cases. The fix forwards the retained prefix followed by the
+current buffer's unretained tail exactly once, without enlarging probe storage
+or changing DSP, PCM conversion, or stock-decoder selection.
+
+These are byte-transport and control-flow checks with in-memory adapters, not
+full decoder PCM-bitexact, real classifier, Win32 ABI, COM, DirectShow,
+PotPlayer, or device playback verification. The existing non-JOC observer
+path is unchanged. Native Windows and actual decoded-PCM equivalence checks
+remain necessary before release.
+
+If feeding the unretained tail fails, the method records the existing
+`OpenJocDecodeError` diagnostic and returns `Error` before clearing the retained
+prefix or finishing the decoder, matching the existing prefix-feed failure
+path. This patch does not introduce retry/replay or rollback semantics. The
+portable regression exercises successful valid-input transport; real decoder
+failure handling is not newly validated by this fixture.

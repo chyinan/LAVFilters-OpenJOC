@@ -1160,11 +1160,10 @@ HRESULT CLAVAudio::SetOutputPolicy(const LAVOpenJocOutputPolicy policy)
 {
     if (!FindLAVOpenJocOutputContract(policy))
         return E_INVALIDARG;
-    HRESULT hr = S_OK;
-    {
-        CAutoLock receive_lock(&m_csReceive);
-        hr = ConfigureOpenJocOutputPolicy(policy, true);
-    }
+    // Keep the committed policy and its persistence ordered with other setters
+    // and runtime-mode reloads using the existing recursive receive lock.
+    CAutoLock receive_lock(&m_csReceive);
+    const HRESULT hr = ConfigureOpenJocOutputPolicy(policy, true);
     if (FAILED(hr))
         return hr;
     const HRESULT save_hr = SaveOpenJocOutputPolicySettings(policy);

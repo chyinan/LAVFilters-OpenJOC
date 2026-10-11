@@ -804,6 +804,7 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
         const std::size_t classification_input_size =
             (available_input < classification_budget) ? available_input : classification_budget;
 
+        std::size_t retained_input_size = 0;
         if (data_size > 0)
         {
             if (cumulative_input)
@@ -811,6 +812,7 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
                 const std::size_t retained =
                     (std::min)(data_size, LAVOpenJocAdmission::MaxRetainedBytes);
                 m_impl->admission_bytes.assign(data, data + retained);
+                retained_input_size = retained;
             }
             else if (m_impl->admission_bytes.size() < LAVOpenJocAdmission::MaxRetainedBytes)
             {
@@ -818,6 +820,7 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
                     LAVOpenJocAdmission::MaxRetainedBytes - m_impl->admission_bytes.size();
                 const std::size_t copied = (std::min)(room, data_size);
                 m_impl->admission_bytes.insert(m_impl->admission_bytes.end(), data, data + copied);
+                retained_input_size = copied;
             }
         }
 
@@ -892,6 +895,15 @@ LAVOpenJocProcessResult LAVOpenJocDecoder::Process(const unsigned char *data, co
                                               ? m_impl->admission_bytes.size()
                                               : data_size;
         if (!m_impl->FeedDecoder(observed_data, observed_size, m_impl->admission_pts_samples))
+        {
+            m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::OpenJocDecodeError,
+                                             m_impl->last_error.c_str());
+            return LAVOpenJocProcessResult::Error;
+        }
+        // Admission retains only a bounded prefix. Promotion consumes the full
+        // caller buffer, so forward its unretained tail before releasing it.
+        if (promoted && retained_input_size < data_size &&
+            !m_impl->FeedDecoder(data + retained_input_size, data_size - retained_input_size, kNoPts))
         {
             m_impl->RecordRuntimeDiagnostic(LAVOpenJocFailureReason::OpenJocDecodeError,
                                              m_impl->last_error.c_str());
