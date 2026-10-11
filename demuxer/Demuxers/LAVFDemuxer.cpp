@@ -349,6 +349,25 @@ trynoformat:
         }
     }
 
+    if (inputFormat == nullptr && byteContext)
+    {
+        ret = av_probe_input_buffer2(byteContext, &inputFormat, fileName, m_avFormat, 0, m_avFormat->format_probesize);
+        if (ret >= 0 && inputFormat)
+        {
+            DbgLog((LOG_TRACE, 10, TEXT("::OpenInputStream(): av_probe_input_buffer2 probed format %S with score %d"), inputFormat->name, ret));
+
+            // disable custom IO for HLS and DASH, if we have an URL to load from
+            if (fileName && fileName[0] && (
+                strcmp(inputFormat->name, "hls")  == 0 ||
+                strcmp(inputFormat->name, "dash") == 0
+                ))
+            {
+                m_avFormat->pb = NULL;
+                m_avFormat->flags &= ~AVFMT_FLAG_CUSTOM_IO;
+            }
+        }
+    }
+
     // Disable loading of external mkv segments, if required
     if (!m_pSettings->GetLoadMatroskaExternalSegments())
         m_avFormat->flags |= AVFMT_FLAG_NOEXTERNAL;

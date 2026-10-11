@@ -76,6 +76,7 @@ configure() (
     --enable-schannel               \
     --enable-zlib                   \
     --build-suffix=-lav             \
+    --disable-stripping             \
     --arch=${arch}"
 
   EXTRA_CFLAGS="-D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -Zo -GS- -I../thirdparty/$archincdir/include/"
